@@ -20,6 +20,7 @@ from urllib.parse import quote
 import httpx
 
 from app.config import settings
+from app.core.security import new_id
 from app.core.transliterate import transliterate
 from app.models.generation import GenerationType
 from app.models.tile import Tile
@@ -30,6 +31,12 @@ _QUALITY_SUFFIX = "high quality, highly detailed, professional, sharp focus, bea
 _VIDEO_PLACEHOLDER = (
     "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4"
 )
+
+UPLOAD_DIR = Path("uploads")
+# How long we wait for Pollinations to render before falling back to the hotlink.
+# Kept under nginx's proxy_read_timeout (60s).
+_IMAGE_FETCH_TIMEOUT = 45.0
+_EXT_BY_MIME = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif"}
 
 
 def build_prompt(
@@ -121,6 +128,28 @@ async def analyze_photo(photo_url: str) -> str:
         return ""
 
 
+async def _fetch_to_uploads(url: str) -> str | None:
+    """Download a generated image and store it locally.
+
+    Returns a relative ``/uploads/<name>`` URL (served over HTTPS via the
+    nginx + Next proxy, same-origin) so the browser never has to hotlink the
+    slow/unreliable upstream generator. Returns None on any failure.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=_IMAGE_FETCH_TIMEOUT, follow_redirects=True) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            mime = resp.headers.get("content-type", "").split(";")[0].strip()
+            if not mime.startswith("image/"):
+                return None
+            UPLOAD_DIR.mkdir(exist_ok=True)
+            name = f"{new_id('img_')}{_EXT_BY_MIME.get(mime, '.jpg')}"
+            (UPLOAD_DIR / name).write_bytes(resp.content)
+            return f"/uploads/{name}"
+    except Exception:
+        return None
+
+
 async def generate(
     *,
     gen_type: GenerationType,
@@ -169,4 +198,7 @@ async def generate(
         # TODO: replace with the real video pipeline once available.
         return _VIDEO_PLACEHOLDER, prompt
 
-    return build_image_url(prompt), prompt
+    image_url = build_image_url(prompt)
+    # Serve from our own origin so the browser gets a ready, fast-loading image.
+    local_url = await _fetch_to_uploads(image_url)
+    return (local_url or image_url), prompt
