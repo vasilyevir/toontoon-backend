@@ -28,6 +28,14 @@ class Settings(BaseSettings):
     session_cookie_secure: bool = False
     signup_teki_balance: int = 3
 
+    # OpenAI
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4o-mini"
+
+    @property
+    def openai_enabled(self) -> bool:
+        return bool(self.openai_api_key.strip())
+
     # Generation
     rate_limit_per_hour: int = 30
     image_teki_cost: int = 1

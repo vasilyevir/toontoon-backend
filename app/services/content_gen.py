@@ -134,18 +134,36 @@ async def generate(
 
     Returns ``(result_url, prompt)``. Swap the body of this function to plug in
     the production generation stack — the signature is stable.
+
+    Prompt pipeline:
+      1. If a photo was uploaded → analyze it via vision (Pollinations, 7s timeout).
+      2. If OPENAI_API_KEY is set → GPT-4o mini writes a rich prompt from tile+answers.
+      3. Fallback → simple mechanical builder (always works, no key needed).
     """
+    from app.services import gpt as gpt_service  # local import avoids circular dep
+
     photo_description = ""
     if photo_url:
         photo_description = await analyze_photo(photo_url)
 
-    prompt = build_prompt(
+    # Try GPT prompt builder first.
+    prompt = await gpt_service.build_prompt(
         tile=tile,
         answers=answers,
         free_text=free_text,
         style=style,
         photo_description=photo_description or None,
     )
+
+    # Fall back to mechanical builder if GPT is not configured or failed.
+    if not prompt:
+        prompt = build_prompt(
+            tile=tile,
+            answers=answers,
+            free_text=free_text,
+            style=style,
+            photo_description=photo_description or None,
+        )
 
     if gen_type == GenerationType.VIDEO:
         # TODO: replace with the real video pipeline once available.
