@@ -11,7 +11,9 @@ the real generation stack later without touching the routers. For now:
 """
 from __future__ import annotations
 
+import asyncio
 import base64
+import logging
 import mimetypes
 import random
 from pathlib import Path
@@ -24,18 +26,25 @@ from app.core.security import new_id
 from app.core.transliterate import transliterate
 from app.models.generation import GenerationType
 from app.models.tile import Tile
-
-_QUALITY_SUFFIX = "high quality, highly detailed, professional, sharp focus, beautiful lighting"
+from app.services import prompt_style
 
 # A small, stable public placeholder used for the video mock.
 _VIDEO_PLACEHOLDER = (
     "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4"
 )
 
+logger = logging.getLogger("arteki.content_gen")
+
+
+class GenerationUnavailable(RuntimeError):
+    """Raised when the upstream generator cannot produce a result (refund + retry later)."""
+
+
 UPLOAD_DIR = Path("uploads")
-# How long we wait for Pollinations to render before falling back to the hotlink.
-# Kept under nginx's proxy_read_timeout (60s).
-_IMAGE_FETCH_TIMEOUT = 45.0
+# Per-attempt timeout. Multiple attempts + backoff stay safely under nginx's
+# proxy_read_timeout (60s): worst case ~ 15 + 1.5 + 15 + 3 + 15 = 49.5s.
+_IMAGE_FETCH_TIMEOUT = 15.0
+_RETRY_BACKOFF_SECONDS = 1.5
 _EXT_BY_MIME = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif"}
 
 
@@ -47,35 +56,53 @@ def build_prompt(
     style: str | None,
     photo_description: str | None = None,
 ) -> str:
-    """Compose a single text prompt from a tile + answers, or free-form text."""
-    parts: list[str] = []
+    """Mechanical fallback builder (used when GPT is unavailable).
 
+    Follows the same block structure as the GPT path: style anchor (first),
+    scene, optional layout block, technical block (last). It never emits the
+    banned "quality" words and never renders greeting text.
+    """
+    style_key = prompt_style.map_style(style)
+    is_text = prompt_style.is_text_tile(tile.category.value) if tile else False
+
+    scene_parts: list[str] = []
     if tile is not None:
-        parts.append(tile.title)
-        # Append answers in the tile's question order for a stable prompt.
+        scene_parts.append(tile.title)
         for question in tile.questions:
             value = answers.get(question.id)
-            if value:
-                parts.append(value)
+            if not value:
+                continue
+            if question.id == "text":
+                # Greeting text is overlaid later, never drawn by the generator.
+                continue
+            if question.id == "style":
+                # Style is expressed via the anchor, not as a raw scene word.
+                continue
+            scene_parts.append(value)
     if free_text:
-        parts.append(free_text)
-    if style:
-        parts.append(f"{style} style")
+        scene_parts.append(free_text)
     if photo_description:
-        parts.append(f"based on the reference: {photo_description}")
+        scene_parts.append(f"inspired by the reference: {photo_description}")
+    scene_parts.append("warm friendly expression, heartwarming gentle mood")
 
-    parts.append(_QUALITY_SUFFIX)
-    prompt = ", ".join(p.strip() for p in parts if p and p.strip())
+    scene = ", ".join(p.strip() for p in scene_parts if p and p.strip())
+    prompt = prompt_style.assemble(scene, style_key=style_key, is_text=is_text)
     return transliterate(prompt)
 
 
 def build_image_url(prompt: str, *, width: int = 1024, height: int = 1024, seed: int | None = None) -> str:
     seed = seed if seed is not None else random.randint(1, 1_000_000)
     encoded = quote(prompt, safe="")
-    return (
+    url = (
         f"{settings.pollinations_image_url}/prompt/{encoded}"
-        f"?width={width}&height={height}&seed={seed}&nologo=true&model=flux"
+        f"?width={width}&height={height}&seed={seed}&nologo=true"
+        f"&model={settings.pollinations_model}"
     )
+    if settings.pollinations_referrer:
+        url += f"&referrer={quote(settings.pollinations_referrer, safe='')}"
+    if settings.pollinations_token:
+        url += f"&token={quote(settings.pollinations_token, safe='')}"
+    return url
 
 
 def _to_data_url(photo_url: str) -> str | None:
@@ -128,26 +155,104 @@ async def analyze_photo(photo_url: str) -> str:
         return ""
 
 
-async def _fetch_to_uploads(url: str) -> str | None:
+async def _fetch_to_uploads(url: str, *, attempts: int = 3) -> str | None:
     """Download a generated image and store it locally.
 
     Returns a relative ``/uploads/<name>`` URL (served over HTTPS via the
     nginx + Next proxy, same-origin) so the browser never has to hotlink the
-    slow/unreliable upstream generator. Returns None on any failure.
+    slow/unreliable upstream generator.
+
+    Pollinations' anonymous tier intermittently answers 402/5xx (rate/quota) or
+    times out, so we retry with a short backoff. Returns None only after all
+    attempts fail — the caller then treats the generation as failed and refunds.
     """
-    try:
-        async with httpx.AsyncClient(timeout=_IMAGE_FETCH_TIMEOUT, follow_redirects=True) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            mime = resp.headers.get("content-type", "").split(";")[0].strip()
-            if not mime.startswith("image/"):
-                return None
-            UPLOAD_DIR.mkdir(exist_ok=True)
-            name = f"{new_id('img_')}{_EXT_BY_MIME.get(mime, '.jpg')}"
-            (UPLOAD_DIR / name).write_bytes(resp.content)
-            return f"/uploads/{name}"
-    except Exception:
-        return None
+    headers = {}
+    if settings.pollinations_token:
+        headers["Authorization"] = f"Bearer {settings.pollinations_token}"
+
+    last_reason = "unknown"
+    for attempt in range(attempts):
+        try:
+            async with httpx.AsyncClient(
+                timeout=_IMAGE_FETCH_TIMEOUT, follow_redirects=True
+            ) as client:
+                resp = await client.get(url, headers=headers)
+            if resp.status_code == 200:
+                mime = resp.headers.get("content-type", "").split(";")[0].strip()
+                if mime.startswith("image/") and resp.content:
+                    UPLOAD_DIR.mkdir(exist_ok=True)
+                    name = f"{new_id('img_')}{_EXT_BY_MIME.get(mime, '.jpg')}"
+                    (UPLOAD_DIR / name).write_bytes(resp.content)
+                    return f"/uploads/{name}"
+                last_reason = f"200 but non-image content-type={mime!r}"
+            else:
+                last_reason = f"HTTP {resp.status_code}"
+        except Exception as exc:  # network error / timeout
+            last_reason = repr(exc)
+
+        if attempt < attempts - 1:
+            await asyncio.sleep(_RETRY_BACKOFF_SECONDS * (attempt + 1))
+
+    logger.warning(
+        "Pollinations image fetch failed after %d attempts (%s): %s",
+        attempts,
+        last_reason,
+        url,
+    )
+    return None
+
+
+async def _openai_image_to_uploads(prompt: str, *, attempts: int = 2) -> str | None:
+    """Generate an image via OpenAI Images API and store it locally.
+
+    Uses ``openai_image_model`` (gpt-image-1) and automatically falls back to
+    dall-e-3 if the account cannot access the preferred model. Returns a relative
+    ``/uploads/<name>.png`` URL, or None after all attempts fail.
+    """
+    headers = {"Authorization": f"Bearer {settings.openai_api_key}"}
+    model = settings.openai_image_model
+    last_reason = "unknown"
+
+    for attempt in range(attempts):
+        body: dict = {
+            "model": model,
+            "prompt": prompt[:4000] if model == "dall-e-3" else prompt[:32000],
+            "n": 1,
+            "size": settings.openai_image_size,
+        }
+        if model == "dall-e-3":
+            body["response_format"] = "b64_json"
+            body["quality"] = settings.openai_image_quality if settings.openai_image_quality in {"standard", "hd"} else "hd"
+        else:
+            if settings.openai_image_quality in {"low", "medium", "high", "auto"}:
+                body["quality"] = settings.openai_image_quality
+
+        try:
+            async with httpx.AsyncClient(timeout=settings.openai_image_timeout) as client:
+                resp = await client.post(
+                    "https://api.openai.com/v1/images/generations", json=body, headers=headers
+                )
+            if resp.status_code == 200:
+                b64 = resp.json()["data"][0]["b64_json"]
+                UPLOAD_DIR.mkdir(exist_ok=True)
+                name = f"{new_id('img_')}.png"
+                (UPLOAD_DIR / name).write_bytes(base64.b64decode(b64))
+                return f"/uploads/{name}"
+
+            last_reason = f"HTTP {resp.status_code}: {resp.text[:300]}"
+            # Preferred model not accessible for this account -> fall back to dall-e-3.
+            if model != "dall-e-3" and resp.status_code in (400, 403, 404):
+                logger.warning("OpenAI image model %s unavailable, falling back to dall-e-3", model)
+                model = "dall-e-3"
+                continue
+        except Exception as exc:  # network error / timeout
+            last_reason = repr(exc)
+
+        if attempt < attempts - 1:
+            await asyncio.sleep(_RETRY_BACKOFF_SECONDS)
+
+    logger.warning("OpenAI image generation failed after %d attempts: %s", attempts, last_reason)
+    return None
 
 
 async def generate(
@@ -175,6 +280,9 @@ async def generate(
     if photo_url:
         photo_description = await analyze_photo(photo_url)
 
+    # Tiles carry their style choice inside answers["style"]; honor it for the anchor.
+    style = style or answers.get("style")
+
     # Try GPT prompt builder first.
     prompt = await gpt_service.build_prompt(
         tile=tile,
@@ -198,7 +306,14 @@ async def generate(
         # TODO: replace with the real video pipeline once available.
         return _VIDEO_PLACEHOLDER, prompt
 
-    image_url = build_image_url(prompt)
-    # Serve from our own origin so the browser gets a ready, fast-loading image.
-    local_url = await _fetch_to_uploads(image_url)
-    return (local_url or image_url), prompt
+    # Generate via the configured provider, always serving from our own origin.
+    if settings.image_provider == "openai" and settings.openai_enabled:
+        local_url = await _openai_image_to_uploads(prompt)
+    else:
+        local_url = await _fetch_to_uploads(build_image_url(prompt))
+
+    if not local_url:
+        # Provider is unavailable. Raise so the caller refunds the reserved TEKI
+        # instead of charging the user for a broken/missing image.
+        raise GenerationUnavailable("Image generator is temporarily unavailable")
+    return local_url, prompt

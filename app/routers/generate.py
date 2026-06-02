@@ -1,6 +1,7 @@
 """Generation endpoints: file upload + the two-phase generate flow."""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
@@ -17,6 +18,8 @@ from app.models.generation import (
     GenerationType,
 )
 from app.services import content_gen, generations_service, tiles_data, wallet
+
+logger = logging.getLogger("arteki.generate")
 
 router = APIRouter(prefix="/api", tags=["generate"])
 
@@ -81,8 +84,15 @@ async def generate(body: GenerateRequest, ctx: Context = Depends(required_contex
             style=body.style,
             photo_url=body.photo_url,
         )
+    except content_gen.GenerationUnavailable:
+        # Upstream generator unavailable — refund and tell the client to retry.
+        await wallet.cancel(user, session, payment)
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Image generator is busy right now, your TEKI was refunded — please try again.",
+        )
     except Exception:
-        # Generation failed — release the reserved funds.
+        logger.exception("Generation failed for user %s (tile=%s)", user.id, body.tile_id)
         await wallet.cancel(user, session, payment)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="Generation failed")
 

@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     # OpenAI
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
+    # Image generation via OpenAI Images API.
+    openai_image_model: str = "gpt-image-1"  # auto-falls back to dall-e-3 if unavailable
+    openai_image_size: str = "1024x1024"
+    openai_image_quality: str = "medium"  # gpt-image-1: low/medium/high/auto; dall-e-3: standard/hd
+    openai_image_timeout: float = 55.0
 
     @property
     def openai_enabled(self) -> bool:
@@ -40,8 +45,15 @@ class Settings(BaseSettings):
     rate_limit_per_hour: int = 30
     image_teki_cost: int = 1
     video_teki_cost: int = 2
+    # Image provider: "openai" (gpt-image-1 / dall-e-3) or "pollinations".
+    image_provider: str = "openai"
     pollinations_image_url: str = "https://image.pollinations.ai"
     pollinations_text_url: str = "https://text.pollinations.ai"
+    pollinations_model: str = "flux"
+    # Optional Pollinations API token (register at https://auth.pollinations.ai).
+    # Without it the anonymous tier frequently returns 402 under load.
+    pollinations_token: str = ""
+    pollinations_referrer: str = "arteki"
     vision_timeout_seconds: int = 7
 
     # Boostify
