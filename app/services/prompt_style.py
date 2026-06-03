@@ -14,50 +14,50 @@ from __future__ import annotations
 
 DEFAULT_STYLE = "3d_cartoon"
 
+# Single brand technical tail — warm cinematic, textured, NOT flat/matte
+# (style fix round 2: removed matte ceramic / subsurface / PBR / soft diffused).
+_TECHNICAL = (
+    "Technical: warm cinematic lighting with soft rim light and gentle sun rays, "
+    "soft natural shadows, glossy smooth cartoon materials with rich surface texture "
+    "(not flat, not matte plastic), ray-traced global illumination, high quality 3D render, "
+    "8k resolution, crisp sharp details, clean anti-aliased edges, "
+    "soft depth of field with gentle background bokeh"
+)
+
 # Each style preset: an anchor (placed first) and a technical tail (placed last).
+# The brand look is a single vibrant cartoon 3D; flat styles (watercolor,
+# pastel_flat, storybook) were removed — everything maps to the 3D family.
 PRESETS: dict[str, dict[str, str]] = {
+    # Living characters + all cards: the unified branded cartoon 3D.
     "3d_cartoon": {
+        # Brand names (Pixar/Disney) are blocked by some models — use descriptive terms.
         "anchor": (
-            "3D stylized render, Pixar/Disney emotional character design, "
-            "soft clay-like rounded forms, warm pastel color palette"
+            "vibrant 3D cartoon render, modern animated feature film look, "
+            "big expressive friendly eyes, soft rounded chunky shapes, "
+            "smooth glossy surfaces with subtle texture, bold warm saturated colors, "
+            "cheerful charming character design, bright modern animation quality"
         ),
-        "technical": (
-            "Technical: subsurface scattering on skin and materials, soft diffused "
-            "studio lighting, ray-traced global illumination, matte ceramic material, "
-            "physically based rendering (PBR), 8k resolution, crisp details, anti-aliased edges"
-        ),
+        "technical": _TECHNICAL,
     },
-    "watercolor": {
+    # Inanimate / cosy scenes: nature, magical forest, objects (hasLiving = false).
+    "scene_cozy": {
         "anchor": (
-            "watercolor illustration style, soft color bleeding edges, visible paper "
-            "texture, gentle fluid brush strokes, dreamy atmospheric perspective, "
-            "delicate translucent layers, hand-painted aesthetic, soft pastel washes"
+            "cozy stylized 3D cartoon render, modern animated feature film look, "
+            "soft rounded chunky toy-like shapes, charming miniature diorama aesthetic, "
+            "richly detailed tactile materials with visible texture (wood grain, stone, fabric), "
+            "warm naturalistic saturated colors, lush detailed environment, "
+            "no people, no characters, inviting heartwarming atmosphere"
         ),
-        "technical": (
-            "Technical: smooth high-resolution finish, clean crisp details, "
-            "gentle natural light, harmonious composition"
-        ),
+        "technical": _TECHNICAL,
     },
-    "pastel_flat": {
+    # Inanimate / epic scenes: mountains, vast landscapes (hasLiving = false).
+    "scene_epic": {
         "anchor": (
-            "flat vector illustration style, pastel color palette, soft rounded corners, "
-            "minimal gentle shading, clean graphic design aesthetic, smooth gradients, "
-            "2D cartoon style, simple shapes, harmonious color blocks"
+            "epic stylized 3D cartoon landscape render, modern animated feature film look, "
+            "bold saturated colors, dramatic depth and scale, lush detailed environment, "
+            "no people, no characters, majestic cinematic atmosphere"
         ),
-        "technical": (
-            "Technical: clean vector edges, smooth gradients, high resolution, crisp readable shapes"
-        ),
-    },
-    "storybook": {
-        "anchor": (
-            "children's storybook illustration style, whimsical fairy tale aesthetic, "
-            "rich detailed background, storytelling composition, magical enchanting "
-            "atmosphere, classic book illustration technique, warm inviting colors"
-        ),
-        "technical": (
-            "Technical: painterly detailed rendering, soft diffused lighting, rich textures, "
-            "8k resolution, crisp details"
-        ),
+        "technical": _TECHNICAL,
     },
     "anime": {
         "anchor": (
@@ -70,59 +70,77 @@ PRESETS: dict[str, dict[str, str]] = {
             "detailed background"
         ),
     },
+    # Photorealistic / hyper-detailed style — for when the user explicitly wants realism.
     "realistic": {
         "anchor": (
-            "soft cinematic 3D render, gently stylized realism, warm natural color palette, "
-            "lifelike but friendly characters"
+            "hyperrealistic photographic render, cinematic DSLR shot, "
+            "razor-sharp focus on subject, true-to-life proportions and materials, "
+            "natural color grading, award-winning photography"
         ),
         "technical": (
-            "Technical: subsurface scattering, soft diffused lighting, ray-traced global "
-            "illumination, physically based rendering (PBR), 8k resolution, crisp details"
+            "Technical: golden hour directional light, gentle ambient occlusion, "
+            "accurate material reflections and surface detail, "
+            "shallow depth of field, 8k resolution, no artifacts"
         ),
     },
 }
 
-# Layout block — added for tiles that carry a greeting/announcement text so the
-# generator leaves a clean area for the overlaid text (which we never render as
-# letters, because generators garble text).
+# Layout block for tiles that carry overlaid text (greetings/announcements):
+# the generator leaves a clean area for text we add later (never rendered as letters).
 LAYOUT_BLOCK = (
-    "generous negative space in the upper third reserved for a text overlay, "
-    "centered composition following the rule of thirds, high contrast between subject "
-    "and a soft bokeh background, no busy patterns behind text areas, clean uncluttered layout"
+    "generous negative space in upper third for text overlay, centered composition, "
+    "rule of thirds, high contrast between subject and soft bokeh background, "
+    "no busy patterns behind text areas, clean uncluttered layout"
 )
 
-# Negative prompt — for generators that support it (FLUX via fal/Replicate, SDXL).
-# Pollinations' URL API does not, so it is kept here for the next generator.
+# Layout block for plain pictures with no overlaid text.
+LAYOUT_CENTER = (
+    "subject centered in frame, soft bokeh background, clean uncluttered composition"
+)
+
+# Negative prompt — passed to generators that support it (Pollinations FLUX,
+# fal/Replicate, SDXL). OpenAI's Images API ignores it.
 NEGATIVE_PROMPT = (
     "distorted anatomy, photorealistic horror, uncanny valley faces, creepy expressions, "
-    "messy cluttered background, harsh aggressive neon colors, small unreadable text, "
-    "gibberish text, watermarks, signatures, cropped limbs, blurry faces, extra fingers, "
-    "extra limbs, deformed hands, low quality, jpeg artifacts, scary dark atmosphere"
+    "messy cluttered background, small unreadable text, "
+    "watermarks, signatures, cropped limbs, blurry faces, extra fingers or limbs, "
+    "low quality, jpeg artifacts, scary dark atmosphere, "
+    "dull muted colors, washed out palette, grey tones, "
+    "flat 2D illustration, flat vector art, matte plastic look, flat even lighting"
 )
 
 # Categories whose tiles place a text/greeting on the image.
 _TEXT_CATEGORIES = {"postcard", "announcement"}
 
 # Map a user-facing style label (or tile style answer) to a preset key.
+# Flat styles were removed — they now resolve to the unified branded 3D cartoon.
 _STYLE_MAP = {
     "cartoon": "3d_cartoon",
+    "cartoon 3d": "3d_cartoon",
     "3d": "3d_cartoon",
     "3d cartoon": "3d_cartoon",
+    "cozy scene": "scene_cozy",
+    "epic scene": "scene_epic",
     "pixar": "3d_cartoon",
     "disney": "3d_cartoon",
-    "watercolor": "watercolor",
-    "aquarelle": "watercolor",
-    "pastel": "pastel_flat",
-    "pastel flat": "pastel_flat",
-    "flat": "pastel_flat",
-    "fairytale": "storybook",
-    "fairy tale": "storybook",
-    "storybook": "storybook",
+    "watercolor": "3d_cartoon",
+    "aquarelle": "3d_cartoon",
+    "pastel": "3d_cartoon",
+    "pastel flat": "3d_cartoon",
+    "flat": "3d_cartoon",
+    "fairytale": "scene_cozy",
+    "fairy tale": "scene_cozy",
+    "storybook": "scene_cozy",
+    "cozy": "scene_cozy",
+    "epic": "scene_epic",
+    "landscape": "scene_cozy",
     "japanese": "anime",
     "anime": "anime",
     "ghibli": "anime",
     "realistic": "realistic",
     "realism": "realistic",
+    "photo": "realistic",
+    "photorealistic": "realistic",
 }
 
 

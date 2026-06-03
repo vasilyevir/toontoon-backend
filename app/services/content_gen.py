@@ -26,7 +26,7 @@ from app.core.security import new_id
 from app.core.transliterate import transliterate
 from app.models.generation import GenerationType
 from app.models.tile import Tile
-from app.services import prompt_style
+from app.services import picture_prompts, prompt_style
 
 # A small, stable public placeholder used for the video mock.
 _VIDEO_PLACEHOLDER = (
@@ -55,13 +55,31 @@ def build_prompt(
     free_text: str | None,
     style: str | None,
     photo_description: str | None = None,
-) -> str:
+) -> tuple[str, str]:
     """Mechanical fallback builder (used when GPT is unavailable).
 
-    Follows the same block structure as the GPT path: style anchor (first),
-    scene, optional layout block, technical block (last). It never emits the
-    banned "quality" words and never renders greeting text.
+    Returns ``(prompt, negative_prompt)``. For picture tiles it fills the exact
+    per-tile template with our answers; otherwise it assembles style anchor +
+    scene + optional layout + technical block. Never emits banned "quality"
+    words and never renders greeting text.
     """
+    # Picture tiles: fill the per-tile template deterministically (best effort).
+    if tile is not None and picture_prompts.is_picture_tile(tile.id):
+        tpl = picture_prompts.TEMPLATES[tile.id]
+        values: dict[str, str] = {}
+        answer_values = [answers[q.id] for q in tile.questions if answers.get(q.id)]
+        # Map answers onto placeholders positionally, falling back to defaults.
+        names = list(tpl.fields.keys())
+        for i, name in enumerate(names):
+            if i < len(answer_values) and answer_values[i]:
+                values[name] = answer_values[i]
+            else:
+                values[name] = tpl.fields[name] or "scene"
+        prompt = tpl.template
+        for name, value in values.items():
+            prompt = prompt.replace("{" + name + "}", value)
+        return transliterate(prompt), prompt_style.NEGATIVE_PROMPT
+
     style_key = prompt_style.map_style(style)
     is_text = prompt_style.is_text_tile(tile.category.value) if tile else False
 
@@ -87,10 +105,17 @@ def build_prompt(
 
     scene = ", ".join(p.strip() for p in scene_parts if p and p.strip())
     prompt = prompt_style.assemble(scene, style_key=style_key, is_text=is_text)
-    return transliterate(prompt)
+    return transliterate(prompt), prompt_style.NEGATIVE_PROMPT
 
 
-def build_image_url(prompt: str, *, width: int = 1024, height: int = 1024, seed: int | None = None) -> str:
+def build_image_url(
+    prompt: str,
+    *,
+    negative: str | None = None,
+    width: int = 1024,
+    height: int = 1024,
+    seed: int | None = None,
+) -> str:
     seed = seed if seed is not None else random.randint(1, 1_000_000)
     encoded = quote(prompt, safe="")
     url = (
@@ -98,6 +123,8 @@ def build_image_url(prompt: str, *, width: int = 1024, height: int = 1024, seed:
         f"?width={width}&height={height}&seed={seed}&nologo=true"
         f"&model={settings.pollinations_model}"
     )
+    if negative:
+        url += f"&negative_prompt={quote(negative, safe='')}"
     if settings.pollinations_referrer:
         url += f"&referrer={quote(settings.pollinations_referrer, safe='')}"
     if settings.pollinations_token:
@@ -284,7 +311,7 @@ async def generate(
     style = style or answers.get("style")
 
     # Try GPT prompt builder first.
-    prompt = await gpt_service.build_prompt(
+    prompt, negative = await gpt_service.build_prompt(
         tile=tile,
         answers=answers,
         free_text=free_text,
@@ -294,7 +321,7 @@ async def generate(
 
     # Fall back to mechanical builder if GPT is not configured or failed.
     if not prompt:
-        prompt = build_prompt(
+        prompt, negative = build_prompt(
             tile=tile,
             answers=answers,
             free_text=free_text,
@@ -307,10 +334,11 @@ async def generate(
         return _VIDEO_PLACEHOLDER, prompt
 
     # Generate via the configured provider, always serving from our own origin.
+    # OpenAI's Images API ignores negative prompts; Pollinations FLUX honors them.
     if settings.image_provider == "openai" and settings.openai_enabled:
         local_url = await _openai_image_to_uploads(prompt)
     else:
-        local_url = await _fetch_to_uploads(build_image_url(prompt))
+        local_url = await _fetch_to_uploads(build_image_url(prompt, negative=negative))
 
     if not local_url:
         # Provider is unavailable. Raise so the caller refunds the reserved TEKI

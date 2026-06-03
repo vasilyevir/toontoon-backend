@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     magic_link_ttl_minutes: int = 15
     session_cookie_samesite: str = "lax"
     session_cookie_secure: bool = False
-    signup_teki_balance: int = 3
+    signup_teki_balance: int = 10
 
     # OpenAI
     openai_api_key: str = ""

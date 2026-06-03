@@ -1,8 +1,8 @@
 """The ARTEKI tile catalog (English).
 
-31 tiles across 4 categories, each with 2–4 quick-reply questions, mirroring the
-product flow. Featured tiles are the 6 shown first in the chat. This is static
-content served to the frontend via ``GET /api/tiles``.
+Image (6), Postcard (15) and Video (8) tiles, each with 2–4 quick-reply
+questions, mirroring the product flow. Featured tiles are shown first in the
+chat. This is static content served to the frontend via ``GET /api/tiles``.
 """
 from __future__ import annotations
 
@@ -16,74 +16,77 @@ def _q(qid: str, text: str, options: list[str], allow_custom: bool = False) -> Q
 
 
 # ─── 🖼️ Image (6) — cost 1 ──────────────────────────────────────────────────
+# Question ids match the picture template field keys so answers map straight onto
+# the prompt placeholders. (Good morning / Have a nice day moved to Postcards.)
 _IMAGE_TILES: list[Tile] = [
     Tile(
-        id="morning", category=TileCategory.IMAGE, emoji="☀️", title="Good morning",
-        hint="A picture to set the mood", featured=True, cost=1,
+        id="cartoon_character", category=TileCategory.IMAGE, emoji="🧸", title="Cartoon character",
+        hint="A friendly cartoon hero", featured=True, cost=1,
         questions=[
-            _q("recipient", "Who is it for?", ["A friend", "Mom", "A colleague", "Myself"]),
-            _q("mood", "What mood?", ["Warm", "Tender", "Funny"]),
-            _q("subject", "What's in the frame?", ["Flowers", "Tea", "Nature", "Animal"]),
-            _q("palette", "Color and atmosphere?", ["Pastel", "Bright", "Cozy"]),
-        ],
-    ),
-    Tile(
-        id="good_day", category=TileCategory.IMAGE, emoji="🌤️", title="Have a nice day", cost=1,
-        questions=[
-            _q("recipient", "Who is it for?", ["A friend", "Mom", "A colleague", "Myself"]),
-            _q("mood", "What mood?", ["Cheerful", "Sunny", "Warm"]),
-            _q("subject", "What's in the frame?", ["Sun", "Flowers", "City", "Nature"]),
-            _q("palette", "Color and atmosphere?", ["Bright", "Pastel", "Soft"]),
+            # IDs match template fields: CHARACTER_TYPE, ACTION, SETTING
+            _q("character_type", "Type of character?", ["Friendly adventurer", "Cute wizard", "Kind baker", "Brave knight"]),
+            _q("action", "What is it doing?", ["Waving hello", "Exploring", "Cooking", "Reading a book"]),
+            _q("setting", "Where is it?", ["Cozy magical village", "Enchanted forest", "Sunny market", "Cozy library"]),
         ],
     ),
     Tile(
         id="cute_animal", category=TileCategory.IMAGE, emoji="🐾", title="Cute animal",
         hint="A warm picture with a pet", featured=True, cost=1,
         questions=[
+            # IDs match template fields: ANIMAL, ACTION, SETTING
             _q("animal", "Which animal?", ["Cat", "Dog", "Rabbit", "Bear", "Other"], allow_custom=True),
-            _q("action", "What is it doing?", ["Sleeping", "Playing", "Being funny"]),
-            _q("place", "Where is it?", ["At home", "In the forest", "Outside"]),
-            _q("mood", "What mood?", ["Funny", "Tender", "Touching"]),
+            _q("action", "What is it doing?", ["Sleeping", "Playing", "Sitting curiously", "Being funny"]),
+            _q("setting", "Where is it?", ["Cozy home with blanket", "In the forest", "Sunny garden"]),
+        ],
+    ),
+    Tile(
+        id="birds", category=TileCategory.IMAGE, emoji="🐦", title="Birds", cost=1,
+        questions=[
+            # IDs match template fields: BIRD, ACTION, SETTING
+            _q("bird", "Which bird?", ["Sparrow", "Bullfinch", "Owl", "Parrot", "Other"], allow_custom=True),
+            _q("action", "What is it doing?", ["Singing", "Perched on a branch", "Flying", "Preening"]),
+            _q("setting", "Where is it?", ["Blooming branch", "In the garden", "At the bird feeder", "In the forest"]),
+        ],
+    ),
+    Tile(
+        id="fish", category=TileCategory.IMAGE, emoji="🐠", title="Fish", cost=1,
+        questions=[
+            # IDs match template fields: FISH, ACTION, SETTING
+            _q("fish", "Which fish?", ["Goldfish", "Clownfish", "Betta", "Angelfish", "Other"], allow_custom=True),
+            _q("action", "What is it doing?", ["Swimming", "Playing", "Blowing bubbles", "Hiding"]),
+            _q("setting", "Where is it?", ["Coral reef", "Aquarium", "Seabed", "Among the seaweed"]),
         ],
     ),
     Tile(
         id="nature", category=TileCategory.IMAGE, emoji="🌿", title="Beautiful nature", cost=1,
         questions=[
-            _q("place", "What place?", ["Forest", "Mountains", "Sea", "Field"]),
-            _q("season", "Season?", ["Spring", "Summer", "Autumn", "Winter"]),
-            _q("time", "Time of day?", ["Morning", "Day", "Sunset", "Night"]),
-            _q("mood", "What mood?", ["Calm", "Magical", "Vivid"]),
+            # IDs match template fields: PLACE, TIME_OF_DAY, DETAIL
+            _q("place", "What place?", ["Forest meadow", "Mountains", "Sea", "Field", "Lake"]),
+            _q("time_of_day", "Time of day?", ["Golden hour sunset", "Morning mist", "Midday sun", "Moonlit night"]),
+            _q("detail", "What makes it special?", ["Wildflowers", "Waterfall", "Fog", "Rainbow", "Winding path"]),
         ],
     ),
     Tile(
-        id="cartoon_character", category=TileCategory.IMAGE, emoji="🧸", title="Cartoon character", cost=1,
+        id="food", category=TileCategory.IMAGE, emoji="🍰", title="Food", cost=1,
         questions=[
-            _q("kind", "Human or creature?", ["Human", "Animal", "Fairytale creature"]),
-            _q("audience", "For whom?", ["Child", "Adult"]),
-            _q("personality", "What character?", ["Cheerful", "Kind", "Playful"]),
-            _q("place", "Where is it?", ["At home", "In the forest", "In the city"]),
-        ],
-    ),
-    Tile(
-        id="fairytale", category=TileCategory.IMAGE, emoji="🏰", title="Fairytale landscape", cost=1,
-        questions=[
-            _q("place", "What place?", ["Forest", "Castle", "Village", "Sea"]),
-            _q("time", "Time of day?", ["Morning", "Sunset", "Night"]),
-            _q("special", "What's special in the frame?", ["Magic", "Lights", "Flowers", "Snow"]),
-            _q("mood", "What mood?", ["Magical", "Mysterious", "Warm"]),
+            # IDs match template fields: DISH, SETTING
+            _q("dish", "Which dish?", ["Pancakes", "Cake", "Pasta", "Soup", "Other"], allow_custom=True),
+            _q("setting", "How is it served?", ["On a wooden table", "By the window", "In a cafe", "Festive table"]),
         ],
     ),
 ]
 
-# ─── 💌 Postcard (10) — cost 1 ────────────────────────────────────────────────
+# ─── 💌 Postcard (13) — cost 1 ────────────────────────────────────────────────
+# Question ids match the card template field keys (who/name/age/text/scene/mood/
+# years/names/style) so answers map straight onto the prompt placeholders.
 _POSTCARD_TILES: list[Tile] = [
     Tile(
         id="birthday", category=TileCategory.POSTCARD, emoji="🎂", title="Birthday",
         hint="A warm greeting for someone close", featured=True, cost=1,
         questions=[
-            _q("audience", "Adult or child?", ["Adult", "Child"]),
-            _q("name", "Name of the birthday person?", ["No name"], allow_custom=True),
-            _q("age", "Age turning?", ["1", "5", "10", "18", "30", "50", "60", "70"]),
+            _q("who", "Who is it for?", ["A friend", "Mom", "Dad", "Partner", "Child", "Colleague"], allow_custom=True),
+            _q("name", "Their name?", ["No name"], allow_custom=True),
+            _q("age", "Age turning?", ["No age", "1", "5", "10", "18", "30", "50", "60", "70"]),
             _q("text", "What to write on the card?", [
                 "Happy Birthday!", "Wishing you health and happiness", "You're the best!",
                 "Live long and happily",
@@ -91,22 +94,33 @@ _POSTCARD_TILES: list[Tile] = [
         ],
     ),
     Tile(
-        id="jubilee", category=TileCategory.POSTCARD, emoji="🥂", title="Jubilee", cost=1,
+        id="jubilee", category=TileCategory.POSTCARD, emoji="🥂", title="Milestone Birthday", cost=1,
         questions=[
-            _q("audience", "For whom?", ["Woman", "Man"]),
-            _q("age", "Age turning?", ["50", "55", "60", "65", "70", "75", "80"]),
-            _q("mood", "What mood?", ["Solemn", "Warm", "Joyful"]),
+            _q("who", "For whom?", ["A woman", "A man", "A friend", "A parent"], allow_custom=True),
+            _q("name", "Their name?", ["No name"], allow_custom=True),
+            _q("age", "Milestone age?", ["50", "55", "60", "70", "80", "90", "100"]),
             _q("text", "What to write on the card?", [
                 "Happy Jubilee!", "Wisdom and health", "You inspire us", "Many happy years!",
             ]),
         ],
     ),
     Tile(
+        id="valentine", category=TileCategory.POSTCARD, emoji="💝", title="Valentine's Day", cost=1,
+        questions=[
+            _q("who", "Who is it for?", ["Partner", "Wife", "Husband", "Crush", "Someone special"], allow_custom=True),
+            _q("scene", "What's in the frame?", ["Roses", "Hearts", "Chocolate", "Teddy bear"]),
+            _q("mood", "What mood?", ["Romantic", "Tender", "Playful"]),
+            _q("text", "What to write on the card?", [
+                "Happy Valentine's Day!", "Be mine", "I love you", "You're my everything",
+            ]),
+        ],
+    ),
+    Tile(
         id="wedding", category=TileCategory.POSTCARD, emoji="💍", title="Wedding", cost=1,
         questions=[
-            _q("names", "Names of the bride and groom?", ["No names"], allow_custom=True),
-            _q("style", "What style?", ["Tender", "Solemn", "Fairytale"]),
-            _q("subject", "What's in the frame?", ["Flowers", "Rings", "Doves"]),
+            _q("names", "Names of the couple?", ["No names"], allow_custom=True),
+            _q("style", "What style?", ["Delicate", "Grand", "Fairy-tale"]),
+            _q("scene", "What's in the frame?", ["Flowers", "Rings", "Doves"]),
             _q("text", "What to write on the card?", [
                 "Love and harmony!", "Live long and happily", "May your love grow stronger",
                 "Happiness and harmony",
@@ -114,9 +128,9 @@ _POSTCARD_TILES: list[Tile] = [
         ],
     ),
     Tile(
-        id="couple_anniversary", category=TileCategory.POSTCARD, emoji="💑", title="Anniversary", cost=1,
+        id="anniversary", category=TileCategory.POSTCARD, emoji="💑", title="Anniversary", cost=1,
         questions=[
-            _q("years", "How many years together?", ["1", "3", "5", "10", "25", "50"]),
+            _q("years", "How many years together?", ["No number", "1", "5", "10", "25", "50"]),
             _q("mood", "What mood?", ["Romantic", "Warm", "Tender"]),
             _q("text", "What to write on the card?", [
                 "Happy anniversary!", "Love grows stronger every day", "You inspire us",
@@ -125,58 +139,11 @@ _POSTCARD_TILES: list[Tile] = [
         ],
     ),
     Tile(
-        id="new_year", category=TileCategory.POSTCARD, emoji="🎄", title="New Year",
-        hint="A festive winter card", featured=True, cost=1,
-        questions=[
-            _q("audience", "For whom?", ["A friend", "Family", "Colleagues", "Everyone"]),
-            _q("subject", "What's in the frame?", ["Christmas tree", "Santa", "Snow", "Animal of the year"]),
-            _q("mood", "What mood?", ["Magical", "Joyful", "Cozy"]),
-            _q("text", "What to write?", [
-                "Happy New Year!", "May your wishes come true", "Happiness and health",
-                "May this year be the best",
-            ]),
-        ],
-    ),
-    Tile(
-        id="march_8", category=TileCategory.POSTCARD, emoji="🌷", title="March 8", cost=1,
-        questions=[
-            _q("audience", "For whom?", ["Mom", "A friend", "A colleague", "All women"]),
-            _q("subject", "What's in the frame?", ["Flowers", "Spring", "Nature"]),
-            _q("mood", "What mood?", ["Tender", "Warm", "Joyful"]),
-            _q("text", "What to write?", [
-                "Happy March 8!", "You're the best", "Spring and happiness", "Beauty and love",
-            ]),
-        ],
-    ),
-    Tile(
-        id="may_9", category=TileCategory.POSTCARD, emoji="🎖️", title="Victory Day", cost=1,
-        questions=[
-            _q("audience", "For whom?", ["Veteran", "Grandfather", "Family", "Everyone"]),
-            _q("subject", "What's in the frame?", ["Flowers", "Dove", "St. George ribbon"]),
-            _q("mood", "What mood?", ["Solemn", "Warm", "Patriotic"]),
-            _q("text", "What to write?", [
-                "Happy Victory Day!", "Thank you for the peaceful sky", "We remember and are proud",
-                "Eternal glory to the heroes",
-            ]),
-        ],
-    ),
-    Tile(
-        id="easter", category=TileCategory.POSTCARD, emoji="🐣", title="Easter", cost=1,
-        questions=[
-            _q("audience", "For whom?", ["Family", "A friend", "Everyone"]),
-            _q("subject", "What's in the frame?", ["Eggs", "Easter cake", "Flowers", "Chicks"]),
-            _q("mood", "What mood?", ["Bright", "Joyful", "Warm"]),
-            _q("text", "What to write?", [
-                "Christ is Risen!", "Happy Easter!", "Peace and joy", "May your home be full of warmth",
-            ]),
-        ],
-    ),
-    Tile(
         id="mothers_day", category=TileCategory.POSTCARD, emoji="💐", title="Mother's Day", cost=1,
         questions=[
-            _q("sender", "From whom?", ["Daughter", "Son", "Grandchildren"]),
-            _q("subject", "What's in the frame?", ["Flowers", "Heart", "Nature"]),
-            _q("mood", "What mood?", ["Tender", "Warm", "Touching"]),
+            _q("who", "From whom?", ["Daughter", "Son", "Grandchildren", "Family"]),
+            _q("name", "Mom's name?", ["No name"], allow_custom=True),
+            _q("scene", "What's in the frame?", ["Flowers", "Heart", "Nature"]),
             _q("text", "What to write?", [
                 "Happy Mother's Day!", "You're the best mom in the world", "I love you endlessly",
                 "Thank you for everything",
@@ -184,13 +151,107 @@ _POSTCARD_TILES: list[Tile] = [
         ],
     ),
     Tile(
-        id="just_because", category=TileCategory.POSTCARD, emoji="🎉", title="Just because", cost=1,
+        id="fathers_day", category=TileCategory.POSTCARD, emoji="👔", title="Father's Day", cost=1,
         questions=[
-            _q("recipient", "For whom?", ["A friend", "Mom", "Loved one"]),
-            _q("subject", "What's in the frame?", ["Flowers", "Nature", "Animal", "Surprise"]),
+            _q("who", "From whom?", ["Daughter", "Son", "Grandchildren", "Family"]),
+            _q("name", "Dad's name?", ["No name"], allow_custom=True),
+            _q("scene", "What's in the frame?", ["Nature", "Sports", "Fishing", "Tools"]),
+            _q("mood", "What mood?", ["Warm", "Proud", "Fun"]),
+            _q("text", "What to write?", [
+                "Happy Father's Day!", "The best dad in the world", "Thank you for everything",
+                "So proud to be yours",
+            ]),
+        ],
+    ),
+    Tile(
+        id="easter", category=TileCategory.POSTCARD, emoji="🐣", title="Easter", cost=1,
+        questions=[
+            _q("who", "For whom?", ["Family", "A friend", "Everyone"]),
+            _q("scene", "What's in the frame?", ["Easter eggs", "Spring flowers", "Baby chick", "Bunny"]),
+            _q("mood", "What mood?", ["Bright", "Joyful", "Warm"]),
+            _q("text", "What to write?", [
+                "Happy Easter!", "Peace and joy", "Blessings to you", "May your home be full of warmth",
+            ]),
+        ],
+    ),
+    Tile(
+        id="thanksgiving", category=TileCategory.POSTCARD, emoji="🦃", title="Thanksgiving", cost=1,
+        questions=[
+            _q("who", "For whom?", ["Family", "Friends", "Everyone"]),
+            _q("scene", "What's in the frame?", ["Pumpkins", "Autumn leaves", "Harvest", "Turkey"]),
+            _q("mood", "What mood?", ["Warm", "Cozy", "Joyful"]),
+            _q("text", "What to write?", [
+                "Happy Thanksgiving!", "Grateful for you", "Give thanks", "Blessings to you",
+            ]),
+        ],
+    ),
+    Tile(
+        id="new_year", category=TileCategory.POSTCARD, emoji="🎄", title="New Year / Christmas",
+        hint="A festive winter card", featured=True, cost=1,
+        questions=[
+            _q("who", "For whom?", ["A friend", "Family", "Colleagues", "Everyone"]),
+            _q("scene", "What's in the frame?", ["Christmas tree", "Santa", "Snow", "Holiday animals"]),
+            _q("mood", "What mood?", ["Magical", "Festive", "Cozy"]),
+            _q("text", "What to write?", [
+                "Happy New Year!", "Merry Christmas!", "May your wishes come true",
+                "May this year be the best",
+            ]),
+        ],
+    ),
+    Tile(
+        id="graduation", category=TileCategory.POSTCARD, emoji="🎓", title="Graduation", cost=1,
+        questions=[
+            _q("who", "Who is it for?", ["Son", "Daughter", "A friend", "A student"], allow_custom=True),
+            _q("name", "Graduate's name?", ["No name"], allow_custom=True),
+            _q("scene", "What's in the frame?", ["Diploma & cap", "Confetti", "Flowers", "Books"]),
+            _q("text", "What to write?", [
+                "Congratulations!", "Well done, graduate!", "The future is yours", "So proud of you",
+            ]),
+        ],
+    ),
+    Tile(
+        id="get_well", category=TileCategory.POSTCARD, emoji="🌻", title="Get Well Soon", cost=1,
+        questions=[
+            _q("who", "Who is it for?", ["A friend", "Mom", "Family", "A colleague"]),
+            _q("scene", "What's in the frame?", ["Sunflowers", "Sunshine", "Birds", "Rainbow"]),
+            _q("mood", "What mood?", ["Warm", "Uplifting", "Gentle"]),
+            _q("text", "What to write?", [
+                "Get well soon!", "Feel better", "Thinking of you", "Sending you strength",
+            ]),
+        ],
+    ),
+    Tile(
+        id="just_because", category=TileCategory.POSTCARD, emoji="🎉", title="Just Because", cost=1,
+        questions=[
+            _q("who", "For whom?", ["A friend", "Mom", "Loved one"]),
+            _q("scene", "What's in the frame?", ["Flowers", "Nature", "Animal", "Surprise"]),
             _q("mood", "What mood?", ["Warm", "Funny", "Tender"]),
             _q("text", "What to write?", [
                 "Just wanted to greet you", "Thinking of you", "You're special", "Hugs",
+            ]),
+        ],
+    ),
+    # Moved from the Image branch — now greeting cards (carry an overlaid text).
+    Tile(
+        id="good_morning", category=TileCategory.POSTCARD, emoji="☀️", title="Good morning",
+        hint="A picture to set the mood", cost=1,
+        questions=[
+            # IDs match card template fields: SUBJECT, ACTIVITY (+ text overlay)
+            _q("subject", "Who or what is the focus?", ["Cute character", "Flowers", "Animal", "Nature"]),
+            _q("activity", "What morning activity?", ["Enjoying tea", "Reading", "Watching sunrise", "Stretching"]),
+            _q("text", "What to write on the card?", [
+                "Good morning!", "Have a wonderful day", "Rise and shine", "Sending you sunshine",
+            ]),
+        ],
+    ),
+    Tile(
+        id="good_day", category=TileCategory.POSTCARD, emoji="🌤️", title="Have a nice day", cost=1,
+        questions=[
+            # IDs match card template fields: SUBJECT, SETTING (+ text overlay)
+            _q("subject", "Who or what is the focus?", ["A friendly character", "Flowers", "Sun", "Nature"]),
+            _q("setting", "What's the setting?", ["Sunny garden", "City park", "Blooming field", "Balcony with view"]),
+            _q("text", "What to write on the card?", [
+                "Have a great day!", "Make it count", "Enjoy your day", "Smile today",
             ]),
         ],
     ),
@@ -365,10 +426,11 @@ _VIDEO_TILES: list[Tile] = [
 
 
 # Free-form follow-up: a single style question.
+# Unified branded cartoon 3D — flat styles removed (all resolve to 3D anyway).
 FREEFORM_STYLE_QUESTION = Question(
     id="style",
     text="What style?",
-    options=["Cartoon", "Watercolor", "Pastel", "Fairytale", "Japanese"],
+    options=["Cartoon 3D", "Cozy scene", "Epic scene", "Anime"],
 )
 
 
@@ -377,7 +439,6 @@ def get_categories() -> list[Category]:
     return [
         Category(id=TileCategory.IMAGE, emoji="🖼️", label="Image", tiles=_IMAGE_TILES),
         Category(id=TileCategory.POSTCARD, emoji="💌", label="Postcard", tiles=_POSTCARD_TILES),
-        Category(id=TileCategory.ANNOUNCEMENT, emoji="📣", label="Announcement", tiles=_ANNOUNCEMENT_TILES),
         Category(id=TileCategory.VIDEO, emoji="🎬", label="Video", tiles=_VIDEO_TILES),
     ]
 
