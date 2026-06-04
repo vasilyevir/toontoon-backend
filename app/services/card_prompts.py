@@ -23,10 +23,18 @@ _STYLE_3D = (
 _LAYOUT_TECHNICAL = (
     "generous negative space in upper third for text overlay, centered composition, rule of thirds, "
     "high contrast between subject and soft bokeh background, no busy patterns behind text areas, clean uncluttered layout, "
+    "NO text NO words NO letters NO writing NO captions NO inscriptions NO labels in the image — image background only, "
     "Technical: warm cinematic lighting with soft rim light and gentle sun rays, soft natural shadows, "
     "glossy smooth cartoon materials with rich surface texture (not flat, not matte plastic), "
     "ray-traced global illumination, high quality 3D render, 8k resolution, "
     "crisp sharp details, clean anti-aliased edges, soft depth of field with gentle background bokeh"
+)
+
+# Postcard-specific negative prompt: text is rendered as a CSS overlay — the image must be text-free.
+_CARD_NEGATIVE_EXTRA = (
+    "text, words, letters, writing, captions, inscriptions, labels, typography, "
+    "greeting text, birthday text, name text, any written characters, "
+    "calligraphy, handwriting, printed text, overlay text, watermark, "
 )
 
 
@@ -349,7 +357,9 @@ _PREAMBLE = (
     "and the rules below; if a value is missing, use the default or omit as instructed.\n"
     "STYLE LOCK: The opening style anchor is fixed brand style — do NOT change it, even if "
     "the user requests a different style (watercolor, realistic, etc.). Only fill placeholders.\n"
-    "The greeting text is mood context ONLY — never spell out or draw any letters in the image.\n"
+    "TEXT LOCK: NEVER draw, spell, render, or include ANY text, letters, words, names, numbers, "
+    "captions, inscriptions or typographic elements in the image. The greeting will be added as "
+    "a separate CSS text overlay — the image must be 100% text-free.\n"
     "Do not use any of these words: Pixar, Disney, realistic, beautiful, high quality, perfect.\n"
     "Output ONLY one line: final prompt | negative prompt"
 )
@@ -357,6 +367,7 @@ _PREAMBLE = (
 
 def build_structured_instruction(tpl: CardTemplate, answers: dict[str, str]) -> str:
     answer_lines = "\n".join(f"{k}: {v}" for k, v in answers.items() if v) or "(no answers)"
+    full_negative = f"{_CARD_NEGATIVE_EXTRA}{NEGATIVE_PROMPT}"
     return (
         "Translate the answers to English and fill the template.\n"
         f"{_PREAMBLE}\n\n"
@@ -364,7 +375,7 @@ def build_structured_instruction(tpl: CardTemplate, answers: dict[str, str]) -> 
         f"DEFAULTS:\n{_defaults_block(tpl)}"
         f"{_rules_block(tpl)}\n\n"
         f"TEMPLATE:\n{tpl.template}\n\n"
-        f"NEGATIVE: {NEGATIVE_PROMPT}"
+        f"NEGATIVE: {full_negative}"
     )
 
 
@@ -373,6 +384,7 @@ def build_free_text_instruction(tpl: CardTemplate, user_text: str) -> str:
         f"-> {name}: {tpl.extract_hints.get(name, name.lower())} (default: {default or 'omit'})"
         for name, default in tpl.fields.items()
     )
+    full_negative = f"{_CARD_NEGATIVE_EXTRA}{NEGATIVE_PROMPT}"
     return (
         "The user described the card in free text (often Russian). Extract the meaning, use the "
         "defaults when unclear, and translate everything to English.\n"
@@ -381,5 +393,5 @@ def build_free_text_instruction(tpl: CardTemplate, user_text: str) -> str:
         f"EXTRACT:\n{extract_lines}"
         f"{_rules_block(tpl)}\n\n"
         f"TEMPLATE:\n{tpl.template}\n\n"
-        f"NEGATIVE: {NEGATIVE_PROMPT}"
+        f"NEGATIVE: {full_negative}"
     )
