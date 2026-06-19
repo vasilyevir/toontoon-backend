@@ -21,13 +21,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from app.services.prompt_style import NEGATIVE_PROMPT
+from app.services.prompt_style import (
+    NEGATIVE_PROMPT, APPEAL_BLOCK,
+    get_expression, get_pose, get_palette, get_light, get_composition,
+)
 
 # ─── Shared anchors / blocks (mirror prompt_style + spec) ─────────────────────
 _STYLE_3D = (
-    "vibrant 3D cartoon render, modern animated feature film look, big expressive friendly eyes, "
-    "soft rounded chunky shapes, smooth glossy surfaces with subtle texture, bold warm saturated colors, "
-    "cheerful charming character design, bright modern animation quality,"
+    "vibrant 3D cartoon render, modern animated feature film look, "
+    "big expressive eyes with lively catchlights, "
+    "soft rounded chunky shapes, smooth glossy surfaces with subtle texture, "
+    "bold warm saturated colors, "
+    "premium stylized character design with strong character appeal, "
+    "clean readable silhouette, soft rounded appealing shapes, "
+    "charismatic likeable personality, "
+    "bright toy-like materials with rich micro-texture,"
 )
 _SCENE_COZY = (
     "cozy stylized 3D cartoon render, modern animated feature film look, "
@@ -47,6 +55,33 @@ _TECHNICAL = (
     "crisp sharp details, clean anti-aliased edges, soft depth of field with gentle background bokeh"
 )
 _LAYOUT_CENTER = "subject centered in frame, soft bokeh background, clean uncluttered composition,"
+
+# Picture tiles with living subjects (get expression + pose injection).
+_LIVING_PICTURE_TILES: frozenset[str] = frozenset({"cartoon_character", "cute_animal", "birds", "fish"})
+# Marker at end of _STYLE_3D — injection point for expression/pose/appeal.
+_STYLE_END_MARKER = "bright toy-like materials with rich micro-texture,"
+
+
+def _enrich_picture_template(tpl: "PictureTemplate") -> str:
+    """Inject per-tile visual layers into the template at instruction-build time."""
+    is_living = tpl.tile_id in _LIVING_PICTURE_TILES
+    template = tpl.template
+
+    # Insert expression + pose + appeal after style anchor (living tiles only).
+    if is_living and _STYLE_END_MARKER in template:
+        inject = f"{get_expression(tpl.tile_id)}, {get_pose(tpl.tile_id)}, {APPEAL_BLOCK},"
+        template = template.replace(_STYLE_END_MARKER, f"{_STYLE_END_MARKER} {inject}", 1)
+
+    # Replace generic layout center with enhanced composition + palette + light.
+    style_key = "3d_cartoon" if is_living else "scene_cozy"
+    comp = get_composition(tpl.tile_id, style_key, is_card=False)
+    palette = get_palette(tpl.tile_id, is_living)
+    light = get_light(tpl.tile_id)
+    inject_layout = f"{comp}, {palette}, {light},"
+    if _LAYOUT_CENTER in template:
+        template = template.replace(_LAYOUT_CENTER, inject_layout, 1)
+
+    return template
 
 
 @dataclass(frozen=True)
@@ -228,6 +263,7 @@ _STYLE_LOCK = (
 def build_structured_instruction(tpl: PictureTemplate, answers: dict[str, str]) -> str:
     """Instruction for when the user answered with quick-reply buttons."""
     answer_lines = "\n".join(f"{k.upper()}: {v}" for k, v in answers.items() if v) or "(no answers)"
+    enriched = _enrich_picture_template(tpl)
     return (
         "Translate the answers to English and fill the template.\n"
         "Each ANSWER KEY matches a {PLACEHOLDER} in the template. If a placeholder has no "
@@ -239,7 +275,7 @@ def build_structured_instruction(tpl: PictureTemplate, answers: dict[str, str]) 
         f"ANSWERS:\n{answer_lines}\n\n"
         f"DEFAULTS:\n{_defaults_block(tpl)}"
         f"{_notes_block(tpl)}\n\n"
-        f"TEMPLATE:\n{tpl.template}\n\n"
+        f"TEMPLATE:\n{enriched}\n\n"
         f"NEGATIVE: {NEGATIVE_PROMPT}"
     )
 
@@ -250,6 +286,7 @@ def build_free_text_instruction(tpl: PictureTemplate, user_text: str) -> str:
         f"-> {name}: {tpl.extract_hints.get(name, name.lower())} (default: {default or 'infer'})"
         for name, default in tpl.fields.items()
     )
+    enriched = _enrich_picture_template(tpl)
     return (
         "The user described the scene in free text (often Russian). Extract the meaning, "
         "use the defaults when unclear, and translate everything to English.\n"
@@ -261,6 +298,6 @@ def build_free_text_instruction(tpl: PictureTemplate, user_text: str) -> str:
         f"USER TEXT: {user_text}\n\n"
         f"EXTRACT:\n{extract_lines}"
         f"{_notes_block(tpl)}\n\n"
-        f"TEMPLATE:\n{tpl.template}\n\n"
+        f"TEMPLATE:\n{enriched}\n\n"
         f"NEGATIVE: {NEGATIVE_PROMPT}"
     )

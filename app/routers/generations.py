@@ -28,6 +28,16 @@ async def list_generations(ctx: Optional[Context] = Depends(optional_context)) -
     return await generations_service.list_for_user(user.id)
 
 
+@router.get("/generations/{gen_id}", response_model=Generation)
+async def get_generation(gen_id: str, ctx: Context = Depends(required_context)) -> Generation:
+    """Fetch a single generation (used to poll async video jobs)."""
+    user, _ = ctx
+    generation = await generations_service.get(gen_id)
+    if not generation or generation.user_id != user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Generation not found")
+    return generation
+
+
 @router.post("/generations", response_model=Generation, status_code=status.HTTP_201_CREATED)
 async def create_generation(body: CreateGenerationRequest, ctx: Context = Depends(required_context)) -> Generation:
     """Reserve a queued generation record up-front (before /generate runs)."""

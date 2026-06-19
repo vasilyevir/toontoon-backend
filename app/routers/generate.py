@@ -17,7 +17,7 @@ from app.models.generation import (
     GenerationStatus,
     GenerationType,
 )
-from app.services import content_gen, generations_service, tiles_data, wallet
+from app.services import content_gen, generations_service, tiles_data, video_gen, wallet
 
 logger = logging.getLogger("arteki.generate")
 
@@ -63,8 +63,22 @@ async def generate(body: GenerateRequest, ctx: Context = Depends(required_contex
 
     # Cost is driven by the tile (videos cost more) or the requested type.
     if tile is not None:
+        tile_is_video = tile.category.value == "video"
+        # Reject a request whose declared type contradicts the tile's category
+        # BEFORE reserving TEKI, so a mismatch never charges the wrong amount
+        # or routes into the wrong pipeline (logic-fix 7.3 / QA 9.4).
+        if body.type == GenerationType.VIDEO and not tile_is_video:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail="Requested type does not match the selected template.",
+            )
+        if body.type == GenerationType.IMAGE and tile_is_video:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail="Requested type does not match the selected template.",
+            )
         cost = tile.cost
-        gen_type = GenerationType.VIDEO if tile.category.value == "video" else GenerationType.IMAGE
+        gen_type = GenerationType.VIDEO if tile_is_video else GenerationType.IMAGE
     else:
         gen_type = body.type
         cost = settings.video_teki_cost if gen_type == GenerationType.VIDEO else settings.image_teki_cost
@@ -74,6 +88,53 @@ async def generate(body: GenerateRequest, ctx: Context = Depends(required_contex
         payment = await wallet.reserve(user, session, amount=cost, reason=reason)
     except wallet.InsufficientFunds:
         raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, detail="Not enough TEKI")
+
+    # ── Video: long-running (keyframes → Seedance, ~4–5 min). Run as a background
+    # job and let the client poll GET /api/generations/{id}. We persist a QUEUED
+    # record now; the worker flips it to DONE (with the URL) or FAILED (+ refund).
+    if gen_type == GenerationType.VIDEO:
+        if not settings.kie_enabled:
+            await wallet.cancel(user, session, payment)
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Video generator is not configured. Your TEKI was refunded.",
+            )
+
+        generation = Generation(
+            id=new_id("gen_"),
+            user_id=user.id,
+            type=GenerationType.VIDEO,
+            status=GenerationStatus.QUEUED,
+            tile_id=tile.id if tile else None,
+            tile_label=tile.title if tile else None,
+            prompt=body.prompt or (tile.title if tile else ""),
+            payment_id=payment.payment_id,
+            cost=cost,
+        )
+        await generations_service.add_for_user(generation)
+
+        video_gen.schedule_video_job(
+            gen_id=generation.id,
+            user_id=user.id,
+            session_id=session.sid,
+            payment_amount=cost,
+            payment_id=payment.payment_id,
+            tile=tile,
+            answers=body.answers,
+            free_text=body.prompt,
+            style=body.style,
+            photo_url=body.photo_url,
+        )
+
+        balance = await wallet.get_balance(user, session)
+        return GenerateResponse(
+            id=generation.id,
+            url="",
+            type=GenerationType.VIDEO,
+            balance=balance.available,
+            prompt=generation.prompt,
+            status=GenerationStatus.QUEUED,
+        )
 
     try:
         result_url, prompt = await content_gen.generate(

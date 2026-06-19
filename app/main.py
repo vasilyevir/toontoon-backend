@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.redis_client import connect, disconnect
-from app.routers import auth, chat, generate, generations, payments, profile, tiles, webhooks
+from app.routers import auth, chat, generate, generations, payments, profile, push, tiles, webhooks
 
 UPLOAD_DIR = Path("uploads")
 
@@ -48,6 +48,7 @@ app.include_router(tiles.router)
 app.include_router(generate.router)
 app.include_router(generations.router)
 app.include_router(payments.router)
+app.include_router(push.router)
 app.include_router(webhooks.router)
 
 

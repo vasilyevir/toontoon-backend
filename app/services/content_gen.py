@@ -27,11 +27,8 @@ from app.core.transliterate import transliterate
 from app.models.generation import GenerationType
 from app.models.tile import Tile
 from app.services import picture_prompts, prompt_style
+from app.services.prompt_style import OPENAI_VISUAL_GUARDS, strip_brands
 
-# A small, stable public placeholder used for the video mock.
-_VIDEO_PLACEHOLDER = (
-    "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4"
-)
 
 logger = logging.getLogger("arteki.content_gen")
 
@@ -330,13 +327,19 @@ async def generate(
         )
 
     if gen_type == GenerationType.VIDEO:
-        # TODO: replace with the real video pipeline once available.
-        return _VIDEO_PLACEHOLDER, prompt
+        # Videos are handled asynchronously in routers/generate.py (video_gen pipeline).
+        # If this branch is somehow reached, it's a programming error — raise rather
+        # than returning a stale placeholder URL.
+        raise GenerationUnavailable("Video generation must use the async pipeline")
+
+    # Apply brand guard before sending to any provider.
+    prompt = strip_brands(prompt)
 
     # Generate via the configured provider, always serving from our own origin.
-    # OpenAI's Images API ignores negative prompts; Pollinations FLUX honors them.
+    # OpenAI's Images API ignores negative_prompt — visual guards go into the positive prompt.
     if settings.image_provider == "openai" and settings.openai_enabled:
-        local_url = await _openai_image_to_uploads(prompt)
+        openai_prompt = f"{prompt}, {OPENAI_VISUAL_GUARDS}"
+        local_url = await _openai_image_to_uploads(openai_prompt)
     else:
         local_url = await _fetch_to_uploads(build_image_url(prompt, negative=negative))
 

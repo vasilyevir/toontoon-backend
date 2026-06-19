@@ -34,16 +34,96 @@ _LIVING_KEYWORDS = {
     "hamster", "rat", "mouse", "pig", "cow", "sheep", "goat", "chicken",
     # fantasy creatures
     "dragon", "unicorn", "dinosaur", "monster", "creature", "beast",
-    # russian common terms
-    "человек", "персонаж", "животное", "собака", "кошка", "птица", "рыба",
-    "кролик", "медведь", "лиса", "волк", "лошадь", "дракон", "кот", "пёс",
+    # russian — people
+    "человек", "люди", "мужчина", "женщина", "девочка", "мальчик", "ребёнок", "ребенок",
+    "дети", "малыш", "малышка", "дама", "господин", "персонаж", "герой", "принцесса",
+    "волшебник", "рыцарь", "фея", "эльф", "санта", "дед", "мороз",
+    "бабушка", "бабуля", "баба", "дедушка", "дедуля", "дедуся",
+    "старушка", "старик", "девушка", "парень", "юноша", "тётя", "дядя",
+    "мама", "папа", "сестра", "брат", "внук", "внучка",
+    # russian — animals
+    "животное", "питомец", "собака", "кошка", "кот", "пёс", "котёнок", "щенок",
+    "кролик", "зайчик", "медведь", "панда", "лев", "тигр", "лиса", "волк",
+    "олень", "лошадь", "конь", "слон", "обезьяна", "птица", "сова", "попугай",
+    "пингвин", "утка", "цыплёнок", "рыба", "акула", "дельфин", "кит", "лягушка",
+    "черепаха", "змея", "хомяк", "крыса", "мышь", "свинья", "корова", "овца",
+    "коза", "курица", "дракон", "единорог", "динозавр", "монстр", "существо",
 }
+
+
+# Russian word roots — match any word that STARTS WITH one of these roots
+# (handles all declensions: бабушки, бабушку, кошки, кота, дедушке…)
+_LIVING_RU_ROOTS = (
+    "бабуш", "бабул", "дедуш", "дедул", "дедус", "мальчик", "девочк",
+    "девушк", "парен", "юнош", "ребён", "ребен", "малыш", "мужчин",
+    "женщин", "тётей", "тёть", "дядей", "дядь", "мамой", "мам", "пап",
+    "сестр", "брат", "внук", "тёт", "дяд",
+    "кошк", "кошеч", "котёнк", "котик", "котёнок", "котейк", "кот",
+    "пёс", "пёсик", "песик", "собак", "собач", "щенк", "щеночек",
+    "кролик", "зайч", "зайк", "медвед", "медвеж", "мишк", "мишутк",
+    "лисиц", "лисён", "волч", "лошад", "конь",
+    "слон", "слонён", "тигрён", "обезьян", "птиц", "птичк", "совы", "совён",
+    "попугай", "пингвин", "уточк", "цыплён", "рыбк", "акул", "дельфин",
+    "черепах", "лягушк", "ёжик", "ежик", "хомячк",
+    "дракон", "дракончик", "единорог", "динозавр", "динозаврик",
+)
+
+
+# English diminutives / pet-talk that won't match a plain singular.
+_LIVING_EN_EXTRA = {
+    "kitty", "kittie", "doggy", "doggie", "puppy", "birdie", "bunnies",
+    "kitties", "doggies", "puppies", "birdies", "froggy", "piggy",
+}
+
+
+def _singularize(word: str) -> str:
+    """Cheap English de-pluralization so 'cats'/'puppies' match 'cat'/'puppy'."""
+    if len(word) <= 3:
+        return word
+    if word.endswith("ies"):
+        return word[:-3] + "y"
+    if word.endswith("es") and word[-3:-2] in {"s", "x", "z", "o", "h"}:
+        return word[:-2]
+    if word.endswith("s") and not word.endswith("ss"):
+        return word[:-1]
+    return word
 
 
 def _has_living_subject(text: str) -> bool:
     """Return True if the text appears to describe a living subject (person or animal)."""
-    words = {w.strip(".,!?;:\"'()") for w in text.lower().split()}
-    return bool(words & _LIVING_KEYWORDS)
+    lower = text.lower()
+    words = {w.strip(".,!?;:\"'()«»") for w in lower.split()}
+    # Exact English/nominative-Russian keywords (+ English diminutives).
+    if words & (_LIVING_KEYWORDS | _LIVING_EN_EXTRA):
+        return True
+    # English plurals: 'cats', 'dogs', 'puppies' → singular keyword.
+    if {_singularize(w) for w in words} & _LIVING_KEYWORDS:
+        return True
+    # Russian root prefix matching (handles all declined forms + diminutives).
+    return any(w.startswith(root) for w in words for root in _LIVING_RU_ROOTS)
+
+
+# Scale/landscape cues that should resolve to the epic anchor when no living
+# subject is present (logic-fix 4.3 — scene_epic was previously unreachable).
+_EPIC_SCENE_KEYWORDS = {
+    "mountain", "mountains", "ocean", "sea", "canyon", "valley", "desert",
+    "glacier", "waterfall", "cliff", "cliffs", "volcano", "fjord", "aurora",
+    "galaxy", "cosmos", "horizon", "vast", "epic", "majestic", "panorama",
+    "skyline", "storm", "tundra", "iceberg",
+    "горы", "гора", "горах", "океан", "море", "каньон", "долина", "пустыня",
+    "ледник", "водопад", "скалы", "скала", "вулкан", "космос", "галактик",
+    "простор", "ущель", "эпич", "грандиоз", "величеств", "панорам",
+}
+
+
+def _is_epic_scene(text: str) -> bool:
+    """Return True for a grand, large-scale scene (no living subject)."""
+    lower = text.lower()
+    words = {w.strip(".,!?;:\"'()«»") for w in lower.split()}
+    if words & _EPIC_SCENE_KEYWORDS:
+        return True
+    return any(w.startswith(root) for w in words
+               for root in ("галактик", "космос", "эпич", "грандиоз", "величеств", "простор"))
 
 from app.config import settings
 from app.models.tile import Tile
@@ -66,45 +146,65 @@ _OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
 _SCENE_SYSTEM = """You translate a non-technical user's quick answers into ONE vivid
 English SCENE description for an image generator. The audience is people aged 40–60
 who write casually, with filler words, and expect you to "figure it out".
+The user's input may be in Russian, English, or any other language — always output
+the scene description in English regardless of the input language.
 
-Write ONLY the scene (30–60 words): the subject, what they are doing or how it looks,
-the setting, and the mood. Extract concrete visual meaning and drop conversational filler.
+Write ONLY the scene (45–80 words). Extract concrete visual meaning and drop conversational filler.
 
 Strict rules:
 - Output ONLY the scene. NO style words, NO camera/technical words, NO quotes, NO
   explanations — the system adds the visual style and technical quality separately.
 - CRITICAL: Describe ONLY what the user explicitly asked for.
   * If the user asks for a vehicle, building, object, landscape, food, or product —
-    draw ONLY that subject. Do NOT add any people, characters, or animals.
-  * Only include people/animals if the user explicitly mentions them.
+    draw ONLY that subject. Do NOT add any people, characters, or animals UNLESS the user also mentioned them.
+  * Only include people/animals if the user explicitly mentions them — translate Russian names/roles:
+    бабушка → grandmother, дедушка → grandfather, кошка → cat, собака → dog, etc.
+- CRITICAL CHARACTER RULE: If the user mentions a person or character (e.g. "бабушка", "grandma",
+  "a girl", "кот", "a cat"), that character MUST appear as the main subject of the scene.
+  NEVER drop or replace the requested character with just an object or background.
+- If the scene has a LIVING SUBJECT (person, animal, or character), you MUST include ALL of:
+  1. A specific facial expression + eye direction (e.g. "warm beaming smile, looking at viewer")
+  2. A specific body pose / action (e.g. "arms raised in joyful celebration")
+  3. A concrete color palette that fits the mood (e.g. "warm coral and gold tones")
 - Infer gender from a name when given. Greetings → warm cheerful mood. Morning wishes →
   calm peaceful mood. Pick a fitting setting for the occasion.
-- If characters ARE present, give them a genuine, warm, friendly expression. Never scary.
-- NEVER use these words: beautiful, high quality, realistic, perfect, good, nice, 4k, hd, masterpiece.
-- If a greeting/announcement text is provided, DO NOT spell out or draw any letters.
+- NEVER scary, never static/blank — characters must feel alive and expressive.
+- NEVER use: beautiful, high quality, realistic, perfect, good, nice, 4k, hd, masterpiece,
+  Pixar, Disney, Ghibli, DreamWorks.
+- COPYRIGHT RULE: If the user names a copyrighted character or franchise, describe it
+  with a GENERIC paraphrase of its look (e.g. "a cheerful yellow cartoon sea-sponge
+  character") and NEVER write the brand name. NEVER substitute it with a different
+  named brand or character — keep the user's own subject, just made generic.
+- If a greeting/announcement text is provided, DO NOT draw any letters.
   Instead describe a clean empty area where text can be placed later.
 """
 
-_CHAT_SYSTEM = """You are Arteki — a friendly, warm AI assistant that helps people
-create beautiful images, postcards and videos.
+_CHAT_SYSTEM = """You are Arteki, a warm, friendly AI assistant that helps people create
+beautiful images, postcards and videos.
 
-Your users are mostly 40–60 years old and not very tech-savvy. Be simple,
-kind and encouraging. Speak in short sentences.
+IMPORTANT: Always reply in English, regardless of the language the user writes in. Keep
+the entire product experience in one consistent language.
 
-Your capabilities:
-- Generate images (1 TEKI): Cartoon character, Cute animal, Birds, Fish,
-  Beautiful nature, Food
-- Generate postcards (1 TEKI): Birthday, Milestone Birthday, Valentine's Day,
-  Wedding, Anniversary, Mother's Day, Father's Day, Easter, Thanksgiving,
-  New Year / Christmas, Graduation, Get Well Soon, Just Because,
-  Good morning, Have a nice day
-- Generate videos (2 TEKI): Animate photo, Animate pet, Cartoon character,
+Your users are mostly people aged 40–60 who are not very tech-savvy. Be simple, kind and
+inspiring. Write short sentences.
+
+What you can make:
+- Images (1 TEKI): Cartoon character, Cute animal, Birds, Fish, Nature, Food
+- Postcards (1 TEKI): Birthday, Jubilee, Valentine's Day, Wedding, Anniversary,
+  Mother's Day, Father's Day, Easter, Thanksgiving, New Year, Graduation, Get Well,
+  Just Because, Good Morning, Good Day
+- Videos (2 TEKI): Animate a photo, Animate a pet, Cartoon character,
   Video greeting, Living nature, Cute animal, Good morning, Inspiring video
 
-When the user describes what they want, suggest the best matching tile.
-Ask 1–2 short clarifying questions if needed, then confirm and offer to generate.
-Never ask more than 2 questions in a row.
-Keep replies under 3 sentences.
+When the user describes an idea, suggest the most fitting content type.
+Ask 1–2 clarifying questions if needed, then confirm and offer to create it.
+Never ask more than 2 questions in a row. Keep replies to at most 3 sentences.
+
+COPYRIGHT RULE: If the user asks for a copyrighted character or franchise (e.g. SpongeBob,
+Elsa, Pikachu), do NOT invent a different brand. Either offer a generic look-alike
+("a cheerful yellow cartoon sea-sponge character") or gently say it cannot be an exact
+brand and propose a generic version. NEVER swap one brand for another brand that the user
+did not mention.
 """
 
 
@@ -174,6 +274,10 @@ async def build_prompt(
     if not settings.openai_enabled:
         return "", ""
 
+    # Neutralize named third-party IP once, up front, so the same normalized
+    # subject feeds both the template and the free-scene paths (logic-fix 3.2).
+    free_text = prompt_style.neutralize_ip(free_text)
+
     # ── Picture / card tiles: fill the exact per-tile template ───────────────
     if tile is not None and (picture_prompts.is_picture_tile(tile.id) or card_prompts.is_card_tile(tile.id)):
         has_answers = any(answers.get(q.id) for q in tile.questions)
@@ -220,7 +324,12 @@ async def build_prompt(
         # This prevents the character-design anchor from biasing inanimate generations
         # (e.g. "Porsche car" would otherwise get "cheerful charming character design").
         combined_text = " ".join(filter(None, [free_text, tile.title if tile else ""]))
-        style_key = "3d_cartoon" if _has_living_subject(combined_text) else "scene_cozy"
+        if _has_living_subject(combined_text):
+            style_key = "3d_cartoon"
+        elif _is_epic_scene(combined_text):
+            style_key = "scene_epic"
+        else:
+            style_key = "scene_cozy"
     is_text = prompt_style.is_text_tile(tile.category.value) if tile else False
 
     parts: list[str] = []
@@ -272,10 +381,7 @@ async def chat_reply(
     Falls back to a static reply if OpenAI is not configured.
     """
     if not settings.openai_enabled:
-        return (
-            "Hi! I'm Arteki. Tell me what you'd like to create today — "
-            "a postcard, image or video?"
-        )
+        return "Hi! I'm Arteki. What would you like to create — a postcard, an image, or a video?"
 
     messages = [{"role": "system", "content": _CHAT_SYSTEM}]
     messages.extend(history[-10:])  # Keep last 10 turns for context.

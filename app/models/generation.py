@@ -31,6 +31,8 @@ class Generation(BaseModel):
     tile_label: Optional[str] = None
     prompt: str = ""
     result_url: Optional[str] = None
+    # For videos: a JPEG thumbnail extracted from the first frame (shown in gallery/sidebar).
+    thumbnail_url: Optional[str] = None
 
     # Wallet bookkeeping.
     payment_id: Optional[str] = None
@@ -66,6 +68,8 @@ class GenerateResponse(BaseModel):
     type: GenerationType
     balance: int
     prompt: str
+    # "done" for images (synchronous) or "queued" for videos (async + polled).
+    status: GenerationStatus = GenerationStatus.DONE
 
 
 class CreateGenerationRequest(BaseModel):

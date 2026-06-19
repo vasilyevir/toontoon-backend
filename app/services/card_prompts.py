@@ -11,15 +11,50 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from app.services.prompt_style import NEGATIVE_PROMPT
+from app.services.prompt_style import (
+    NEGATIVE_PROMPT, APPEAL_BLOCK,
+    get_expression, get_pose, get_palette, get_light, get_composition,
+)
 
 # Shared block strings (kept identical to the spec — unified branded cartoon 3D).
-# Style fix round 2: warm cinematic textured look, no flat/matte; watercolor removed.
 _STYLE_3D = (
-    "vibrant 3D cartoon render, modern animated feature film look, big expressive friendly eyes, "
+    "vibrant 3D cartoon render, modern animated feature film look, "
+    "big expressive eyes with lively catchlights, "
     "soft rounded chunky shapes, smooth glossy surfaces with subtle texture, "
-    "bold warm saturated colors, cheerful charming character design, bright modern animation quality,"
+    "bold warm saturated colors, "
+    "premium stylized character design with strong character appeal, "
+    "clean readable silhouette, soft rounded appealing shapes, "
+    "charismatic likeable personality, "
+    "bright toy-like materials with rich micro-texture,"
 )
+
+# Card tiles that carry a living character subject (get expression + pose injection).
+_LIVING_CARDS: frozenset[str] = frozenset({"birthday", "good_morning", "good_day"})
+# Marker at the end of the style anchor — injection point for expression/pose.
+_STYLE_END_MARKER = "bright toy-like materials with rich micro-texture,"
+# Marker at the start of the layout block — injection point for composition/palette/light.
+_LAYOUT_START_MARKER = "generous negative space in upper third for text overlay"
+
+
+def _enrich_card_template(tpl: "CardTemplate") -> str:
+    """Inject per-tile visual layers into the template at instruction-build time."""
+    is_living = tpl.tile_id in _LIVING_CARDS
+    template = tpl.template
+
+    # Insert expression + pose right after the style anchor (living cards only).
+    if is_living and _STYLE_END_MARKER in template:
+        inject = f"{get_expression(tpl.tile_id)}, {get_pose(tpl.tile_id)},"
+        template = template.replace(_STYLE_END_MARKER, f"{_STYLE_END_MARKER} {inject}", 1)
+
+    # Insert composition + palette + light just before the layout/technical block.
+    if _LAYOUT_START_MARKER in template:
+        comp = get_composition(tpl.tile_id, "3d_cartoon", is_card=True)
+        palette = get_palette(tpl.tile_id, is_living)
+        light = get_light(tpl.tile_id)
+        inject = f"{comp}, {palette}, {light},"
+        template = template.replace(_LAYOUT_START_MARKER, f"{inject} {_LAYOUT_START_MARKER}", 1)
+
+    return template
 _LAYOUT_TECHNICAL = (
     "generous negative space in upper third for text overlay, centered composition, rule of thirds, "
     "high contrast between subject and soft bokeh background, no busy patterns behind text areas, clean uncluttered layout, "
@@ -368,13 +403,14 @@ _PREAMBLE = (
 def build_structured_instruction(tpl: CardTemplate, answers: dict[str, str]) -> str:
     answer_lines = "\n".join(f"{k}: {v}" for k, v in answers.items() if v) or "(no answers)"
     full_negative = f"{_CARD_NEGATIVE_EXTRA}{NEGATIVE_PROMPT}"
+    enriched = _enrich_card_template(tpl)
     return (
         "Translate the answers to English and fill the template.\n"
         f"{_PREAMBLE}\n\n"
         f"ANSWERS:\n{answer_lines}\n\n"
         f"DEFAULTS:\n{_defaults_block(tpl)}"
         f"{_rules_block(tpl)}\n\n"
-        f"TEMPLATE:\n{tpl.template}\n\n"
+        f"TEMPLATE:\n{enriched}\n\n"
         f"NEGATIVE: {full_negative}"
     )
 
@@ -385,6 +421,7 @@ def build_free_text_instruction(tpl: CardTemplate, user_text: str) -> str:
         for name, default in tpl.fields.items()
     )
     full_negative = f"{_CARD_NEGATIVE_EXTRA}{NEGATIVE_PROMPT}"
+    enriched = _enrich_card_template(tpl)
     return (
         "The user described the card in free text (often Russian). Extract the meaning, use the "
         "defaults when unclear, and translate everything to English.\n"
@@ -392,6 +429,6 @@ def build_free_text_instruction(tpl: CardTemplate, user_text: str) -> str:
         f"USER TEXT: {user_text}\n\n"
         f"EXTRACT:\n{extract_lines}"
         f"{_rules_block(tpl)}\n\n"
-        f"TEMPLATE:\n{tpl.template}\n\n"
+        f"TEMPLATE:\n{enriched}\n\n"
         f"NEGATIVE: {full_negative}"
     )

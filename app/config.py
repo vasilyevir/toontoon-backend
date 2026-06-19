@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     magic_link_ttl_minutes: int = 15
     session_cookie_samesite: str = "lax"
     session_cookie_secure: bool = False
-    signup_teki_balance: int = 10
+    signup_teki_balance: int = 30
 
     # OpenAI
     openai_api_key: str = ""
@@ -55,6 +55,32 @@ class Settings(BaseSettings):
     pollinations_token: str = ""
     pollinations_referrer: str = "arteki"
     vision_timeout_seconds: int = 7
+
+    # Video generation (kie.ai / ByteDance Seedance)
+    kie_api_key: str = ""
+    kie_base_url: str = "https://api.kie.ai"
+    kie_video_model: str = "bytedance/seedance-2-fast"
+    # Audio-capable model used for nature kinemagraphs (Seedance 2.0 with generate_audio).
+    kie_video_audio_model: str = "bytedance/seedance-2"
+    video_frame_count: int = 4
+    video_resolution: str = "720p"
+    video_aspect_ratio: str = "9:16"
+    video_duration: int = 5
+    video_poll_interval: float = 6.0
+    video_poll_timeout: float = 600.0
+
+    @property
+    def kie_enabled(self) -> bool:
+        return bool(self.kie_api_key.strip())
+
+    # Web Push (VAPID)
+    vapid_private_key: str = ""
+    vapid_public_key: str = ""
+    vapid_email: str = "mailto:hello@arteki.ai"
+
+    @property
+    def push_enabled(self) -> bool:
+        return bool(self.vapid_private_key.strip() and self.vapid_public_key.strip())
 
     # Boostify
     boostify_mock: bool = True
