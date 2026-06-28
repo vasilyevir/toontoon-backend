@@ -1,4 +1,4 @@
-"""Authentication — magic link (v1) and Boostify OAuth (v2)."""
+"""Authentication — magic link (v1) and Boostyfi OAuth v2 (PKCE)."""
 from __future__ import annotations
 
 import time
@@ -47,27 +47,44 @@ async def verify(token: str = Query(...)):
     return response
 
 
-# ─── v2: Boostify OAuth ─────────────────────────────────────────────────────
+# ─── v2: Boostyfi OAuth (PKCE / S256, required) ─────────────────────────────
 
 
 @router.get("/boostify/login")
 async def boostify_login():
-    """Kick off the Boostify OAuth flow."""
+    """Kick off the Boostyfi OAuth flow with PKCE.
+
+    Generates a PKCE pair and a CSRF state token, stores the verifier in Redis
+    keyed by state (TTL 10 min), then redirects the browser to Boostyfi.
+    The verifier is never sent to the browser.
+    """
     state = new_token()
+    code_verifier, code_challenge = boostify.pkce_pair()
+
     redis = get_client()
-    await redis.set(f"oauth_state:{state}", "1", ex=600)
-    return RedirectResponse(url=boostify.authorize_url(state), status_code=302)
+    # Store verifier alongside the state so the callback can retrieve it.
+    await redis.set(f"oauth_state:{state}", code_verifier, ex=600)
+
+    return RedirectResponse(
+        url=boostify.authorize_url(state, code_challenge),
+        status_code=302,
+    )
 
 
 @router.get("/boostify/callback")
 async def boostify_callback(code: str = Query(...), state: str = Query(...)):
+    """Complete the OAuth flow: verify state, exchange code (with PKCE verifier)."""
     redis = get_client()
-    valid = await redis.get(f"oauth_state:{state}")
-    if not valid:
+    code_verifier = await redis.get(f"oauth_state:{state}")
+    if not code_verifier:
         return RedirectResponse(url=f"{settings.frontend_url}/?error=oauth_state", status_code=302)
     await redis.delete(f"oauth_state:{state}")
 
-    tokens = await boostify.exchange_code(code)
+    # code_verifier may come back as bytes from Redis.
+    if isinstance(code_verifier, bytes):
+        code_verifier = code_verifier.decode()
+
+    tokens = await boostify.exchange_code(code, code_verifier)
     user = await auth_service.get_or_create_boostify_user(tokens["user"])
     session = await auth_service.create_session(
         user,

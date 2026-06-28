@@ -53,7 +53,7 @@ async def reserve(user: User, session: Session, *, amount: int, reason: str) -> 
 
     if user.provider == AuthProvider.BOOSTIFY:
         token = await ensure_boostify_token(session)
-        return await boostify.create_payment(token, user_id=user.boostify_user_id or user.id, amount=amount, reason=reason)
+        return await boostify.create_payment(token, amount=amount, reason=reason)
 
     # Magic-link: decrement immediately; refund on cancel.
     user.teki_balance -= amount
