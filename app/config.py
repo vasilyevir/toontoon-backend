@@ -84,7 +84,7 @@ class Settings(BaseSettings):
 
     # Boostyfi (OAuth + Wallet)
     boostify_mock: bool = True
-    boostify_base_url: str = "https://api.boostyfi.com/api/v1"
+    boostify_base_url: str = "https://boostyfi.com/api/v1"
     boostify_client_id: str = "arteki"
     boostify_client_secret: str = "change-me"
     boostify_redirect_uri: str = "http://localhost:8000/api/auth/boostify/callback"
