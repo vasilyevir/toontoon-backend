@@ -80,7 +80,8 @@ async def exchange_code(code: str, code_verifier: str) -> dict:
     """Exchange an authorization code for tokens + user info.
 
     Body must be application/json (Boostyfi does NOT accept form-urlencoded).
-    ``id_token`` claims are used to avoid a separate /userinfo call.
+    Tries to extract user claims from ``id_token`` first; falls back to a
+    ``/userinfo`` call if the token is missing or its payload is incomplete.
     """
     if settings.boostify_mock:
         return {
@@ -110,10 +111,27 @@ async def exchange_code(code: str, code_verifier: str) -> dict:
         resp.raise_for_status()
         data = resp.json()
 
-        # Parse user claims from id_token to avoid a separate /userinfo call.
+        access_token = data["access_token"]
+
+        # Try id_token payload first (avoids an extra HTTP call).
         user = _claims_from_id_token(data.get("id_token", ""))
+        if not user.get("sub"):
+            # id_token missing or incomplete — fall back to /userinfo.
+            ui_resp = await client.get(
+                f"{settings.boostify_base_url}/oauth/userinfo",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            ui_resp.raise_for_status()
+            ui = ui_resp.json()
+            user = {
+                "sub": str(ui.get("sub", "")),
+                "email": ui.get("email", ""),
+                "name": ui.get("name") or ui.get("preferred_username", ""),
+                "avatar": ui.get("picture"),
+            }
+
         return {
-            "access_token": data["access_token"],
+            "access_token": access_token,
             "refresh_token": data.get("refresh_token"),
             "expires_in": data.get("expires_in", 3600),
             "user": user,
@@ -178,6 +196,10 @@ async def get_balance(access_token: str) -> Balance:
             f"{settings.boostify_base_url}/sso/arteki/balance",
             headers={"Authorization": f"Bearer {access_token}"},
         )
+        # Wallet API may not be deployed yet (404) — return a zero balance
+        # so the UI renders cleanly rather than crashing.
+        if resp.status_code == 404:
+            return Balance(available=0, locked=0)
         resp.raise_for_status()
         data = resp.json()
         # ``available`` and ``locked`` are returned as decimal strings ("45.0").
@@ -198,6 +220,13 @@ async def create_payment(access_token: str, *, amount: int, reason: str) -> Paym
             headers={"Authorization": f"Bearer {access_token}"},
             json={"amount": amount, "reason": reason},
         )
+        if resp.status_code == 404:
+            raise RuntimeError("Boostyfi Wallet API is not yet deployed — payment creation unavailable")
+        if resp.status_code == 400:
+            err = resp.json().get("error", "")
+            if err in ("insufficient_balance", "cap_exceeded"):
+                from app.services.wallet import InsufficientFunds  # local import to avoid circular
+                raise InsufficientFunds(err)
         resp.raise_for_status()
         data = resp.json()
         return Payment(
