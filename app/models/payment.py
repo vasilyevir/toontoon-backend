@@ -9,6 +9,7 @@ class PaymentStatus(str, Enum):
     PENDING = "pending"
     CONFIRMED = "confirmed"
     CANCELLED = "cancelled"
+    FAILED = "failed"  # returned by Boostyfi when a reserve expires (payment_expired)
 
 
 class Payment(BaseModel):

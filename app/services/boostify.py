@@ -36,6 +36,15 @@ _MOCK_AVAILABLE = 200
 _MOCK_LOCKED = 1000
 
 
+class PaymentExpiredError(Exception):
+    """Raised when Boostyfi returns payment_expired on confirm/cancel.
+
+    This means the 5-minute reserve window elapsed; Boostyfi already returned
+    the cap to the grant limit. The caller must decide whether to re-charge
+    (on confirm) or silently skip (on cancel).
+    """
+
+
 # ─── PKCE helpers ─────────────────────────────────────────────────────────────
 
 def pkce_pair() -> tuple[str, str]:
@@ -208,6 +217,12 @@ async def confirm_payment(access_token: str, payment_id: str) -> Payment:
             headers={"Authorization": f"Bearer {access_token}"},
             json={"payment_id": payment_id},
         )
+        # payment_expired (400) means the 5-min TTL elapsed; Boostyfi already
+        # returned the cap. Raise a typed exception so the caller can re-charge.
+        if resp.status_code == 400:
+            err = resp.json().get("error", "")
+            if err == "payment_expired":
+                raise PaymentExpiredError(f"Payment {payment_id} expired before confirmation")
         resp.raise_for_status()
         data = resp.json()
         return Payment(payment_id=payment_id, status=PaymentStatus(data["status"]), amount=0)
@@ -223,6 +238,12 @@ async def cancel_payment(access_token: str, payment_id: str) -> Payment:
             headers={"Authorization": f"Bearer {access_token}"},
             json={"payment_id": payment_id},
         )
+        # payment_expired / payment_not_pending: Boostyfi already closed this
+        # reserve automatically — treat as successfully cancelled, nothing to do.
+        if resp.status_code == 400:
+            err = resp.json().get("error", "")
+            if err in ("payment_expired", "payment_not_pending"):
+                return Payment(payment_id=payment_id, status=PaymentStatus.CANCELLED, amount=0)
         resp.raise_for_status()
         data = resp.json()
         return Payment(payment_id=payment_id, status=PaymentStatus(data["status"]), amount=0)
