@@ -169,6 +169,7 @@ async def run_video_pipeline(
         raise VideoUnavailable("Video generator is not configured")
 
     tile_id = tile.id if tile else None
+    text_overlay: str | None = None  # populated by storyboard builders; None for photo-to-video
 
     # Group C: photo-to-video — user uploaded a real photo
     if photo_url and tile_id in {"animate_photo", "animate_pet"}:
@@ -209,12 +210,20 @@ async def run_video_pipeline(
             tile_id, board.loop, board.duration, board.audio_enabled, model,
         )
         record_prompt = seedance_prompt[:300]
+        text_overlay = board.text_overlay  # may be None
 
     payload = {"model": model, "input": input_block}
     task_id = await _submit_task(payload)
     remote_url = await _poll_task(task_id)
     local_url = await _download_video(remote_url)
-    return (local_url or remote_url), record_prompt
+    final_url = local_url or remote_url
+
+    # Bake text into the video if the storyboard requested an overlay.
+    if text_overlay and final_url and final_url.startswith("/uploads/"):
+        from app.services import video_overlay
+        final_url = await video_overlay.apply_text_overlay(final_url, text_overlay)
+
+    return final_url, record_prompt
 
 
 # ─── Background job ──────────────────────────────────────────────────────────

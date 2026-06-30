@@ -82,9 +82,23 @@ class Settings(BaseSettings):
     def push_enabled(self) -> bool:
         return bool(self.vapid_private_key.strip() and self.vapid_public_key.strip())
 
+    # Cloudinary — video text overlay (bakes text_overlay into the rendered mp4).
+    # Leave cloud_name empty to skip overlay (videos delivered without text).
+    cloudinary_cloud_name: str = ""
+    cloudinary_api_key: str = ""
+    cloudinary_api_secret: str = ""
+
+    @property
+    def cloudinary_enabled(self) -> bool:
+        return bool(
+            self.cloudinary_cloud_name.strip()
+            and self.cloudinary_api_key.strip()
+            and self.cloudinary_api_secret.strip()
+        )
+
     # Boostyfi (OAuth + Wallet)
     boostify_mock: bool = True
-    boostify_base_url: str = "https://boostyfi.com/api/v1"
+    boostify_base_url: str = "https://api.boostyfi.com/api/v1"
     boostify_client_id: str = "arteki"
     boostify_client_secret: str = "change-me"
     boostify_redirect_uri: str = "http://localhost:8000/api/auth/boostify/callback"
