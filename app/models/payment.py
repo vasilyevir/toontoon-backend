@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from typing import Optional
 
 from pydantic import BaseModel
 
@@ -25,7 +26,19 @@ class Payment(BaseModel):
 
 
 class Balance(BaseModel):
-    """Wallet balance shown in the UI."""
+    """Wallet balance shown in the UI.
+
+    For magic-link users ``available`` is the local TEKI balance.
+    For Boostyfi users:
+      - ``available``       = how much the user authorised to spend in Arteki
+                              (= grant_remaining). This is what the UI shows and
+                              what the pre-flight check uses.
+      - ``locked``          = vesting/locked IMBA (informational only).
+      - ``grant_cap``       = total spending cap the user set when connecting.
+      - ``grant_expires_at``= ISO-8601 datetime when the grant expires (or None).
+    """
 
     available: int
     locked: int = 0
+    grant_cap: int = 0
+    grant_expires_at: Optional[str] = None

@@ -189,7 +189,7 @@ async def refresh(refresh_token: str) -> dict:
 
 async def get_balance(access_token: str) -> Balance:
     if settings.boostify_mock:
-        return Balance(available=_MOCK_AVAILABLE, locked=_MOCK_LOCKED)
+        return Balance(available=_MOCK_AVAILABLE, locked=_MOCK_LOCKED, grant_cap=_MOCK_AVAILABLE)
 
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.get(
@@ -202,10 +202,28 @@ async def get_balance(access_token: str) -> Balance:
             return Balance(available=0, locked=0)
         resp.raise_for_status()
         data = resp.json()
-        # ``available`` and ``locked`` are returned as decimal strings ("45.0").
+
+        # All numeric fields arrive as high-precision decimal strings, e.g.
+        # "999999.000000000000000000" or "0E-18" — float() handles both.
+        def _int(v) -> int:
+            try:
+                return max(0, int(float(str(v))))
+            except (TypeError, ValueError):
+                return 0
+
+        grant_remaining = _int(data.get("grant_remaining", 0))
+        grant_cap       = _int(data.get("grant_cap", 0))
+        locked          = _int(data.get("locked", 0))
+        grant_expires_at = data.get("grant_expires_at")  # ISO-8601 str or None
+
+        # ``grant_remaining`` is the real spending limit inside Arteki.
+        # The raw ``available`` (user's total holdings, e.g. 999999) is
+        # misleading in the product UI — we expose grant_remaining instead.
         return Balance(
-            available=int(float(data["available"])),
-            locked=int(float(data.get("locked", 0))),
+            available=grant_remaining,
+            locked=locked,
+            grant_cap=grant_cap,
+            grant_expires_at=grant_expires_at,
         )
 
 
