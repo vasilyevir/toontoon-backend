@@ -48,14 +48,18 @@ def _sign(params: dict[str, str]) -> str:
 def _encode_overlay_text(text: str) -> str:
     """Encode text for a Cloudinary l_text layer.
 
-    Cloudinary's layer encoding replaces a few characters:
-      ,  ->  %2C
-      /  ->  %2F
-      newline -> %0A
-      space -> %20  (standard URL encoding)
+    Standard percent-encoding handles spaces, punctuation, etc. But comma and
+    slash are transformation-string delimiters in Cloudinary's own syntax: the
+    eager transformation string we POST gets echoed back into a delivery URL,
+    which then goes through one HTTP decode pass before Cloudinary's
+    transformation parser runs. A single %2C/%2F would decode back into a
+    literal "," / "/" at that point and break parsing (confirmed: Cloudinary
+    error "Invalid transformation component" when commas are present).
+    The documented fix is to DOUBLE-encode just those two delimiters
+    (%2C -> %252C, %2F -> %252F) so they survive the extra decode pass.
     """
-    # Standard percent-encode everything, then fix Cloudinary-specific chars.
     encoded = quote(text, safe="")
+    encoded = encoded.replace("%2C", "%252C").replace("%2F", "%252F")
     return encoded
 
 
