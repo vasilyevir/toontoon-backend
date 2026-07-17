@@ -1,0 +1,33 @@
+# Значения релиза для общего чарта oci://ghcr.io/atom-group-software/charts/app (BACKEND).
+# Проект arteki-web (backend). CI перебивает image.tag.
+# Секреты (DATABASE_URL, ключи) — в Secret arteki-web-backend-secrets (kubectl, не в git!).
+# TODO: заполнить env/БД/redis/ingress под реальные требования проекта.
+type: backend
+
+image:
+  repository: ghcr.io/atom-group-software/arteki-web-backend
+  tag: latest
+
+# Не-секретные env → ConfigMap. Секреты — в Secret <release>-secrets (kubectl, не сюда!).
+env:
+  ENV: "production"
+  DEBUG: "false"
+
+secret:
+  enabled: true        # ссылка на существующий Secret arteki-web-backend-secrets
+
+# Подготовка БД (миграции/create_all) до старта. Включи, если нужно.
+initSchema:
+  enabled: false
+  command: []
+  # пример (Alembic): ["alembic", "upgrade", "head"]
+
+redis:
+  enabled: false
+
+ingress:
+  enabled: false
+  host: api.arteki-web.example.com
+  tls:
+    enabled: false
+    clusterIssuer: letsencrypt-prod
