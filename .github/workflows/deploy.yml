@@ -1,0 +1,70 @@
+# Build & Deploy через общий Helm-чарт (backend).
+# Требуются секреты репо: KUBECONFIG, GHCR_READ_PAT (read:packages).
+name: Build & Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+env:
+  # ghcr требует lowercase; имя орги содержит заглавные → путь захардкожен.
+  IMAGE: ghcr.io/atom-group-software/arteki-web-backend
+  CHART: oci://ghcr.io/atom-group-software/charts/app
+  CHART_VERSION: "0.2.0"
+  RELEASE: arteki-web-backend
+  NAMESPACE: arteki-web
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set image tag
+        id: meta
+        run: echo "tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ steps.meta.outputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p "$HOME/.kube"
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+      - name: Helm registry login
+        run: echo "${{ secrets.GHCR_READ_PAT }}" | helm registry login ghcr.io -u eerixxx --password-stdin
+      - name: Helm upgrade --install
+        run: |
+          helm upgrade --install "$RELEASE" "$CHART" \
+            --version "$CHART_VERSION" \
+            -n "$NAMESPACE" --create-namespace \
+            -f deploy/values.yaml \
+            --set image.tag=${{ needs.build.outputs.image_tag }} \
+            --wait --timeout 180s
