@@ -15,7 +15,10 @@ router = APIRouter(prefix="/api/auth", tags=["profile"])
 @router.patch("/profile")
 async def update_profile(body: ProfileUpdate, ctx: Context = Depends(required_context)) -> PublicUser:
     user, _ = ctx
-    user.name = body.name
+    if body.name is not None:
+        user.name = body.name
+    if body.avatar is not None:
+        user.avatar = body.avatar
     await auth_service.save_user(user)
     return PublicUser.from_user(user)
 

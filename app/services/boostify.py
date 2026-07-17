@@ -68,7 +68,7 @@ def authorize_url(state: str, code_challenge: str) -> str:
         "client_id": settings.boostify_client_id,
         "redirect_uri": settings.boostify_redirect_uri,
         "response_type": "code",
-        "scope": "openid email profile imba.spend",
+        "scope": "openid email profile wallet",
         "code_challenge": code_challenge,
         "code_challenge_method": "S256",
         "state": state,

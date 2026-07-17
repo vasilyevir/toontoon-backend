@@ -79,6 +79,29 @@ async def get_or_create_magic_user(email: str) -> User:
     return user
 
 
+async def get_user_by_email(email: str) -> Optional[User]:
+    """Look up a user by (case-insensitive) email, if any."""
+    redis = get_client()
+    existing_id = await redis.get(_email_key(email))
+    if not existing_id:
+        return None
+    return await get_user(existing_id)
+
+
+async def create_email_user(email: str, password_hash: str, name: str) -> User:
+    """Create a new email+password user with the signup TEKI balance."""
+    user = User(
+        id=new_id("usr_"),
+        provider=AuthProvider.EMAIL,
+        email=email,
+        name=name,
+        password_hash=password_hash,
+        teki_balance=settings.signup_teki_balance,
+    )
+    await save_user(user)
+    return user
+
+
 async def get_or_create_boostify_user(info: dict) -> User:
     """Find/create a user from a Boostify userinfo payload."""
     boostify_id = info["sub"]
@@ -118,6 +141,29 @@ async def consume_magic_token(token: str) -> Optional[str]:
     email = await redis.get(_magic_key(token))
     if email:
         await redis.delete(_magic_key(token))
+    return email
+
+
+# ─── Password-reset tokens ────────────────────────────────────────────────────
+
+
+def _reset_key(token: str) -> str:
+    return f"reset:{token}"
+
+
+async def create_reset_token(email: str) -> str:
+    redis = get_client()
+    token = new_token()
+    await redis.set(_reset_key(token), email, ex=settings.password_reset_ttl_seconds)
+    return token
+
+
+async def consume_reset_token(token: str) -> Optional[str]:
+    """Return the email for a valid reset token and delete it (single use)."""
+    redis = get_client()
+    email = await redis.get(_reset_key(token))
+    if email:
+        await redis.delete(_reset_key(token))
     return email
 
 

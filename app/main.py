@@ -9,8 +9,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
+from app.middleware.app_key import AppKeyMiddleware
 from app.redis_client import connect, disconnect
-from app.routers import auth, chat, generate, generations, payments, profile, push, tiles, webhooks
+from app.routers import auth, chat, events, generate, generations, payments, profile, push, tiles, webhooks
 
 UPLOAD_DIR = Path("uploads")
 
@@ -38,6 +39,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mobile app-key + HMAC verification. No-op unless settings.app_key_required.
+app.add_middleware(AppKeyMiddleware)
+
 # Serve uploaded reference photos.
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR), check_dir=False), name="uploads")
 
@@ -49,6 +53,7 @@ app.include_router(generate.router)
 app.include_router(generations.router)
 app.include_router(payments.router)
 app.include_router(push.router)
+app.include_router(events.router)
 app.include_router(webhooks.router)
 
 

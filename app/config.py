@@ -16,6 +16,23 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:3000"
     auth_success_redirect: str = "/generate"
 
+    # Mobile app-key + HMAC request signing (see docs/APP-KEY-SETUP.md).
+    # DISABLED by default — flipping app_key_required to true rejects any /api/*
+    # request that isn't signed by the app, so enable ONLY once mobile is verified
+    # and web/webhooks are excluded or also signing. Values must match the app's
+    # Config.xcconfig (APP_KEY / APP_SECRET).
+    app_key: str = ""
+    app_secret: str = ""
+    app_key_required: bool = False
+    app_sig_max_skew_seconds: int = 300
+    # Paths under /api that are NEVER signature-checked (server-to-server or
+    # signed-over-empty-body): uploads (multipart) + webhooks (external callers).
+    app_key_exempt_prefixes: str = "/api/uploads,/api/webhooks"
+
+    @property
+    def app_key_exempt_list(self) -> list[str]:
+        return [p.strip() for p in self.app_key_exempt_prefixes.split(",") if p.strip()]
+
     # Redis
     redis_url: str = "redis://localhost:6379/0"
     use_fake_redis: bool = False
@@ -24,6 +41,7 @@ class Settings(BaseSettings):
     session_cookie_name: str = "arteki-session"
     session_ttl_days: int = 30
     magic_link_ttl_minutes: int = 15
+    password_reset_ttl_minutes: int = 60
     session_cookie_samesite: str = "lax"
     session_cookie_secure: bool = False
     signup_teki_balance: int = 30
@@ -67,7 +85,9 @@ class Settings(BaseSettings):
     video_aspect_ratio: str = "9:16"
     video_duration: int = 5
     video_poll_interval: float = 6.0
-    video_poll_timeout: float = 600.0
+    # bytedance/seedance-2 (audio-capable model, used for all text-overlay
+    # tiles: morning/inspiring/greeting) occasionally needs more than 10 min.
+    video_poll_timeout: float = 900.0
 
     @property
     def kie_enabled(self) -> bool:
@@ -115,6 +135,10 @@ class Settings(BaseSettings):
     @property
     def magic_link_ttl_seconds(self) -> int:
         return self.magic_link_ttl_minutes * 60
+
+    @property
+    def password_reset_ttl_seconds(self) -> int:
+        return self.password_reset_ttl_minutes * 60
 
 
 @lru_cache

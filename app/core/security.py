@@ -1,10 +1,29 @@
-"""Token generation and webhook signature helpers."""
+"""Token generation, password hashing and webhook signature helpers."""
 from __future__ import annotations
 
 import hashlib
 import hmac
 import secrets
 import uuid
+
+from argon2 import PasswordHasher
+from argon2.exceptions import VerifyMismatchError, VerificationError, InvalidHashError
+
+# Argon2id password hasher (sane defaults). One shared instance is fine.
+_ph = PasswordHasher()
+
+
+def hash_password(password: str) -> str:
+    """Return an Argon2id hash for a plaintext password."""
+    return _ph.hash(password)
+
+
+def verify_password(password: str, password_hash: str) -> bool:
+    """Constant-time-ish verify of a plaintext password against its Argon2 hash."""
+    try:
+        return _ph.verify(password_hash, password)
+    except (VerifyMismatchError, VerificationError, InvalidHashError):
+        return False
 
 
 def new_token() -> str:

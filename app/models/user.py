@@ -10,6 +10,7 @@ from pydantic import BaseModel, EmailStr, Field
 class AuthProvider(str, Enum):
     MAGIC = "magic"
     BOOSTIFY = "boostify"
+    EMAIL = "email"
 
 
 class User(BaseModel):
@@ -27,6 +28,9 @@ class User(BaseModel):
 
     # Link back to the Boostify identity when provider == boostify.
     boostify_user_id: Optional[str] = None
+
+    # Argon2 password hash — only set for provider == email. Never exposed.
+    password_hash: Optional[str] = None
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -60,5 +64,33 @@ class MagicLinkRequest(BaseModel):
     email: EmailStr
 
 
-class ProfileUpdate(BaseModel):
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
     name: str = Field(min_length=1, max_length=120)
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=1, max_length=128)
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(min_length=8, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class AuthResult(BaseModel):
+    """Returned by register/login so mobile clients get the session token in JSON
+    (the cookie is also set, for the web)."""
+    user: PublicUser
+    session_token: str
+
+
+class ProfileUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    avatar: Optional[str] = Field(default=None, max_length=2048)

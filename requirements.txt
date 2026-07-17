@@ -6,3 +6,7 @@ pydantic-settings==2.7.0
 email-validator==2.2.0
 httpx==0.28.1
 python-multipart==0.0.20
+argon2-cffi==25.1.0
+# Web Push (VAPID) — app/services/push_service.py
+pywebpush==2.3.0
+py-vapid==1.9.4
