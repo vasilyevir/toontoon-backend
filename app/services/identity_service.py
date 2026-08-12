@@ -89,6 +89,13 @@ async def get_or_create_oauth_user(
 
 async def promote_guest(
     db: AsyncSession, *, guest_id: str, target: m.User
-) -> None:
-    """Fold a guest's work into the account they just signed into (CH-16)."""
+) -> int:
+    """Fold a guest into the account they just signed into (CH-16).
+
+    Work moves every time; the balance moves only on the account's first merge.
+    Returns how many tokens were carried over, so the client can say so instead
+    of leaving the number to change on its own.
+    """
+    carried = await wallet_repo.transfer_guest_balance(db, guest_id=guest_id, target_id=target.id)
     await users_repo.merge_guest_into(db, guest_id, target.id)
+    return carried

@@ -44,8 +44,8 @@ async def _merge_guest(db: AsyncSession, ctx: Optional[Context], target_id: str)
     must find it there afterwards, otherwise the login screen costs people their
     work and they learn not to press it.
 
-    Balances are deliberately NOT merged — that rule depends on the subscription
-    model and is still open (см. docs/BLOCKERS.md).
+    The balance travels too, but only on the account's first merge: otherwise
+    "collect rewards on a fresh guest, sign in, repeat" would be a strategy.
     """
     if ctx is None:
         return

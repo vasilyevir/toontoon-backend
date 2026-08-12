@@ -264,6 +264,59 @@ async def spend(
     return Balance(free=wallet.free_balance, sub=wallet.sub_balance)
 
 
+async def transfer_guest_balance(
+    session: AsyncSession, *, guest_id: str, target_id: str
+) -> int:
+    """Move a guest's free balance into the account on sign-in — **once per
+    account**.
+
+    Losing what you earned before logging in is a bad trade for pressing
+    "sign in", so the balance travels with the work. But it travels only the
+    first time: the idempotency key is tied to the **account**, not to the
+    guest, so a second (third, tenth) guest folded into the same account adds
+    nothing. That is what stops "collect rewards on a fresh guest, sign in,
+    repeat" from being a strategy.
+
+    The subscription bucket is not transferred: a guest cannot have one.
+    """
+    already = await _already_applied(session, f"merge:{target_id}")
+    if already:
+        return 0
+
+    guest_wallet = await session.get(m.WalletBalance, guest_id)
+    if guest_wallet is None or guest_wallet.free_balance <= 0:
+        return 0
+
+    target_wallet = await ensure(session, target_id)
+    cap = target_wallet.free_cap if target_wallet.free_cap is not None else settings.free_balance_cap
+    room = max(0, cap - target_wallet.free_balance)
+    amount = min(guest_wallet.free_balance, room)
+    if amount <= 0:
+        return 0
+
+    # Debit the guest as well: a transfer that only credits one side would make
+    # the journal stop summing to the balances.
+    guest_wallet.free_balance -= amount
+    session.add(
+        m.WalletLedger(
+            user_id=guest_id, bucket="free", delta=-amount, reason="merge",
+            ref_id=target_id, idempotency_key=f"merge_out:{guest_id}",
+            balance_after=guest_wallet.free_balance,
+        )
+    )
+
+    target_wallet.free_balance += amount
+    session.add(
+        m.WalletLedger(
+            user_id=target_id, bucket="free", delta=amount, reason="merge",
+            ref_id=guest_id, idempotency_key=f"merge:{target_id}",
+            balance_after=target_wallet.free_balance,
+        )
+    )
+    await session.flush()
+    return amount
+
+
 async def refund(
     session: AsyncSession,
     user_id: str,

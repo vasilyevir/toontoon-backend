@@ -189,3 +189,58 @@ async def test_balance_equals_sum_of_ledger(db):
     )
     balance = await wallet_repo.balance(session, uid)
     assert total == balance.total
+
+
+async def test_guest_balance_transfers_once_per_account(db):
+    """Перенос гостевого баланса — один раз за жизнь аккаунта.
+
+    Первый гость приносит своё, второй не приносит ничего: ключ идемпотентности
+    привязан к аккаунту, а не к гостю, поэтому фарм наград на новых гостевых
+    сессиях ничего не даёт.
+    """
+    session, account_id = db
+    await wallet_repo.grant(session, account_id, amount=50, bucket="free", reason="signup")
+
+    guests = []
+    for _ in range(2):
+        guest = m.User(kind="guest")
+        session.add(guest)
+        await session.flush()
+        await wallet_repo.grant(session, guest.id, amount=59, bucket="free", reason="signup")
+        guests.append(guest.id)
+
+    first = await wallet_repo.transfer_guest_balance(session, guest_id=guests[0], target_id=account_id)
+    second = await wallet_repo.transfer_guest_balance(session, guest_id=guests[1], target_id=account_id)
+
+    balance = await wallet_repo.balance(session, account_id)
+    assert (first, second) == (59, 0)
+    assert balance.free == 109
+
+    # Гость, чей баланс переехал, обнулён — журнал остаётся сходящимся.
+    donor = await wallet_repo.balance(session, guests[0])
+    assert donor.free == 0
+
+    for guest_id in guests:
+        await session.execute(delete(m.WalletLedger).where(m.WalletLedger.user_id == guest_id))
+        await session.execute(delete(m.WalletBalance).where(m.WalletBalance.user_id == guest_id))
+        await session.execute(delete(m.User).where(m.User.id == guest_id))
+
+
+async def test_guest_transfer_is_trimmed_by_cap(db):
+    """Перенос не может пробить потолок бесплатной корзины."""
+    session, account_id = db
+    await wallet_repo.grant(session, account_id, amount=settings.free_balance_cap - 10,
+                            bucket="free", reason="signup")
+    guest = m.User(kind="guest")
+    session.add(guest)
+    await session.flush()
+    await wallet_repo.grant(session, guest.id, amount=100, bucket="free", reason="signup")
+
+    carried = await wallet_repo.transfer_guest_balance(session, guest_id=guest.id, target_id=account_id)
+    balance = await wallet_repo.balance(session, account_id)
+    assert carried == 10
+    assert balance.free == settings.free_balance_cap
+
+    await session.execute(delete(m.WalletLedger).where(m.WalletLedger.user_id == guest.id))
+    await session.execute(delete(m.WalletBalance).where(m.WalletBalance.user_id == guest.id))
+    await session.execute(delete(m.User).where(m.User.id == guest.id))
