@@ -16,7 +16,6 @@ from app.routers import (
     app_meta,
     auth,
     chat,
-    chats,
     media,
     events,
     generate,
@@ -85,7 +84,6 @@ app.include_router(app_meta.router)
 app.include_router(media.router)
 app.include_router(profile.router)
 app.include_router(chat.router)
-app.include_router(chats.router)
 app.include_router(tiles.router)
 app.include_router(generate.router)
 app.include_router(generations.router)

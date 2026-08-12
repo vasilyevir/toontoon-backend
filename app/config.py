@@ -86,6 +86,11 @@ class Settings(BaseSettings):
     # Недельная квота бесплатного тарифа — она же сумма наград за неделю.
     free_weekly_quota: int = 100
 
+    # Сколько последних сообщений уходит в модель (CH-20). Настройка сервера,
+    # а не константа: подобрать это можно только на живых разговорах, и менять
+    # ради подбора не должно стоить релиза.
+    chat_context_messages: int = 20
+
     @property
     def daily_reward_list(self) -> list[int]:
         return [int(x) for x in self.daily_reward_schedule.split(",") if x.strip()]

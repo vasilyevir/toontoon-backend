@@ -18,7 +18,6 @@ from app.db.repositories import media as media_repo
 from app.db.models import MediaAsset
 from app.storage import get_storage
 from app.deps import Context, required_context
-from app.models.chat import ChatMessage, ChatRole
 from app.models.generation import (
     Generation,
     GenerateRequest,
@@ -26,7 +25,8 @@ from app.models.generation import (
     GenerationStatus,
     GenerationType,
 )
-from app.services import chat_service, content_gen, generations_service, tiles_data, video_gen, wallet
+from app.db.repositories import chat as chat_repo
+from app.services import content_gen, generations_service, tiles_data, video_gen, wallet
 
 logger = logging.getLogger("arteki.generate")
 
@@ -87,15 +87,6 @@ async def generate(
     if body.tile_id and tile is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Unknown tile")
 
-    # Optional: if this generation belongs to a chat session, the result (or
-    # error, on failure) is appended there automatically. Validate ownership
-    # up front so we fail fast, before reserving TEKI.
-    chat = None
-    if body.chat_id:
-        chat = await chat_service.get(body.chat_id)
-        if not chat or chat.user_id != user.id:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Chat not found")
-
     # Cost is driven by the tile (videos cost more) or the requested type.
     if tile is not None:
         tile_is_video = tile.category.value == "video"
@@ -151,7 +142,6 @@ async def generate(
             prompt=body.prompt or (tile.title if tile else ""),
             payment_id=payment.payment_id,
             cost=cost,
-            chat_id=chat.id if chat else None,
         )
         await generations_service.add_for_user(generation)
 
@@ -166,7 +156,6 @@ async def generate(
             free_text=body.prompt,
             style=body.style,
             photo_url=body.photo_url,
-            chat_id=chat.id if chat else None,
         )
 
         balance = await wallet.get_balance(db, user.id)
@@ -235,14 +224,10 @@ async def generate(
     generation_id = record.id
     result_url = f"/api/media/{asset.id}"
 
-    if chat is not None:
-        message = ChatMessage(
-            id=new_id("msg_"),
-            role=ChatRole.AI,
-            generated_img=result_url,
-            generation_id=generation_id,
-        )
-        await chat_service.add_message(chat, message)
+    # The result belongs in the thread: there is only one, so nothing to choose.
+    await chat_repo.add_message(
+        db, user_id=user.id, role="assistant", generation_id=generation_id
+    )
 
     balance = await wallet.get_balance(db, user.id)
     return GenerateResponse(

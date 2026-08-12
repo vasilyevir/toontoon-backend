@@ -17,11 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session as get_db_session
 from app.deps import Context, optional_context
-from app.models.chat import ChatSummary
 from app.models.payment import Balance
 from app.models.tile import Category, Question, Tile
 from app.models.user import PublicUser
-from app.services import chat_service, tiles_data, wallet
+from app.db.repositories import chat as chat_repo
+from app.services import tiles_data, wallet
 
 router = APIRouter(prefix="/api/app", tags=["app"])
 
@@ -40,9 +40,9 @@ class BootstrapResponse(BaseModel):
     categories: list[Category]
     featured: list[Tile]
     freeform_question: Question
-    # Chat sidebar (GET /api/chats gives the same list — included here too so
-    # a cold-start app has everything, including chat history, in one call).
-    chats: list[ChatSummary]
+    # The tail of the single chat thread (CH-20). A cold start gets enough to
+    # draw the screen; older messages are paged in from /api/chat/messages.
+    messages: list[dict]
     config: AppConfig
 
 
@@ -53,12 +53,22 @@ async def bootstrap(
 ) -> BootstrapResponse:
     user: Optional[PublicUser] = None
     balance: Optional[Balance] = None
-    chats: list[ChatSummary] = []
+    messages: list[dict] = []
     if ctx is not None:
         u, session = ctx
         user = PublicUser.from_row(u, provider=session.provider)
         balance = await wallet.get_balance(db, u.id)
-        chats = await chat_service.list_summaries(u.id)
+        rows = await chat_repo.list_messages(db, u.id, limit=20)
+        messages = [
+            {
+                "id": r.id,
+                "role": r.role,
+                "content": r.content,
+                "generation_id": r.generation_id,
+                "created_at": r.created_at.isoformat(),
+            }
+            for r in rows
+        ]
 
     return BootstrapResponse(
         user=user,
@@ -66,7 +76,7 @@ async def bootstrap(
         categories=tiles_data.get_categories(),
         featured=tiles_data.get_featured(),
         freeform_question=tiles_data.FREEFORM_STYLE_QUESTION,
-        chats=chats,
+        messages=messages,
         config=AppConfig(
             image_teki_cost=settings.image_teki_cost,
             video_teki_cost=settings.video_teki_cost,
