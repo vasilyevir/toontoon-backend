@@ -4,7 +4,7 @@ from __future__ import annotations
 import time
 from typing import Optional
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
 
 from app.config import settings
@@ -13,6 +13,7 @@ from app.core import rate_limit
 from app.core.security import hash_password, new_token, verify_password
 from app.deps import Context, optional_context
 from app.models.user import (
+    AppleAuthRequest,
     AuthProvider,
     AuthResult,
     ForgotPasswordRequest,
@@ -23,7 +24,7 @@ from app.models.user import (
     ResetPasswordRequest,
 )
 from app.redis_client import get_client
-from app.services import auth_service, boostify
+from app.services import apple_oauth, auth_service, boostify, google_oauth
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -44,7 +45,11 @@ async def magic_link(body: MagicLinkRequest):
 
 @router.get("/verify")
 async def verify(token: str = Query(...)):
-    """Consume a magic-link token, create the session cookie, redirect to app."""
+    """Consume a magic-link token, create the session cookie, redirect to app.
+
+    Web-only (redirect-based). Native clients should use
+    ``GET /api/auth/magic-link/verify`` instead — same token, JSON response.
+    """
     email = await auth_service.consume_magic_token(token)
     if not email:
         return RedirectResponse(url=f"{settings.frontend_url}/?error=expired", status_code=302)
@@ -55,6 +60,24 @@ async def verify(token: str = Query(...)):
     response = RedirectResponse(url=f"{settings.frontend_url}{settings.auth_success_redirect}", status_code=302)
     set_session_cookie(response, session.sid)
     return response
+
+
+@router.get("/magic-link/verify", response_model=AuthResult)
+async def magic_link_verify_json(token: str = Query(...), *, response: Response) -> AuthResult:
+    """Same magic-link token as ``/verify``, but for native/app clients:
+    returns ``{user, session_token}`` directly in JSON instead of a redirect
+    with ``Set-Cookie`` — no cookie-jar interception needed. The cookie is
+    still set too (harmless if the caller ignores it), so this also works
+    fine from a browser if ever needed.
+    """
+    email = await auth_service.consume_magic_token(token)
+    if not email:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="invalid_or_expired")
+
+    user = await auth_service.get_or_create_magic_user(email)
+    session = await auth_service.create_session(user)
+    set_session_cookie(response, session.sid)
+    return AuthResult(user=PublicUser.from_user(user), session_token=session.sid)
 
 
 # ─── Email + password (v1.5) ────────────────────────────────────────────────
@@ -214,6 +237,92 @@ async def boostify_callback(code: str = Query(...), state: str = Query(...)):
     return response
 
 
+# ─── v2: Google OAuth (web + native app) ────────────────────────────────────
+
+
+@router.get("/google/login")
+async def google_login(platform: str = Query(default="web")):
+    """Kick off Google OAuth.
+
+    ``platform=app`` is used by the native app (opens this URL inside
+    ``ASWebAuthenticationSession``): on success the callback redirects to a
+    deep link (``{app_deep_link_scheme}://auth/callback?token=...``) instead
+    of the web frontend, so the app can capture the session token straight
+    from the URL — no cookie jar needed. Default ``platform=web`` behaves
+    exactly like the Boostyfi flow (cookie + redirect to the frontend).
+    """
+    if not settings.google_enabled:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Google sign-in is not configured yet (missing GOOGLE_CLIENT_ID/SECRET)",
+        )
+    state = new_token()
+    redis = get_client()
+    await redis.set(f"oauth_state:google:{state}", platform, ex=600)
+    return RedirectResponse(url=google_oauth.authorize_url(state), status_code=302)
+
+
+@router.get("/google/callback")
+async def google_callback(code: str = Query(...), state: str = Query(...)):
+    redis = get_client()
+    platform = await redis.get(f"oauth_state:google:{state}")
+    if platform is None:
+        return RedirectResponse(url=f"{settings.frontend_url}/login?error=oauth_state", status_code=302)
+    await redis.delete(f"oauth_state:google:{state}")
+    if isinstance(platform, bytes):
+        platform = platform.decode()
+
+    try:
+        claims = await google_oauth.exchange_code(code)
+    except Exception:
+        error_target = (
+            f"{settings.app_deep_link_scheme}://auth/callback?error=google"
+            if platform == "app"
+            else f"{settings.frontend_url}/login?error=google"
+        )
+        return RedirectResponse(url=error_target, status_code=302)
+
+    user = await auth_service.get_or_create_google_user(claims)
+    session = await auth_service.create_session(user)
+
+    if platform == "app":
+        return RedirectResponse(
+            url=f"{settings.app_deep_link_scheme}://auth/callback?token={session.sid}",
+            status_code=302,
+        )
+
+    response = RedirectResponse(url=f"{settings.frontend_url}{settings.auth_success_redirect}", status_code=302)
+    set_session_cookie(response, session.sid)
+    return response
+
+
+# ─── Sign in with Apple (native app) ────────────────────────────────────────
+
+
+@router.post("/oauth/apple", response_model=AuthResult)
+async def apple_auth(body: AppleAuthRequest, response: Response) -> AuthResult:
+    """Verify an Apple ``identity_token`` (from ``ASAuthorizationAppleIDProvider``
+    on the client) and start a session. Returns ``{user, session_token}`` in
+    JSON (same shape as register/login) — no redirect involved, the app talks
+    to Apple itself and only hands us the token to verify.
+    """
+    if not settings.apple_enabled:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Sign in with Apple is not configured yet (missing APPLE_BUNDLE_ID/APPLE_SERVICE_ID)",
+        )
+    try:
+        claims = await apple_oauth.verify_identity_token(body.identity_token)
+    except apple_oauth.InvalidAppleToken as exc:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail=str(exc))
+
+    claims["name"] = body.name
+    user = await auth_service.get_or_create_apple_user(claims)
+    session = await auth_service.create_session(user)
+    set_session_cookie(response, session.sid)
+    return AuthResult(user=PublicUser.from_user(user), session_token=session.sid)
+
+
 # ─── Session info / logout ──────────────────────────────────────────────────
 
 
@@ -233,8 +342,12 @@ async def me(ctx: Optional[Context] = Depends(optional_context)) -> Optional[Pub
 async def logout(
     response: Response,
     session_cookie: Optional[str] = Cookie(default=None, alias=settings.session_cookie_name),
+    authorization: Optional[str] = Header(default=None),
 ):
-    if session_cookie:
-        await auth_service.delete_session(session_cookie)
+    sid = session_cookie
+    if not sid and authorization and authorization.lower().startswith("bearer "):
+        sid = authorization[7:].strip()
+    if sid:
+        await auth_service.delete_session(sid)
     clear_session_cookie(response)
     return {"ok": True}

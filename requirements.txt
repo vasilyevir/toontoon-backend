@@ -10,3 +10,5 @@ argon2-cffi==25.1.0
 # Web Push (VAPID) — app/services/push_service.py
 pywebpush==2.3.0
 py-vapid==1.9.4
+# Sign in with Apple — app/services/apple_oauth.py (JWKS signature verification)
+PyJWT[crypto]==2.10.1

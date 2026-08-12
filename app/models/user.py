@@ -11,6 +11,8 @@ class AuthProvider(str, Enum):
     MAGIC = "magic"
     BOOSTIFY = "boostify"
     EMAIL = "email"
+    GOOGLE = "google"
+    APPLE = "apple"
 
 
 class User(BaseModel):
@@ -82,6 +84,19 @@ class ForgotPasswordRequest(BaseModel):
 class ResetPasswordRequest(BaseModel):
     token: str = Field(min_length=8, max_length=128)
     new_password: str = Field(min_length=8, max_length=128)
+
+
+class AppleAuthRequest(BaseModel):
+    """Body for POST /api/auth/oauth/apple.
+
+    The app completes ``ASAuthorizationAppleIDProvider`` locally and hands us
+    the resulting identity_token (a JWT signed by Apple) to verify. ``name``
+    is only ever sent by Apple to the client on the FIRST authorization ever
+    (never to the server, never again after) — the client should pass it
+    through here so we can store it on first login.
+    """
+    identity_token: str = Field(min_length=10)
+    name: Optional[str] = Field(default=None, max_length=120)
 
 
 class AuthResult(BaseModel):

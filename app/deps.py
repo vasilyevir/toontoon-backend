@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import Cookie, Depends, HTTPException, status
+from fastapi import Cookie, Depends, Header, HTTPException, status
 
 from app.config import settings
 from app.models.session import Session
@@ -23,10 +23,20 @@ def _build_optional_context():
 
     async def optional_context(
         session_cookie: Optional[str] = Cookie(default=None, alias=cookie_name),
+        authorization: Optional[str] = Header(default=None),
     ) -> Optional[Context]:
-        if not session_cookie:
+        # The web sends the session id as a cookie. Native / third-party
+        # clients that can't (or shouldn't have to) manage a cookie jar send
+        # the exact same session id as a Bearer token instead — it's the
+        # same underlying Redis-backed session either way, so every route
+        # that already depends on this function (accounts AND generation
+        # endpoints) works identically for both, with zero per-route changes.
+        sid = session_cookie
+        if not sid and authorization and authorization.lower().startswith("bearer "):
+            sid = authorization[7:].strip()
+        if not sid:
             return None
-        session = await auth_service.get_session(session_cookie)
+        session = await auth_service.get_session(sid)
         if not session:
             return None
         user = await auth_service.get_user(session.user_id)

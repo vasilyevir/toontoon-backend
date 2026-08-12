@@ -10,6 +10,7 @@ from app.config import settings
 from app.core import rate_limit
 from app.core.security import new_id
 from app.deps import Context, required_context
+from app.models.chat import ChatMessage, ChatRole
 from app.models.generation import (
     Generation,
     GenerateRequest,
@@ -17,7 +18,7 @@ from app.models.generation import (
     GenerationStatus,
     GenerationType,
 )
-from app.services import content_gen, generations_service, tiles_data, video_gen, wallet
+from app.services import chat_service, content_gen, generations_service, tiles_data, video_gen, wallet
 
 logger = logging.getLogger("arteki.generate")
 
@@ -60,6 +61,15 @@ async def generate(body: GenerateRequest, ctx: Context = Depends(required_contex
     tile = tiles_data.get_tile(body.tile_id) if body.tile_id else None
     if body.tile_id and tile is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Unknown tile")
+
+    # Optional: if this generation belongs to a chat session, the result (or
+    # error, on failure) is appended there automatically. Validate ownership
+    # up front so we fail fast, before reserving TEKI.
+    chat = None
+    if body.chat_id:
+        chat = await chat_service.get(body.chat_id)
+        if not chat or chat.user_id != user.id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Chat not found")
 
     # Cost is driven by the tile (videos cost more) or the requested type.
     if tile is not None:
@@ -110,6 +120,7 @@ async def generate(body: GenerateRequest, ctx: Context = Depends(required_contex
             prompt=body.prompt or (tile.title if tile else ""),
             payment_id=payment.payment_id,
             cost=cost,
+            chat_id=chat.id if chat else None,
         )
         await generations_service.add_for_user(generation)
 
@@ -124,6 +135,7 @@ async def generate(body: GenerateRequest, ctx: Context = Depends(required_contex
             free_text=body.prompt,
             style=body.style,
             photo_url=body.photo_url,
+            chat_id=chat.id if chat else None,
         )
 
         balance = await wallet.get_balance(user, session)
@@ -170,8 +182,18 @@ async def generate(body: GenerateRequest, ctx: Context = Depends(required_contex
         result_url=result_url,
         payment_id=payment.payment_id,
         cost=cost,
+        chat_id=chat.id if chat else None,
     )
     await generations_service.add_for_user(generation)
+
+    if chat is not None:
+        message = ChatMessage(
+            id=new_id("msg_"),
+            role=ChatRole.AI,
+            generated_img=result_url,
+            generation_id=generation.id,
+        )
+        await chat_service.add_message(chat, message)
 
     balance = await wallet.get_balance(user, session)
     return GenerateResponse(

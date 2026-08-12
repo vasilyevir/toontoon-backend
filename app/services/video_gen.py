@@ -251,14 +251,19 @@ async def run_video_job(
     free_text: str | None,
     style: str | None,
     photo_url: str | None,
+    chat_id: str | None = None,
 ) -> None:
     """Background worker: run the pipeline, then update the Generation record.
 
     On success → status DONE + result_url. On failure → status FAILED + refund.
+    If ``chat_id`` is set, the result (or a Retry-able error bubble on
+    failure) is appended to that chat too — this is the only way a client
+    ever sees a video's outcome in its conversation history, since this
+    completes minutes after the original ``POST /api/generate`` response.
     """
     from app.models.generation import GenerationStatus
     from app.models.payment import Payment, PaymentStatus
-    from app.services import auth_service, generations_service, wallet
+    from app.services import auth_service, chat_service, generations_service, wallet
 
     try:
         result_url, prompt = await run_video_pipeline(
@@ -287,6 +292,26 @@ async def run_video_job(
         if generation is not None:
             generation.status = GenerationStatus.FAILED
             await generations_service.save(generation)
+
+        if chat_id:
+            try:
+                from app.core.security import new_id as _new_id
+                from app.models.chat import ChatMessage, ChatRole
+
+                chat = await chat_service.get(chat_id)
+                if chat is not None:
+                    await chat_service.add_message(
+                        chat,
+                        ChatMessage(
+                            id=_new_id("msg_"),
+                            role=ChatRole.AI,
+                            generation_id=gen_id,
+                            is_generation_error=True,
+                            text="Video generation failed — your TEKI was refunded.",
+                        ),
+                    )
+            except Exception:
+                logger.exception("Failed to append error message to chat %s", chat_id)
         return
 
     # Extract first-frame thumbnail for gallery/sidebar (best-effort, local path only).
@@ -306,6 +331,26 @@ async def run_video_job(
         generation.prompt = prompt
         await generations_service.save(generation)
     logger.info("Video job %s done → %s", gen_id, result_url)
+
+    if chat_id:
+        try:
+            from app.core.security import new_id as _new_id
+            from app.models.chat import ChatMessage, ChatRole
+
+            chat = await chat_service.get(chat_id)
+            if chat is not None:
+                await chat_service.add_message(
+                    chat,
+                    ChatMessage(
+                        id=_new_id("msg_"),
+                        role=ChatRole.AI,
+                        generated_video=result_url,
+                        thumbnail_url=thumbnail_url,
+                        generation_id=gen_id,
+                    ),
+                )
+        except Exception:
+            logger.exception("Failed to append result message to chat %s", chat_id)
 
     # Push notification: tell the user their video is ready.
     try:

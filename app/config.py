@@ -116,6 +116,47 @@ class Settings(BaseSettings):
             and self.cloudinary_api_secret.strip()
         )
 
+    # Google OAuth (Sign in with Google — web + native app). Empty by default:
+    # the routes exist and respond 503 "not configured" instead of 404 until
+    # real credentials are set (Google Cloud Console → OAuth client ID, Web
+    # application type — used for BOTH web and app, since the app opens the
+    # same browser-based consent screen via ASWebAuthenticationSession).
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    # Leave empty to auto-derive as {public_base_url}/api/auth/google/callback.
+    google_redirect_uri: str = ""
+
+    @property
+    def google_enabled(self) -> bool:
+        return bool(self.google_client_id.strip() and self.google_client_secret.strip())
+
+    @property
+    def google_redirect_uri_effective(self) -> str:
+        return self.google_redirect_uri.strip() or f"{self.public_base_url}/api/auth/google/callback"
+
+    # Sign in with Apple. Unlike Google/Boostyfi this needs NO client secret
+    # on our side — the app talks to Apple directly and hands us a signed
+    # identity_token (JWT) that we verify against Apple's public JWKS. We
+    # only need to know our own audience(s) to check the `aud` claim: the
+    # iOS app's Bundle ID (native flow) and/or a Services ID (web/Android
+    # "Sign in with Apple" button, if ever added). Set at least one to enable.
+    apple_bundle_id: str = ""
+    apple_service_id: str = ""
+
+    @property
+    def apple_enabled(self) -> bool:
+        return bool(self.apple_bundle_id.strip() or self.apple_service_id.strip())
+
+    @property
+    def apple_audiences(self) -> list[str]:
+        return [a for a in (self.apple_bundle_id.strip(), self.apple_service_id.strip()) if a]
+
+    # Native-app custom URL scheme. After a browser-based OAuth flow (Google)
+    # started with ?platform=app, the callback redirects here instead of the
+    # web frontend so the app (ASWebAuthenticationSession) can capture the
+    # session token from the URL.
+    app_deep_link_scheme: str = "arteki"
+
     # Boostyfi (OAuth + Wallet)
     boostify_mock: bool = True
     boostify_base_url: str = "https://api.boostyfi.com/api/v1"

@@ -11,7 +11,20 @@ from fastapi.staticfiles import StaticFiles
 from app.config import settings
 from app.middleware.app_key import AppKeyMiddleware
 from app.redis_client import connect, disconnect
-from app.routers import auth, chat, events, generate, generations, payments, profile, push, tiles, webhooks
+from app.routers import (
+    app_meta,
+    auth,
+    chat,
+    chats,
+    events,
+    generate,
+    generations,
+    payments,
+    profile,
+    push,
+    tiles,
+    webhooks,
+)
 
 UPLOAD_DIR = Path("uploads")
 
@@ -46,8 +59,10 @@ app.add_middleware(AppKeyMiddleware)
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR), check_dir=False), name="uploads")
 
 app.include_router(auth.router)
+app.include_router(app_meta.router)
 app.include_router(profile.router)
 app.include_router(chat.router)
+app.include_router(chats.router)
 app.include_router(tiles.router)
 app.include_router(generate.router)
 app.include_router(generations.router)

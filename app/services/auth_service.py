@@ -125,6 +125,57 @@ async def get_or_create_boostify_user(info: dict) -> User:
     return user
 
 
+async def get_or_create_google_user(info: dict) -> User:
+    """Find/create a user from a verified Google id_token payload."""
+    google_id = info["sub"]
+    redis = get_client()
+    existing_id = await redis.get(f"user:google:{google_id}")
+    if existing_id:
+        user = await get_user(existing_id)
+        if user:
+            return user
+
+    user = User(
+        id=new_id("usr_"),
+        provider=AuthProvider.GOOGLE,
+        email=info.get("email"),
+        name=info.get("name") or (info.get("email") or "Google user").split("@", 1)[0],
+        avatar=info.get("avatar"),
+        teki_balance=settings.signup_teki_balance,
+    )
+    await save_user(user)
+    await redis.set(f"user:google:{google_id}", user.id)
+    return user
+
+
+async def get_or_create_apple_user(info: dict) -> User:
+    """Find/create a user from a verified Apple identity_token payload.
+
+    Apple only ever sends the display name to the CLIENT on the very first
+    authorization (never to any server, and never again after) — the caller
+    passes it through via ``info["name"]`` if it has it.
+    """
+    apple_id = info["sub"]
+    redis = get_client()
+    existing_id = await redis.get(f"user:apple:{apple_id}")
+    if existing_id:
+        user = await get_user(existing_id)
+        if user:
+            return user
+
+    email = info.get("email")
+    user = User(
+        id=new_id("usr_"),
+        provider=AuthProvider.APPLE,
+        email=email,
+        name=info.get("name") or (email or "Apple user").split("@", 1)[0],
+        teki_balance=settings.signup_teki_balance,
+    )
+    await save_user(user)
+    await redis.set(f"user:apple:{apple_id}", user.id)
+    return user
+
+
 # ─── Magic-link tokens ──────────────────────────────────────────────────────
 
 

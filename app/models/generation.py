@@ -41,6 +41,11 @@ class Generation(BaseModel):
     # Public sharing.
     share_id: Optional[str] = None
 
+    # If the request came from within a chat session, the result (or error,
+    # on failure) is appended there automatically — crucial for video, whose
+    # completion happens in a background job long after the HTTP response.
+    chat_id: Optional[str] = None
+
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -60,6 +65,9 @@ class GenerateRequest(BaseModel):
     prompt: Optional[str] = None
     style: Optional[str] = None
     photo_url: Optional[str] = None
+    # Optional: id of a chat session (POST /api/chats) to append the result
+    # (or error) to automatically. Omit to generate without chat history.
+    chat_id: Optional[str] = None
 
 
 class GenerateResponse(BaseModel):
