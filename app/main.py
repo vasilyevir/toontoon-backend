@@ -15,8 +15,11 @@ from app.redis_client import connect, disconnect
 from app.routers import (
     app_meta,
     auth,
+    billing,
     chat,
     media,
+    onboarding,
+    styles,
     events,
     generate,
     generations,
@@ -82,6 +85,9 @@ app.add_middleware(AppKeyMiddleware)
 app.include_router(auth.router)
 app.include_router(app_meta.router)
 app.include_router(media.router)
+app.include_router(billing.router)
+app.include_router(onboarding.router)
+app.include_router(styles.router)
 app.include_router(profile.router)
 app.include_router(chat.router)
 app.include_router(tiles.router)

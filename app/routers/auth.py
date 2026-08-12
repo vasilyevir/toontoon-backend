@@ -37,6 +37,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
+async def _merge_guest(db: AsyncSession, ctx: Optional[Context], target_id: str) -> None:
+    """Fold the guest's work into the account they just signed into (CH-16).
+
+    Sign-in is a save, not a gate: whoever generated something before logging in
+    must find it there afterwards, otherwise the login screen costs people their
+    work and they learn not to press it.
+
+    Balances are deliberately NOT merged — that rule depends on the subscription
+    model and is still open (см. docs/BLOCKERS.md).
+    """
+    if ctx is None:
+        return
+    guest, _ = ctx
+    if guest.kind != "guest" or guest.id == target_id:
+        return
+    await identity_service.promote_guest(db, guest_id=guest.id, target=await users_repo.get(db, target_id))
+
+
+
 # ─── Guest ────────────────────────────────────────────────────────────────────
 
 
@@ -156,6 +175,7 @@ async def register(
     request: Request,
     response: Response,
     db: AsyncSession = Depends(get_db_session),
+    ctx: Optional[Context] = Depends(optional_context),
 ) -> AuthResult:
     """Create an email+password account and start a session.
 
@@ -175,6 +195,7 @@ async def register(
     user = await identity_service.create_email_user(
         db, email=email, password_hash=hash_password(body.password), name=body.name.strip()
     )
+    await _merge_guest(db, ctx, user.id)
     session = await auth_service.create_session_for_user_id(user.id, AuthProvider.EMAIL)
     set_session_cookie(response, session.sid)
     return AuthResult(
@@ -188,6 +209,7 @@ async def login(
     request: Request,
     response: Response,
     db: AsyncSession = Depends(get_db_session),
+    ctx: Optional[Context] = Depends(optional_context),
 ) -> AuthResult:
     """Log in with email + password. Returns the session token (JSON) + cookie."""
     email = str(body.email).strip().lower()
@@ -204,6 +226,7 @@ async def login(
     if not user or not user.password_hash or not verify_password(body.password, user.password_hash):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 
+    await _merge_guest(db, ctx, user.id)
     session = await auth_service.create_session_for_user_id(user.id, AuthProvider.EMAIL)
     set_session_cookie(response, session.sid)
     return AuthResult(
@@ -340,6 +363,7 @@ async def apple_auth(
     body: AppleAuthRequest,
     response: Response,
     db: AsyncSession = Depends(get_db_session),
+    ctx: Optional[Context] = Depends(optional_context),
 ) -> AuthResult:
     """Verify an Apple ``identity_token`` (from ``ASAuthorizationAppleIDProvider``
     on the client) and start a session. Returns ``{user, session_token}`` in
@@ -363,6 +387,7 @@ async def apple_auth(
         email=claims.get("email"),
         name=body.name,
     )
+    await _merge_guest(db, ctx, user.id)
     session = await auth_service.create_session_for_user_id(user.id, AuthProvider.APPLE)
     set_session_cookie(response, session.sid)
     return AuthResult(

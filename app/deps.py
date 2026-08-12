@@ -36,9 +36,15 @@ def _build_optional_context():
         session_cookie: Optional[str] = Cookie(default=None, alias=cookie_name),
         authorization: Optional[str] = Header(default=None),
     ) -> Optional[Context]:
-        sid = session_cookie
-        if not sid and authorization and authorization.lower().startswith("bearer "):
+        # The header wins over the cookie when both are present. A native
+        # client sends the Bearer token deliberately, while a cookie can be
+        # left over from an earlier session — and losing that race would
+        # authenticate someone as the wrong user without any error to notice.
+        sid = None
+        if authorization and authorization.lower().startswith("bearer "):
             sid = authorization[7:].strip()
+        if not sid:
+            sid = session_cookie
         if not sid:
             return None
         session = await auth_service.get_session(sid)
