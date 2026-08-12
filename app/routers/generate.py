@@ -109,6 +109,14 @@ async def generate(
         gen_type = body.type
         cost = settings.video_teki_cost if gen_type == GenerationType.VIDEO else settings.image_teki_cost
 
+    # Видео вне скоупа первой версии. Проверяем ДО резервирования, чтобы отказ
+    # не проходил через кошелёк вообще.
+    if gen_type == GenerationType.VIDEO and not settings.video_enabled:
+        raise HTTPException(
+            status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Video generation is not available in this version.",
+        )
+
     reason = f"arteki:{gen_type.value}_generate"
     # Note on refunds in this handler: the request runs inside one database
     # transaction, and raising rolls it back — so a failed image generation

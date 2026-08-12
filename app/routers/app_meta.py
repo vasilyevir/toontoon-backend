@@ -32,6 +32,7 @@ class AppConfig(BaseModel):
     push_enabled: bool
     google_enabled: bool
     apple_enabled: bool
+    video_enabled: bool
 
 
 class BootstrapResponse(BaseModel):
@@ -83,5 +84,6 @@ async def bootstrap(
             push_enabled=settings.push_enabled,
             google_enabled=settings.google_enabled,
             apple_enabled=settings.apple_enabled,
+            video_enabled=settings.video_enabled,
         ),
     )

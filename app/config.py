@@ -123,7 +123,11 @@ class Settings(BaseSettings):
     pollinations_referrer: str = "arteki"
     vision_timeout_seconds: int = 7
 
-    # Video generation (kie.ai / ByteDance Seedance)
+    # Video generation (kie.ai / ByteDance Seedance).
+    # ВЫКЛЮЧЕНО в первой версии: все шесть направлений онбординга — про фото,
+    # видео в них не упомянуто ни разу, а стоит оно дороже всего ($1.21–1.52
+    # за пятисекундный клип). Код остаётся, маршрут закрыт флагом.
+    video_enabled: bool = False
     kie_api_key: str = ""
     kie_base_url: str = "https://api.kie.ai"
     kie_video_model: str = "bytedance/seedance-2-fast"
