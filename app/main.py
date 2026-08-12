@@ -7,7 +7,6 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
 from app import db, storage
 from app.config import settings
@@ -18,6 +17,7 @@ from app.routers import (
     auth,
     chat,
     chats,
+    media,
     events,
     generate,
     generations,
@@ -75,11 +75,14 @@ app.add_middleware(
 # Mobile app-key + HMAC verification. No-op unless settings.app_key_required.
 app.add_middleware(AppKeyMiddleware)
 
-# Serve uploaded reference photos.
-app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR), check_dir=False), name="uploads")
+# The public /uploads mount is gone: it served every user's reference photos —
+# faces included — to anyone with a link. Media now goes through /api/media,
+# which checks who is asking. The directory itself stays as scratch space for
+# the video pipeline until that moves to storage too.
 
 app.include_router(auth.router)
 app.include_router(app_meta.router)
+app.include_router(media.router)
 app.include_router(profile.router)
 app.include_router(chat.router)
 app.include_router(chats.router)
