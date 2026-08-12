@@ -109,7 +109,10 @@ async def magic_link(body: MagicLinkRequest):
     response (temporary, until real email delivery is wired up).
     """
     token = await auth_service.create_magic_token(str(body.email))
-    return {"ok": True, "devLink": f"/api/auth/verify?token={token}"}
+    result: dict = {"ok": True}
+    if settings.expose_dev_tokens:
+        result["devLink"] = f"/api/auth/verify?token={token}"
+    return result
 
 
 @router.get("/verify")
@@ -260,8 +263,12 @@ async def forgot_password(
     # Only accounts that actually have a password can reset one.
     if user and user.password_hash:
         token = await auth_service.create_reset_token(email)
-        result["devToken"] = token
-        result["devLink"] = f"{settings.frontend_url}/reset-password?token={token}"
+        if settings.expose_dev_tokens:
+            # Письма пока никто не шлёт: SMTP появится вместе с кластером.
+            # До тех пор токен возвращается в ответе — и это ровно то, что
+            # обязано выключиться перед публикацией.
+            result["devToken"] = token
+            result["devLink"] = f"{settings.frontend_url}/reset-password?token={token}"
     return result
 
 

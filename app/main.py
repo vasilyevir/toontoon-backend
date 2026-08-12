@@ -54,6 +54,14 @@ async def lifespan(app: FastAPI):
         logging.getLogger("arteki.storage").error(
             "Object storage unavailable (%s). Start it with: docker start arteki-minio", exc
         )
+    if settings.expose_dev_tokens and not settings.debug:
+        # Не падаем — падение посреди ночи хуже, — но молчать нельзя: с этим
+        # флагом чужой пароль меняется одним запросом.
+        logging.getLogger("arteki").error(
+            "EXPOSE_DEV_TOKENS=true при DEBUG=false: токены сброса пароля уходят "
+            "в ответе API. Выключите его до публикации."
+        )
+
     yield
     await db.disconnect()
     await disconnect()
