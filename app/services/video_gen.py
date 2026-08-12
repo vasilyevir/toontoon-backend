@@ -20,6 +20,7 @@ import httpx
 
 from app.config import settings
 from app.core.security import new_id
+from app.db.session import session_scope
 from app.models.tile import Tile
 from app.services import video_prompts
 
@@ -275,14 +276,14 @@ async def run_video_job(
         )
     except Exception as exc:
         logger.warning("Video job %s failed: %r", gen_id, exc)
-        # Refund: re-load the user to avoid clobbering a concurrently-changed balance.
+        # Refund. The job runs long after the HTTP request is gone, so it opens
+        # its own database session; the ledger entry is idempotent by payment
+        # id, which makes a retried refund harmless.
         try:
-            user = await auth_service.get_user(user_id)
-            session = await auth_service.get_session(session_id)
-            if user is not None and session is not None:
+            async with session_scope() as db:
                 await wallet.cancel(
-                    user,
-                    session,
+                    db,
+                    user_id,
                     Payment(payment_id=payment_id, status=PaymentStatus.PENDING, amount=payment_amount),
                 )
         except Exception:

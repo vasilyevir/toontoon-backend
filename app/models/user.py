@@ -51,6 +51,23 @@ class PublicUser(BaseModel):
     created_at: datetime
 
     @classmethod
+    def from_row(cls, row, *, provider: AuthProvider) -> "PublicUser":
+        """Build from a PostgreSQL row.
+
+        The row has no ``provider`` column — a person can sign in several ways
+        (``auth_identities``), so which one they used is a property of the
+        session, not of the account.
+        """
+        return cls(
+            id=row.id,
+            provider=provider,
+            email=row.email,
+            name=row.name,
+            avatar=row.avatar_key,
+            created_at=row.created_at,
+        )
+
+    @classmethod
     def from_user(cls, user: User) -> "PublicUser":
         return cls(
             id=user.id,

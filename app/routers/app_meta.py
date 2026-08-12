@@ -13,6 +13,9 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from app.config import settings
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.session import get_session as get_db_session
 from app.deps import Context, optional_context
 from app.models.chat import ChatSummary
 from app.models.payment import Balance
@@ -44,14 +47,17 @@ class BootstrapResponse(BaseModel):
 
 
 @router.get("/bootstrap", response_model=BootstrapResponse)
-async def bootstrap(ctx: Optional[Context] = Depends(optional_context)) -> BootstrapResponse:
+async def bootstrap(
+    ctx: Optional[Context] = Depends(optional_context),
+    db: AsyncSession = Depends(get_db_session),
+) -> BootstrapResponse:
     user: Optional[PublicUser] = None
     balance: Optional[Balance] = None
     chats: list[ChatSummary] = []
     if ctx is not None:
         u, session = ctx
-        user = PublicUser.from_user(u)
-        balance = await wallet.get_balance(u, session)
+        user = PublicUser.from_row(u, provider=session.provider)
+        balance = await wallet.get_balance(db, u.id)
         chats = await chat_service.list_summaries(u.id)
 
     return BootstrapResponse(

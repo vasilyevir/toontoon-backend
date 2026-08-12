@@ -1,10 +1,14 @@
-"""Profile management — update name, delete account."""
+"""Profile management — update name and avatar, delete account."""
 from __future__ import annotations
 
 from fastapi import APIRouter, Cookie, Depends, Response
+from sqlalchemy import func
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.cookies import clear_session_cookie
+from app.db.repositories import users as users_repo
+from app.db.session import get_session as get_db_session
 from app.deps import Context, required_context
 from app.models.user import ProfileUpdate, PublicUser
 from app.services import auth_service
@@ -13,24 +17,51 @@ router = APIRouter(prefix="/api/auth", tags=["profile"])
 
 
 @router.patch("/profile")
-async def update_profile(body: ProfileUpdate, ctx: Context = Depends(required_context)) -> PublicUser:
-    user, _ = ctx
+async def update_profile(
+    body: ProfileUpdate,
+    ctx: Context = Depends(required_context),
+    db: AsyncSession = Depends(get_db_session),
+) -> PublicUser:
+    user, session = ctx
+    row = await users_repo.get(db, user.id)
+    if row is None:
+        return PublicUser.from_row(user, provider=session.provider)
     if body.name is not None:
-        user.name = body.name
+        row.name = body.name
     if body.avatar is not None:
-        user.avatar = body.avatar
-    await auth_service.save_user(user)
-    return PublicUser.from_user(user)
+        # The column holds an object key, never a URL — that is what keeps a
+        # storage or CDN change from becoming a data migration.
+        row.avatar_key = body.avatar
+    await db.flush()
+    return PublicUser.from_row(row, provider=session.provider)
 
 
 @router.delete("/profile")
 async def delete_profile(
     response: Response,
     ctx: Context = Depends(required_context),
+    db: AsyncSession = Depends(get_db_session),
     session_cookie: str | None = Cookie(default=None, alias=settings.session_cookie_name),
 ):
+    """Delete the account.
+
+    This is **anonymisation, not a DELETE**: the ledger references the user by
+    foreign key and the database rightly refuses to erase a row that money
+    history points at. So the person disappears — email, name and avatar are
+    cleared, the session is killed — while the bookkeeping stays intact (CH-15).
+
+    Erasing the person's files from storage belongs here too and is wired up
+    together with the media migration.
+    """
     user, session = ctx
+    row = await users_repo.get(db, user.id)
+    if row is not None:
+        row.email = None
+        row.name = None
+        row.avatar_key = None
+        row.password_hash = None
+        row.deleted_at = func.now()
+        await db.flush()
     await auth_service.delete_session(session.sid)
-    await auth_service.delete_user(user.id)
     clear_session_cookie(response)
     return {"ok": True}

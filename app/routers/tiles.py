@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.session import get_session as get_db_session
 from app.deps import Context, required_context
 from app.models.payment import Balance
 from app.models.tile import Category, Question, Tile
@@ -30,6 +32,9 @@ async def freeform_question() -> Question:
 
 
 @router.get("/balance", response_model=Balance)
-async def balance(ctx: Context = Depends(required_context)) -> Balance:
-    user, session = ctx
-    return await wallet.get_balance(user, session)
+async def balance(
+    ctx: Context = Depends(required_context),
+    db: AsyncSession = Depends(get_db_session),
+) -> Balance:
+    user, _ = ctx
+    return await wallet.get_balance(db, user.id)

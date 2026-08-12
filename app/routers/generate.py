@@ -9,6 +9,9 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from app.config import settings
 from app.core import rate_limit
 from app.core.security import new_id
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.session import get_session as get_db_session
 from app.deps import Context, required_context
 from app.models.chat import ChatMessage, ChatRole
 from app.models.generation import (
@@ -44,7 +47,11 @@ async def upload(file: UploadFile = File(...), ctx: Context = Depends(required_c
 
 
 @router.post("/generate", response_model=GenerateResponse)
-async def generate(body: GenerateRequest, ctx: Context = Depends(required_context)) -> GenerateResponse:
+async def generate(
+    body: GenerateRequest,
+    ctx: Context = Depends(required_context),
+    db: AsyncSession = Depends(get_db_session),
+) -> GenerateResponse:
     """Two-phase generation:
 
     1. reserve TEKI (create payment)
@@ -94,8 +101,14 @@ async def generate(body: GenerateRequest, ctx: Context = Depends(required_contex
         cost = settings.video_teki_cost if gen_type == GenerationType.VIDEO else settings.image_teki_cost
 
     reason = f"arteki:{gen_type.value}_generate"
+    # Note on refunds in this handler: the request runs inside one database
+    # transaction, and raising rolls it back — so a failed image generation
+    # leaves no charge at all, rather than a charge plus a refund. The explicit
+    # cancel() calls below are kept because they are the correct behaviour in
+    # any path that does NOT roll back (the video worker, which commits the
+    # charge before the job starts), and because they are idempotent.
     try:
-        payment = await wallet.reserve(user, session, amount=cost, reason=reason)
+        payment = await wallet.reserve(db, user.id, amount=cost, reason=reason)
     except wallet.InsufficientFunds:
         raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, detail="Not enough TEKI")
 
@@ -104,7 +117,7 @@ async def generate(body: GenerateRequest, ctx: Context = Depends(required_contex
     # record now; the worker flips it to DONE (with the URL) or FAILED (+ refund).
     if gen_type == GenerationType.VIDEO:
         if not settings.kie_enabled:
-            await wallet.cancel(user, session, payment)
+            await wallet.cancel(db, user.id, payment)
             raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Video generator is not configured. Your TEKI was refunded.",
@@ -138,7 +151,7 @@ async def generate(body: GenerateRequest, ctx: Context = Depends(required_contex
             chat_id=chat.id if chat else None,
         )
 
-        balance = await wallet.get_balance(user, session)
+        balance = await wallet.get_balance(db, user.id)
         return GenerateResponse(
             id=generation.id,
             url="",
@@ -159,17 +172,17 @@ async def generate(body: GenerateRequest, ctx: Context = Depends(required_contex
         )
     except content_gen.GenerationUnavailable:
         # Upstream generator unavailable — refund and tell the client to retry.
-        await wallet.cancel(user, session, payment)
+        await wallet.cancel(db, user.id, payment)
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Image generator is busy right now, your TEKI was refunded — please try again.",
         )
     except Exception:
         logger.exception("Generation failed for user %s (tile=%s)", user.id, body.tile_id)
-        await wallet.cancel(user, session, payment)
+        await wallet.cancel(db, user.id, payment)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="Generation failed")
 
-    await wallet.confirm(user, session, payment)
+    await wallet.confirm(db, payment)
 
     generation = Generation(
         id=new_id("gen_"),
@@ -195,7 +208,7 @@ async def generate(body: GenerateRequest, ctx: Context = Depends(required_contex
         )
         await chat_service.add_message(chat, message)
 
-    balance = await wallet.get_balance(user, session)
+    balance = await wallet.get_balance(db, user.id)
     return GenerateResponse(
         id=generation.id,
         url=result_url,

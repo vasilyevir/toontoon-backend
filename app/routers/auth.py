@@ -1,7 +1,11 @@
-"""Authentication — magic link (v1) and Boostyfi OAuth v2 (PKCE)."""
+"""Authentication: guest, magic link, email+password, Apple and Google.
+
+Identity lives in PostgreSQL; sessions stay in Redis (TTL is what Redis is for).
+Boostyfi is gone from the mobile product — purchases go through the App Store
+(CH-17), so its OAuth and wallet grant had no user left.
+"""
 from __future__ import annotations
 
-import time
 from typing import Optional
 
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Query, Request, Response, status
@@ -27,7 +31,7 @@ from app.db.repositories import users as users_repo
 from app.db.repositories import wallet as wallet_repo
 from app.db.session import get_session as get_db_session
 from app.redis_client import get_client
-from app.services import apple_oauth, auth_service, boostify, google_oauth
+from app.services import apple_oauth, auth_service, google_oauth, identity_service
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -90,7 +94,7 @@ async def magic_link(body: MagicLinkRequest):
 
 
 @router.get("/verify")
-async def verify(token: str = Query(...)):
+async def verify(token: str = Query(...), db: AsyncSession = Depends(get_db_session)):
     """Consume a magic-link token, create the session cookie, redirect to app.
 
     Web-only (redirect-based). Native clients should use
@@ -100,8 +104,10 @@ async def verify(token: str = Query(...)):
     if not email:
         return RedirectResponse(url=f"{settings.frontend_url}/?error=expired", status_code=302)
 
-    user = await auth_service.get_or_create_magic_user(email)
-    session = await auth_service.create_session(user)
+    user = await identity_service.get_or_create_oauth_user(
+        db, provider="email", external_id=email, email=email
+    )
+    session = await auth_service.create_session_for_user_id(user.id, AuthProvider.MAGIC)
 
     response = RedirectResponse(url=f"{settings.frontend_url}{settings.auth_success_redirect}", status_code=302)
     set_session_cookie(response, session.sid)
@@ -109,7 +115,9 @@ async def verify(token: str = Query(...)):
 
 
 @router.get("/magic-link/verify", response_model=AuthResult)
-async def magic_link_verify_json(token: str = Query(...), *, response: Response) -> AuthResult:
+async def magic_link_verify_json(
+    token: str = Query(...), *, response: Response, db: AsyncSession = Depends(get_db_session)
+) -> AuthResult:
     """Same magic-link token as ``/verify``, but for native/app clients:
     returns ``{user, session_token}`` directly in JSON instead of a redirect
     with ``Set-Cookie`` — no cookie-jar interception needed. The cookie is
@@ -120,10 +128,14 @@ async def magic_link_verify_json(token: str = Query(...), *, response: Response)
     if not email:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="invalid_or_expired")
 
-    user = await auth_service.get_or_create_magic_user(email)
-    session = await auth_service.create_session(user)
+    user = await identity_service.get_or_create_oauth_user(
+        db, provider="email", external_id=email, email=email
+    )
+    session = await auth_service.create_session_for_user_id(user.id, AuthProvider.MAGIC)
     set_session_cookie(response, session.sid)
-    return AuthResult(user=PublicUser.from_user(user), session_token=session.sid)
+    return AuthResult(
+        user=PublicUser.from_row(user, provider=AuthProvider.MAGIC), session_token=session.sid
+    )
 
 
 # ─── Email + password (v1.5) ────────────────────────────────────────────────
@@ -139,7 +151,12 @@ def _client_ip(request: Request) -> str:
 
 
 @router.post("/register", response_model=AuthResult, status_code=status.HTTP_201_CREATED)
-async def register(body: RegisterRequest, request: Request, response: Response) -> AuthResult:
+async def register(
+    body: RegisterRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db_session),
+) -> AuthResult:
     """Create an email+password account and start a session.
 
     Registration is one-per-email. The session token is returned in the JSON
@@ -152,19 +169,26 @@ async def register(body: RegisterRequest, request: Request, response: Response) 
     if not allowed:
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many attempts, try later")
 
-    if await auth_service.get_user_by_email(email):
+    if await users_repo.get_by_email(db, email):
         raise HTTPException(status.HTTP_409_CONFLICT, detail="This email is already registered")
 
-    user = await auth_service.create_email_user(
-        email=email, password_hash=hash_password(body.password), name=body.name.strip()
+    user = await identity_service.create_email_user(
+        db, email=email, password_hash=hash_password(body.password), name=body.name.strip()
     )
-    session = await auth_service.create_session(user)
+    session = await auth_service.create_session_for_user_id(user.id, AuthProvider.EMAIL)
     set_session_cookie(response, session.sid)
-    return AuthResult(user=PublicUser.from_user(user), session_token=session.sid)
+    return AuthResult(
+        user=PublicUser.from_row(user, provider=AuthProvider.EMAIL), session_token=session.sid
+    )
 
 
 @router.post("/login", response_model=AuthResult)
-async def login(body: LoginRequest, request: Request, response: Response) -> AuthResult:
+async def login(
+    body: LoginRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db_session),
+) -> AuthResult:
     """Log in with email + password. Returns the session token (JSON) + cookie."""
     email = str(body.email).strip().lower()
 
@@ -175,18 +199,24 @@ async def login(body: LoginRequest, request: Request, response: Response) -> Aut
     if not (ok_email and ok_ip):
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many attempts, try later")
 
-    user = await auth_service.get_user_by_email(email)
+    user = await users_repo.get_by_email(db, email)
     # Single generic error — never reveal whether the email exists.
     if not user or not user.password_hash or not verify_password(body.password, user.password_hash):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 
-    session = await auth_service.create_session(user)
+    session = await auth_service.create_session_for_user_id(user.id, AuthProvider.EMAIL)
     set_session_cookie(response, session.sid)
-    return AuthResult(user=PublicUser.from_user(user), session_token=session.sid)
+    return AuthResult(
+        user=PublicUser.from_row(user, provider=AuthProvider.EMAIL), session_token=session.sid
+    )
 
 
 @router.post("/forgot-password")
-async def forgot_password(body: ForgotPasswordRequest, request: Request):
+async def forgot_password(
+    body: ForgotPasswordRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db_session),
+):
     """Start a password reset. ALWAYS returns 200 (never reveals whether the
     email exists). A single-use reset token (TTL 1h) is stored in Redis.
 
@@ -202,10 +232,10 @@ async def forgot_password(body: ForgotPasswordRequest, request: Request):
     if not (ok_email and ok_ip):
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many attempts, try later")
 
-    user = await auth_service.get_user_by_email(email)
+    user = await users_repo.get_by_email(db, email)
     result: dict = {"ok": True}
-    # Only email+password accounts have a password to reset.
-    if user and user.provider == AuthProvider.EMAIL and user.password_hash:
+    # Only accounts that actually have a password can reset one.
+    if user and user.password_hash:
         token = await auth_service.create_reset_token(email)
         result["devToken"] = token
         result["devLink"] = f"{settings.frontend_url}/reset-password?token={token}"
@@ -213,7 +243,11 @@ async def forgot_password(body: ForgotPasswordRequest, request: Request):
 
 
 @router.post("/reset-password")
-async def reset_password(body: ResetPasswordRequest, request: Request):
+async def reset_password(
+    body: ResetPasswordRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db_session),
+):
     """Consume a reset token and set a new password (Argon2)."""
     ok_ip, _ = await rate_limit.hit(f"reset:ip:{_client_ip(request)}", 20, 900)
     if not ok_ip:
@@ -223,67 +257,13 @@ async def reset_password(body: ResetPasswordRequest, request: Request):
     if not email:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="invalid_or_expired")
 
-    user = await auth_service.get_user_by_email(email)
+    user = await users_repo.get_by_email(db, email)
     if not user:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="invalid_or_expired")
 
     user.password_hash = hash_password(body.new_password)
-    await auth_service.save_user(user)
+    await db.flush()
     return {"ok": True}
-
-
-# ─── v2: Boostyfi OAuth (PKCE / S256, required) ─────────────────────────────
-
-
-@router.get("/boostify/login")
-async def boostify_login():
-    """Kick off the Boostyfi OAuth flow with PKCE.
-
-    Generates a PKCE pair and a CSRF state token, stores the verifier in Redis
-    keyed by state (TTL 10 min), then redirects the browser to Boostyfi.
-    The verifier is never sent to the browser.
-    """
-    state = new_token()
-    code_verifier, code_challenge = boostify.pkce_pair()
-
-    redis = get_client()
-    # Store verifier alongside the state so the callback can retrieve it.
-    await redis.set(f"oauth_state:{state}", code_verifier, ex=600)
-
-    return RedirectResponse(
-        url=boostify.authorize_url(state, code_challenge),
-        status_code=302,
-    )
-
-
-@router.get("/boostify/callback")
-async def boostify_callback(code: str = Query(...), state: str = Query(...)):
-    """Complete the OAuth flow: verify state, exchange code (with PKCE verifier)."""
-    redis = get_client()
-    code_verifier = await redis.get(f"oauth_state:{state}")
-    if not code_verifier:
-        return RedirectResponse(url=f"{settings.frontend_url}/?error=oauth_state", status_code=302)
-    await redis.delete(f"oauth_state:{state}")
-
-    # code_verifier may come back as bytes from Redis.
-    if isinstance(code_verifier, bytes):
-        code_verifier = code_verifier.decode()
-
-    tokens = await boostify.exchange_code(code, code_verifier)
-    user = await auth_service.get_or_create_boostify_user(tokens["user"])
-    session = await auth_service.create_session(
-        user,
-        boostify_access_token=tokens["access_token"],
-        boostify_refresh_token=tokens.get("refresh_token"),
-        boostify_access_expires_at=time.time() + tokens.get("expires_in", 3600),
-    )
-
-    response = RedirectResponse(url=f"{settings.frontend_url}{settings.auth_success_redirect}", status_code=302)
-    set_session_cookie(response, session.sid)
-    return response
-
-
-# ─── v2: Google OAuth (web + native app) ────────────────────────────────────
 
 
 @router.get("/google/login")
@@ -309,7 +289,11 @@ async def google_login(platform: str = Query(default="web")):
 
 
 @router.get("/google/callback")
-async def google_callback(code: str = Query(...), state: str = Query(...)):
+async def google_callback(
+    code: str = Query(...),
+    state: str = Query(...),
+    db: AsyncSession = Depends(get_db_session),
+):
     redis = get_client()
     platform = await redis.get(f"oauth_state:google:{state}")
     if platform is None:
@@ -328,8 +312,14 @@ async def google_callback(code: str = Query(...), state: str = Query(...)):
         )
         return RedirectResponse(url=error_target, status_code=302)
 
-    user = await auth_service.get_or_create_google_user(claims)
-    session = await auth_service.create_session(user)
+    user = await identity_service.get_or_create_oauth_user(
+        db,
+        provider="google",
+        external_id=claims["sub"],
+        email=claims.get("email"),
+        name=claims.get("name"),
+    )
+    session = await auth_service.create_session_for_user_id(user.id, AuthProvider.GOOGLE)
 
     if platform == "app":
         return RedirectResponse(
@@ -346,7 +336,11 @@ async def google_callback(code: str = Query(...), state: str = Query(...)):
 
 
 @router.post("/oauth/apple", response_model=AuthResult)
-async def apple_auth(body: AppleAuthRequest, response: Response) -> AuthResult:
+async def apple_auth(
+    body: AppleAuthRequest,
+    response: Response,
+    db: AsyncSession = Depends(get_db_session),
+) -> AuthResult:
     """Verify an Apple ``identity_token`` (from ``ASAuthorizationAppleIDProvider``
     on the client) and start a session. Returns ``{user, session_token}`` in
     JSON (same shape as register/login) — no redirect involved, the app talks
@@ -362,11 +356,18 @@ async def apple_auth(body: AppleAuthRequest, response: Response) -> AuthResult:
     except apple_oauth.InvalidAppleToken as exc:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail=str(exc))
 
-    claims["name"] = body.name
-    user = await auth_service.get_or_create_apple_user(claims)
-    session = await auth_service.create_session(user)
+    user = await identity_service.get_or_create_oauth_user(
+        db,
+        provider="apple",
+        external_id=claims["sub"],
+        email=claims.get("email"),
+        name=body.name,
+    )
+    session = await auth_service.create_session_for_user_id(user.id, AuthProvider.APPLE)
     set_session_cookie(response, session.sid)
-    return AuthResult(user=PublicUser.from_user(user), session_token=session.sid)
+    return AuthResult(
+        user=PublicUser.from_row(user, provider=AuthProvider.APPLE), session_token=session.sid
+    )
 
 
 # ─── Session info / logout ──────────────────────────────────────────────────
@@ -380,8 +381,8 @@ async def me(ctx: Optional[Context] = Depends(optional_context)) -> Optional[Pub
     """
     if ctx is None:
         return None
-    user, _ = ctx
-    return PublicUser.from_user(user)
+    user, session = ctx
+    return PublicUser.from_row(user, provider=session.provider)
 
 
 @router.delete("/me")
