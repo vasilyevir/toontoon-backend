@@ -1,19 +1,67 @@
 # arteki-web-backend
 
-Backend (API) проекта **arteki-web**. Деплоится в Kubernetes-кластер через общий Helm-чарт
-`oci://ghcr.io/atom-group-software/charts/app`. Полный runbook онбординга — в инфра-репо
-(`k8s-docs/ops/08-adding-new-projects.md`).
+Бэкенд ARTEKI: личность, кошелёк, каталог стилей и генерация изображений.
+Разрабатывается **под мобильное приложение** — веб-фронт в контракте
+не учитывается.
+
+- Как поднять локально — [docs/LOCAL-DEV.md](docs/LOCAL-DEV.md)
+- Что умеет API — [docs/API.md](docs/API.md), точная схема в
+  [docs/openapi.json](docs/openapi.json) (генерируется из кода)
+- Настройки — [docs/CONFIG.md](docs/CONFIG.md) (генерируется из кода)
+- Экономика и цены — [docs/ECONOMY.md](docs/ECONOMY.md)
+- Почему всё устроено так — [docs/adr/](docs/adr/)
+- Что изменилось — [CHANGELOG.md](CHANGELOG.md)
+- Что ждёт решения — [docs/BLOCKERS.md](docs/BLOCKERS.md)
+
+## Как это устроено
+
+**PostgreSQL** — всё, что нельзя потерять: пользователи, кошелёк с журналом
+операций, подписки, генерации, чат, каталог.
+**Redis** — сессии, кэш, rate limit, локи. Не система учёта.
+**Объектное хранилище** (MinIO, S3-совместимое) — файлы. Бакет приватный,
+наружу только через `/api/media/{id}` с проверкой прав.
+
+```
+app/
+  db/            таблицы, миграции, репозитории — единственный слой, пишущий SQL
+  storage/       абстракция файлов: S3-совместимая и локальная реализации
+  routers/       HTTP; в базу ходят через репозитории, а не напрямую
+  services/
+    generation/  ядро: операция → провайдер, реестр и адаптеры моделей
+    wallet.py    двухфазная оплата поверх журнала
+  models/        pydantic-схемы API
+```
+
+Три понятия, на которых держится генерация: **операция** (что делаем),
+**стиль** (что получит человек), **провайдер** (чем сделано). Стиль не знает
+провайдера, провайдер не знает стиля — их сводит операция, и поэтому добавление
+модели это адаптер плюс строка в реестре, а не правка пайплайна.
+
+## Разработка
+
+```bash
+docker start arteki-postgres arteki-redis arteki-minio
+.venv/bin/python -m alembic upgrade head
+PYTHONPATH=. .venv/bin/python -m app.db.seed
+./run-local.sh                                    # http://localhost:8020
+PYTHONPATH=. .venv/bin/python -m pytest tests -q
+```
+
+Перед коммитом, если менялись маршруты или настройки:
+
+```bash
+PYTHONPATH=. .venv/bin/python -m scripts.dump_reference
+```
+
+Справочная часть документации не пишется руками. Расхождение с кодом ловится
+проверкой (`--check`), а не глазами на ревью.
 
 ## Ветки
 
-- `main` — **продакшн + CI/CD.** Пуш/мёрж сюда → GitHub Actions собирает Docker-образ и
-  катит релиз `arteki-web-backend` в namespace `arteki-web` (`helm upgrade --install`).
-- `dev` — общая ветка разработки («склад» проекта). Сюда мёржим фичи из `feature/*`,
-  затем PR `dev` → `main`.
+- `main` — продакшн и CI/CD: мёрж сюда катит релиз в кластер.
+- `dev` — общая ветка разработки.
 
-> Прямой push в `main` не делаем — только через PR из `dev` после ревью.
-
-## Деплой (CI/CD)
+Прямой push в `main` не делаем — только через PR из `dev`.
 
 | Параметр | Значение |
 | --- | --- |
@@ -21,15 +69,21 @@ Backend (API) проекта **arteki-web**. Деплоится в Kubernetes-к
 | Release | `arteki-web-backend` |
 | Namespace | `arteki-web` |
 | Конфиг релиза | `deploy/values.yaml` |
-| Workflow | `.github/workflows/deploy.yml` |
 
-Папки `deploy/` и `.github/workflows/` разработчики без согласования с DevOps не трогают.
+Папки `deploy/` и `.github/workflows/` без согласования с DevOps не трогаем.
 
-## Что ещё нужно для первого зелёного деплоя (пока не сделано)
+## Что нужно кластеру
 
-- [ ] `Dockerfile` + код приложения (health-эндпоинт, порт `8000`).
-- [ ] Заполнить `deploy/values.yaml` под проект (`env`, БД/`redis`, `initSchema`, `ingress`).
-- [ ] Секреты репо: `KUBECONFIG`, `GHCR_READ_PAT`.
-- [ ] Секреты кластера: `arteki-web-backend-secrets` (если есть секретные env) и `ghcr-pull`.
+Пока этого нет, часть возможностей выключена (см. BLOCKERS).
 
-Подробности — `k8s-docs/ops/08-adding-new-projects.md`.
+- **PostgreSQL** — `DATABASE_URL` в секретах, миграции при деплое.
+- **MinIO** — бакет на окружение; наружу открывать не требуется, пока видео
+  вне скоупа.
+- **SMTP** — писем сейчас не шлёт никто; до его появления токены сброса
+  возвращаются в ответе API, и `EXPOSE_DEV_TOKENS=false` в проде обязателен.
+
+## Безопасность
+
+Секретов в репозитории нет. Ключи провайдеров живут в `.env` на сервере
+и в Secret кластера. Референсные фотографии хранятся в приватном бакете,
+метаданные (включая GPS) срезаются при загрузке.
