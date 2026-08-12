@@ -1,7 +1,6 @@
 """Generation endpoints: file upload + the two-phase generate flow."""
 from __future__ import annotations
 
-import base64
 import logging
 from pathlib import Path
 
@@ -15,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_session as get_db_session
 from app.db.repositories import generations as generations_repo
 from app.db.repositories import media as media_repo
+from app.db import models as m
 from app.db.models import MediaAsset
 from app.storage import get_storage
 from app.deps import Context, required_context
@@ -27,6 +27,9 @@ from app.models.generation import (
 )
 from app.db.repositories import chat as chat_repo
 from app.services import content_gen, generations_service, tiles_data, video_gen, wallet
+from app.services import generation as generation_core
+from app.services.generation import registry as _registry
+generation_core.registry = _registry
 
 logger = logging.getLogger("arteki.generate")
 
@@ -176,23 +179,37 @@ async def generate(
             status=GenerationStatus.QUEUED,
         )
 
-    # The reference photo now lives in private storage, so it is handed to the
-    # generator as inline data instead of a URL it could fetch. Nothing about a
-    # user's face should be reachable by a link.
-    photo_data_url = await _resolve_photo(db, user.id, body.photo_url)
+    # The reference photo lives in private storage and is handed over as bytes,
+    # not as a URL a provider could fetch: nothing about someone's face should
+    # be reachable by a link.
+    photo = await _load_photo(db, user.id, body.photo_url)
+
+    # The prompt is still built the old way (tile answers + GPT); only the part
+    # that talks to a model has moved into the generation core.
+    prompt, negative = await content_gen.build_prompt_for(
+        tile=tile, answers=body.answers, free_text=body.prompt, style=body.style,
+        photo_description=None,
+    )
+
+    # Which operation this actually is — decided by what we were given, not by
+    # what we would like it to be. With a photo it is a real image_to_image only
+    # if a provider is enabled for it; otherwise it is honest text_to_image.
+    operation = generation_core.Operation.TEXT_TO_IMAGE
+    if photo is not None:
+        can_edit = await generation_core.registry.candidates(
+            db, generation_core.Operation.IMAGE_TO_IMAGE
+        )
+        if can_edit:
+            operation = generation_core.Operation.IMAGE_TO_IMAGE
 
     # The attempt is recorded before the provider is called, so a failure leaves
     # a trace instead of nothing at all.
     record = await generations_repo.create(
         db,
-        # Always text_to_image for now, even when a photo is attached: the
-        # pipeline turns the photo into a text description and generates from
-        # scratch (CH-19). Labelling it image_to_image would make the field lie,
-        # and it is the field pricing and analytics will be read from.
-        operation="text_to_image",
+        operation=operation.value,
         user_id=user.id,
         status="running",
-        prompt=body.prompt,
+        prompt=prompt,
         request_params={
             "tile_id": body.tile_id,
             "answers": body.answers,
@@ -204,30 +221,34 @@ async def generate(
         cost=cost,
     )
 
+    request = generation_core.GenerationRequest(
+        operation=operation,
+        prompt=prompt,
+        negative_prompt=negative,
+        image=photo[0] if photo else None,
+        image_mime=photo[1] if photo else None,
+    )
+
     try:
-        result_url, prompt = await content_gen.generate(
-            gen_type=gen_type,
-            tile=tile,
-            answers=body.answers,
-            free_text=body.prompt,
-            style=body.style,
-            photo_url=photo_data_url,
-        )
-    except content_gen.GenerationUnavailable:
-        # Upstream generator unavailable — refund and tell the client to retry.
+        result = await generation_core.run(db, request)
+    except generation_core.GenerationUnavailable as exc:
+        await _record_failure(record, str(exc))
         await wallet.cancel(db, user.id, payment)
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Image generator is busy right now, your TEKI was refunded — please try again.",
         )
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
         logger.exception("Generation failed for user %s (tile=%s)", user.id, body.tile_id)
+        await _record_failure(record, repr(exc))
         await wallet.cancel(db, user.id, payment)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="Generation failed")
 
     await wallet.confirm(db, payment)
 
-    asset = await _store_result(db, user.id, result_url)
+    asset = await media_repo.save_image(db, user_id=user.id, kind="generation", data=result.data)
+    record.provider_id = result.provider_id
+    record.provider_model = result.model
     await generations_repo.mark_done(db, record, result_media_id=asset.id, prompt=prompt)
     generation_id = record.id
     result_url = f"/api/media/{asset.id}"
@@ -260,31 +281,44 @@ def _media_id(photo_url: str | None) -> str | None:
     return None
 
 
-async def _resolve_photo(db: AsyncSession, user_id: str, photo_url: str | None) -> str | None:
-    """Turn a stored photo into an inline data URL for the generator."""
+async def _load_photo(
+    db: AsyncSession, user_id: str, photo_url: str | None
+) -> tuple[bytes, str] | None:
+    """Read the stored reference photo. Returns ``(bytes, mime)``."""
     media_id = _media_id(photo_url)
     if media_id is None:
-        return photo_url  # already a data: URL or an external link
+        return None
     asset = await db.get(MediaAsset, media_id)
     if asset is None or asset.user_id != user_id or asset.deleted_at is not None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Photo not found")
     data = await get_storage().get(asset.storage_key)
     if data is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Photo not found")
-    return f"data:{asset.mime or 'image/jpeg'};base64,{base64.b64encode(data).decode()}"
+    return data, asset.mime or "image/jpeg"
 
 
-async def _store_result(db: AsyncSession, user_id: str, result_url: str):
-    """Move a freshly generated file from the working directory into storage.
+async def _record_failure(record, error: str) -> None:
+    """Записать неудачную попытку в ОТДЕЛЬНОЙ транзакции.
 
-    The generator still writes to ``uploads/`` internally; this is the seam that
-    gets the result into the private bucket and out of a served directory. When
-    the generation core is rewritten (CH-21) providers will write here directly.
+    Иначе следа не остаётся: запрос падает, транзакция откатывается и вместе
+    с ней исчезает запись о том, что человек вообще пытался. Для баланса откат
+    — то что нужно (никто не списан), а для разбора жалобы «нажал и ничего
+    не произошло» нужен именно этот след.
     """
-    local = Path(result_url.lstrip("/")) if result_url.startswith("/uploads/") else None
-    if local is None or not local.exists():
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="Generation produced no file")
-    data = local.read_bytes()
-    asset = await media_repo.save_image(db, user_id=user_id, kind="generation", data=data)
-    local.unlink(missing_ok=True)
-    return asset
+    from app.db.session import session_scope
+
+    try:
+        async with session_scope() as db:
+            failed = m.Generation(
+                user_id=record.user_id,
+                operation=record.operation,
+                status="failed",
+                prompt=record.prompt,
+                request_params=record.request_params,
+                source_media_id=record.source_media_id,
+                cost=0,  # ноль: списания не было, откат его снял
+                error=error[:2000],
+            )
+            db.add(failed)
+    except Exception:  # noqa: BLE001 — диагностика не должна ломать ответ
+        logger.exception("Не удалось записать неудачную генерацию")

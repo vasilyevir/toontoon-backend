@@ -54,11 +54,36 @@ async def seed_plans() -> None:
             await session.execute(stmt)
 
 
+# id, операции, модель, приоритет, включён
+# image_to_image у OpenAI ВЫКЛЮЧЕН: адаптер написан, но включать его можно
+# только после проверки на реальных лицах — вопрос не в том, отвечает ли API,
+# а в том, узнаётся ли человек (CH-19).
+PROVIDERS = [
+    ("openai_images", ["text_to_image"], "gpt-image-1", 10, True),
+    ("pollinations", ["text_to_image"], "flux", 20, True),
+]
+
+
+async def seed_providers() -> None:
+    async with session_scope() as session:
+        for pid, operations, model, priority, enabled in PROVIDERS:
+            stmt = insert(m.GenerationProvider).values(
+                id=pid, operations=operations, model=model,
+                priority=priority, is_enabled=enabled,
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=[m.GenerationProvider.id],
+                set_={"operations": operations, "model": model, "priority": priority},
+            )
+            await session.execute(stmt)
+
+
 async def main() -> None:
     await connect()
     await seed_plans()
+    await seed_providers()
     await disconnect()
-    print(f"Тарифов записано: {len(PLANS)}")
+    print(f"Тарифов записано: {len(PLANS)}, провайдеров: {len(PROVIDERS)}")
 
 
 if __name__ == "__main__":

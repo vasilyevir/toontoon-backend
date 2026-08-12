@@ -348,3 +348,36 @@ async def generate(
         # instead of charging the user for a broken/missing image.
         raise GenerationUnavailable("Image generator is temporarily unavailable")
     return local_url, prompt
+
+
+async def build_prompt_for(
+    *,
+    tile,
+    answers: dict[str, str],
+    free_text: str | None,
+    style: str | None,
+    photo_description: str | None = None,
+) -> tuple[str, str]:
+    """Собрать промпт, ничего не генерируя.
+
+    Раньше сборка промпта и вызов модели жили в одной функции; теперь модель
+    выбирает реестр провайдеров (CH-21), а здесь остаётся только текст. GPT
+    пишет промпт, если ключ есть; иначе работает механический сборщик, который
+    не зависит ни от чего.
+    """
+    from app.services import gpt as gpt_service
+
+    style = style or answers.get("style")
+    prompt, negative = await gpt_service.build_prompt(
+        tile=tile,
+        answers=answers,
+        free_text=free_text,
+        style=style,
+        photo_description=photo_description,
+    )
+    if not prompt:
+        prompt, negative = build_prompt(
+            tile=tile, answers=answers, free_text=free_text, style=style,
+            photo_description=photo_description,
+        )
+    return prompt, negative or ""
