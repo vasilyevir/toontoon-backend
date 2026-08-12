@@ -1921,6 +1921,72 @@
         ]
       }
     },
+    "/api/balance": {
+      "get": {
+        "description": "Текущий остаток.\n\nРаньше эта ручка жила в роутере плиток и уехала вместе с ним — приложение\nполучало 404 и молча показывало баланс из bootstrap. Кошелёк не имеет\nотношения к каталогу, поэтому теперь она там, где остальное про деньги.",
+        "operationId": "balance_api_balance_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "arteki-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Arteki-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Balance"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Balance",
+        "tags": [
+          "billing"
+        ]
+      }
+    },
     "/api/chat": {
       "post": {
         "description": "Answer, and store both sides of the turn.\n\nWorks without a session too — a guest gets a session on first launch, so in\npractice this only happens for a probe or a browser without one; nothing is\nstored then.",

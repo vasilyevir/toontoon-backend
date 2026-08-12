@@ -15,6 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db.repositories import plans as plans_repo
 from app.db.repositories import wallet as wallet_repo
+from app.models.payment import Balance
+from app.services import wallet
 from app.db.session import get_session as get_db_session
 from app.deps import Context, required_context
 
@@ -38,6 +40,21 @@ class RewardResult(BaseModel):
     sub_balance: int
     # What tomorrow is worth, so the screen can say it instead of guessing.
     next_reward: Optional[int] = None
+
+
+@router.get("/balance", response_model=Balance)
+async def balance(
+    ctx: Context = Depends(required_context),
+    db: AsyncSession = Depends(get_db_session),
+) -> Balance:
+    """Текущий остаток.
+
+    Раньше эта ручка жила в роутере плиток и уехала вместе с ним — приложение
+    получало 404 и молча показывало баланс из bootstrap. Кошелёк не имеет
+    отношения к каталогу, поэтому теперь она там, где остальное про деньги.
+    """
+    user, _ = ctx
+    return await wallet.get_balance(db, user.id)
 
 
 @router.get("/plans", response_model=list[Plan])
