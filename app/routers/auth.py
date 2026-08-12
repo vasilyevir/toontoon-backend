@@ -23,10 +23,56 @@ from app.models.user import (
     RegisterRequest,
     ResetPasswordRequest,
 )
+from app.db.repositories import users as users_repo
+from app.db.repositories import wallet as wallet_repo
+from app.db.session import get_session as get_db_session
 from app.redis_client import get_client
 from app.services import apple_oauth, auth_service, boostify, google_oauth
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+
+# ─── Guest ────────────────────────────────────────────────────────────────────
+
+
+@router.post("/guest", response_model=AuthResult, status_code=status.HTTP_201_CREATED)
+async def create_guest(
+    response: Response,
+    db: AsyncSession = Depends(get_db_session),
+) -> AuthResult:
+    """Start an anonymous session on first launch.
+
+    The app calls this once and keeps the token in the Keychain. From here on a
+    guest is an ordinary user: they have a balance, their generations are stored
+    and their chat is kept — signing in later merges all of it into the account
+    instead of asking them to start over (CH-16).
+
+    Unlike every other identity in this file, a guest lives in PostgreSQL: this
+    is the first route on the new storage.
+    """
+    user = await users_repo.create_guest(db)
+    await wallet_repo.grant(
+        db,
+        user.id,
+        amount=settings.signup_teki_balance,
+        bucket="free",
+        reason="signup",
+        idempotency_key=f"signup:{user.id}",
+    )
+    session = await auth_service.create_session_for_user_id(user.id, AuthProvider.GUEST)
+    set_session_cookie(response, session.sid)
+    return AuthResult(
+        user=PublicUser(
+            id=user.id,
+            provider=AuthProvider.GUEST,
+            email=None,
+            name=None,
+            avatar=None,
+            created_at=user.created_at,
+        ),
+        session_token=session.sid,
+    )
 
 
 # ─── v1: Magic link ───────────────────────────────────────────────────────────

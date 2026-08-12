@@ -1,6 +1,7 @@
 """ARTEKI backend — FastAPI application entrypoint."""
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -8,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from app import db, storage
 from app.config import settings
 from app.middleware.app_key import AppKeyMiddleware
 from app.redis_client import connect, disconnect
@@ -33,7 +35,25 @@ UPLOAD_DIR = Path("uploads")
 async def lifespan(app: FastAPI):
     UPLOAD_DIR.mkdir(exist_ok=True)
     await connect()
+    # Postgres is being introduced alongside Redis; nothing reads from it yet,
+    # so an unreachable database must not stop local work. Once the first router
+    # depends on it this becomes a hard failure — that is the point of migrating.
+    try:
+        await db.connect()
+    except Exception as exc:  # noqa: BLE001 — startup diagnostics
+        logging.getLogger("arteki.db").error(
+            "PostgreSQL unavailable (%s). Continuing: no router reads from it yet. "
+            "Start it with: docker start arteki-postgres",
+            exc,
+        )
+    try:
+        await storage.startup()
+    except Exception as exc:  # noqa: BLE001 — startup diagnostics
+        logging.getLogger("arteki.storage").error(
+            "Object storage unavailable (%s). Start it with: docker start arteki-minio", exc
+        )
     yield
+    await db.disconnect()
     await disconnect()
 
 

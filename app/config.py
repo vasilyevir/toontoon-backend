@@ -33,9 +33,35 @@ class Settings(BaseSettings):
     def app_key_exempt_list(self) -> list[str]:
         return [p.strip() for p in self.app_key_exempt_prefixes.split(",") if p.strip()]
 
-    # Redis
+    # Redis — sessions, cache, rate limits, locks. No longer a system of record.
     redis_url: str = "redis://localhost:6379/0"
     use_fake_redis: bool = False
+
+    # PostgreSQL — everything that must survive a restart (app/db).
+    # Port 5433 locally: 5432 is usually taken by another project's container.
+    database_url: str = "postgresql+asyncpg://arteki:arteki@localhost:5433/arteki"
+    database_echo: bool = False
+    database_pool_size: int = 10
+    database_max_overflow: int = 5
+
+    # Object storage (app/storage). "local" writes to ./uploads and is meant for
+    # development only — it cannot enforce private access. Production uses "s3",
+    # which is MinIO in our cluster and works unchanged with any S3-compatible
+    # provider if we ever move.
+    storage_backend: str = "s3"  # s3 | local
+    s3_endpoint_url: str = "http://localhost:9100"  # MinIO; empty for real AWS
+    s3_region: str = "us-east-1"
+    s3_bucket: str = "arteki-dev"
+    s3_access_key: str = "arteki"
+    s3_secret_key: str = "arteki-dev-secret"
+    # Results are private: clients get a short-lived signed link, never a raw
+    # object URL. Long enough to load a gallery screen, short enough that a
+    # leaked link is worthless tomorrow.
+    s3_signed_url_ttl_seconds: int = 900
+    # Thumbnails for the history grid — the full-size image must never be what
+    # a 3-across grid downloads.
+    thumbnail_max_side: int = 512
+    thumbnail_quality: int = 82
 
     # Sessions
     session_cookie_name: str = "arteki-session"

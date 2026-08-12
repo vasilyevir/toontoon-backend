@@ -13,6 +13,9 @@ class AuthProvider(str, Enum):
     EMAIL = "email"
     GOOGLE = "google"
     APPLE = "apple"
+    # An anonymous user with a real session: balance, history and chat all work
+    # before sign-in, and are merged into the account afterwards (CH-16).
+    GUEST = "guest"
 
 
 class User(BaseModel):

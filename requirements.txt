@@ -12,3 +12,13 @@ pywebpush==2.3.0
 py-vapid==1.9.4
 # Sign in with Apple — app/services/apple_oauth.py (JWKS signature verification)
 PyJWT[crypto]==2.10.1
+# PostgreSQL — долговременное хранилище (app/db). Redis остаётся для сессий,
+# кэша, rate-limit и локов; всё, что нельзя потерять, живёт здесь.
+SQLAlchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+alembic==1.14.0
+# Объектное хранилище (app/storage): MinIO локально и в кластере, тот же код
+# работает с любым S3-совместимым провайдером.
+aioboto3==13.2.0
+# Миниатюры и срезание EXIF при загрузке (в фото с телефона лежат координаты).
+Pillow==11.0.0

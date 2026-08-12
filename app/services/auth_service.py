@@ -221,6 +221,20 @@ async def consume_reset_token(token: str) -> Optional[str]:
 # ─── Sessions ─────────────────────────────────────────────────────────────────
 
 
+async def create_session_for_user_id(user_id: str, provider: AuthProvider) -> Session:
+    """Session for a user that lives in PostgreSQL rather than Redis.
+
+    Sessions stay in Redis either way — short-lived, TTL-driven, exactly what it
+    is good at. Only the identity moved.
+    """
+    redis = get_client()
+    session = Session(sid=new_token(), user_id=user_id, provider=provider)
+    await redis.set(
+        _session_key(session.sid), session.model_dump_json(), ex=settings.session_ttl_seconds
+    )
+    return session
+
+
 async def create_session(
     user: User,
     *,
