@@ -13,12 +13,14 @@ Rules that live here and nowhere else:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.db import models as m
 
 
@@ -124,6 +126,92 @@ async def reset_subscription_quota(
     )
     await session.flush()
     return Balance(free=wallet.free_balance, sub=wallet.sub_balance)
+
+
+async def ensure_weekly_quota(
+    session: AsyncSession,
+    user_id: str,
+    *,
+    quota: int,
+    anchor: datetime,
+    now: Optional[datetime] = None,
+) -> Balance:
+    """Refill the subscription bucket if a new 7-day period has started.
+
+    The period is counted from the purchase date, not from App Store renewals:
+    a monthly plan has four-and-a-bit resets inside one billing period, and a
+    "week" that drifted with renewals would be impossible to explain to anyone.
+
+    Idempotent by period index, so calling this on every request is safe — the
+    first call in a period resets, the rest do nothing.
+    """
+    now = now or datetime.now(timezone.utc)
+    if anchor.tzinfo is None:
+        anchor = anchor.replace(tzinfo=timezone.utc)
+    if now < anchor:
+        return await balance(session, user_id)
+
+    period = (now - anchor).days // 7
+    key = f"quota:{user_id}:{anchor.date().isoformat()}:{period}"
+    if await _already_applied(session, key):
+        return await balance(session, user_id)
+
+    result = await reset_subscription_quota(session, user_id, quota=quota, idempotency_key=key)
+    wallet = await ensure(session, user_id)
+    wallet.sub_period_start = anchor + timedelta(days=7 * period)
+    wallet.sub_period_end = anchor + timedelta(days=7 * (period + 1))
+    await session.flush()
+    return result
+
+
+async def claim_daily_reward(
+    session: AsyncSession, user_id: str, *, today: Optional[date] = None
+) -> tuple[Balance, int]:
+    """Hand out the daily reward and return ``(balance, amount_granted)``.
+
+    The ladder rises through the week — 10 for the first five days, 20 on the
+    sixth, 30 on the seventh — which is what makes coming back tomorrow worth
+    more than coming back next week. A missed day resets the streak to the
+    beginning.
+
+    The date is the **server's**, never the device's: otherwise moving the clock
+    forward would be an infinite supply of tokens.
+    """
+    schedule = settings.daily_reward_list
+    if not schedule:
+        return await balance(session, user_id), 0
+
+    today = today or datetime.now(timezone.utc).date()
+    wallet = await ensure(session, user_id)
+
+    if wallet.last_reward_date == today:
+        return Balance(free=wallet.free_balance, sub=wallet.sub_balance), 0
+
+    consecutive = wallet.last_reward_date == today - timedelta(days=1)
+    streak = (wallet.reward_streak + 1) if consecutive else 1
+    if streak > len(schedule):
+        streak = 1  # the ladder starts over on the next week
+    amount = schedule[streak - 1]
+
+    # The cap is a ceiling, not a wall: a reward that would overflow it is
+    # trimmed rather than refused, so the streak is not silently broken.
+    cap = wallet.free_cap if wallet.free_cap is not None else settings.free_balance_cap
+    room = max(0, cap - wallet.free_balance)
+    granted = min(amount, room)
+
+    wallet.last_reward_date = today
+    wallet.reward_streak = streak
+    if granted:
+        wallet.free_balance += granted
+        session.add(
+            m.WalletLedger(
+                user_id=user_id, bucket="free", delta=granted, reason="daily_reward",
+                idempotency_key=f"daily:{user_id}:{today.isoformat()}",
+                balance_after=wallet.free_balance,
+            )
+        )
+    await session.flush()
+    return Balance(free=wallet.free_balance, sub=wallet.sub_balance), granted
 
 
 async def spend(

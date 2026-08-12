@@ -187,6 +187,30 @@ class WalletLedger(Base):
     __table_args__ = (Index("ix_wallet_ledger_user_created", "user_id", "created_at"),)
 
 
+class SubscriptionPlan(Base):
+    """Tariffs, in the database rather than in code.
+
+    Pricing changes far more often than the code that applies it, and every
+    change would otherwise cost a release. ``weekly_quota`` is what the
+    subscription bucket is reset **to** every 7 days from the purchase date —
+    including on plans billed monthly or yearly, where several resets happen
+    inside one billing period.
+    """
+
+    __tablename__ = "subscription_plans"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)  # 'weekly'
+    product_id: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    # week | month | year — the App Store billing period, not the quota period.
+    billing_period: Mapped[str] = mapped_column(String(16), nullable=False)
+    price_usd: Mapped[Optional[int]] = mapped_column(Integer)  # cents, reference only
+    weekly_quota: Mapped[int] = mapped_column(Integer, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=_now, nullable=False)
+
+
 class Subscription(Base):
     """``original_transaction_id`` is unique globally — that is what stops one
     purchase from feeding two accounts."""
@@ -197,6 +221,10 @@ class Subscription(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
     original_transaction_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     product_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    plan_id: Mapped[Optional[str]] = mapped_column(ForeignKey("subscription_plans.id"))
+    # Anchor for the weekly quota reset: 7 days from purchase, independent of
+    # App Store renewals (CH-17).
+    quota_anchor_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(16), nullable=False)  # active | grace | expired | refunded
     current_period_start: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     current_period_end: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))

@@ -72,6 +72,24 @@ class Settings(BaseSettings):
     session_cookie_secure: bool = False
     signup_teki_balance: int = 30
 
+    # ── Экономика ────────────────────────────────────────────────────────────
+    # Значения взяты из разбора Glam AI (docs/ECONOMY.md) как стартовая точка.
+    # Всё это параметры сервера: менять их не должно стоить релиза приложения.
+    #
+    # Ежедневные награды: дни 1–5 по 10, шестой 20, седьмой 30 — ровно 100
+    # за неделю, столько же, сколько бесплатный тариф даёт целиком. Стрик
+    # обнуляется при пропуске дня.
+    daily_reward_schedule: str = "10,10,10,10,10,20,30"
+    # Потолок несгораемой корзины. Награды копятся, и без потолка неактивный
+    # пользователь накопил бы за месяц залп дорогих генераций.
+    free_balance_cap: int = 300
+    # Недельная квота бесплатного тарифа — она же сумма наград за неделю.
+    free_weekly_quota: int = 100
+
+    @property
+    def daily_reward_list(self) -> list[int]:
+        return [int(x) for x in self.daily_reward_schedule.split(",") if x.strip()]
+
     # OpenAI
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
