@@ -39,10 +39,13 @@
 ### Изменено
 
 - **BREAKING. Каталог.** `GET /api/tiles`, `/tiles/featured`,
-  `/tiles/freeform-question` → `GET /api/styles`, `/api/styles/home`,
-  `/api/shots/daily`. Верхний уровень — шесть направлений онбординга вместо
-  Image / Postcard / Video: старые категории описывали, что получится,
-  новые — зачем человек пришёл.
+  `/tiles/freeform-question` удалены; вместо них `GET /api/styles`,
+  `/api/styles/home`, `/api/shots/daily`. Верхний уровень — шесть направлений
+  онбординга вместо Image / Postcard / Video: старые категории описывали,
+  что получится, новые — зачем человек пришёл. `bootstrap` отдаёт
+  `home_styles` и `shots` вместо `categories`/`featured`/`freeform_question`.
+  **До наполнения стилей каталог пуст**, и приложение работает свободным
+  вводом — пустой список честнее заглушек, из которых нельзя сгенерировать.
 - **BREAKING. Чат.** Один непрерывный тред вместо списка бесед.
   `/api/chats/*` удалены; вместо них `GET /api/chat/messages`
   и `POST /api/chat/clear`. `bootstrap.chats` → `bootstrap.messages`.

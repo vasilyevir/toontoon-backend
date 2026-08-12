@@ -18,10 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_session as get_db_session
 from app.deps import Context, optional_context
 from app.models.payment import Balance
-from app.models.tile import Category, Question, Tile
 from app.models.user import PublicUser
 from app.db.repositories import chat as chat_repo
-from app.services import tiles_data, wallet
+from app.db.repositories import styles as styles_repo
+from app.services import wallet
 
 router = APIRouter(prefix="/api/app", tags=["app"])
 
@@ -38,13 +38,28 @@ class AppConfig(BaseModel):
 class BootstrapResponse(BaseModel):
     user: Optional[PublicUser]
     balance: Optional[Balance]
-    categories: list[Category]
-    featured: list[Tile]
-    freeform_question: Question
+    # Каталог: витрина главной и набор дня. Плитки убраны вместе с роутером —
+    # каталог теперь стили по шести направлениям (CH-14). Пока стили не написаны
+    # под выбранную модель, оба списка пусты, и это честнее заглушек.
+    home_styles: list[dict]
+    shots: list[dict]
     # The tail of the single chat thread (CH-20). A cold start gets enough to
     # draw the screen; older messages are paged in from /api/chat/messages.
     messages: list[dict]
     config: AppConfig
+
+
+def _style(row) -> dict:
+    """Стиль в том же виде, что и в /api/styles — один формат на всё приложение."""
+    return {
+        "id": row.id,
+        "title": row.title,
+        "description": row.description,
+        "category": row.category,
+        "operation": row.operation,
+        "input_spec": row.input_spec or {},
+        "cost": row.cost,
+    }
 
 
 @router.get("/bootstrap", response_model=BootstrapResponse)
@@ -71,12 +86,16 @@ async def bootstrap(
             for r in rows
         ]
 
+    from datetime import datetime, timezone
+
+    home = await styles_repo.list_styles(db, home_only=True, limit=8)
+    shots = await styles_repo.daily_shots(db, datetime.now(timezone.utc).date())
+
     return BootstrapResponse(
         user=user,
         balance=balance,
-        categories=tiles_data.get_categories(),
-        featured=tiles_data.get_featured(),
-        freeform_question=tiles_data.FREEFORM_STYLE_QUESTION,
+        home_styles=[_style(s) for s in home],
+        shots=[_style(s) for s in shots],
         messages=messages,
         config=AppConfig(
             image_teki_cost=settings.image_teki_cost,

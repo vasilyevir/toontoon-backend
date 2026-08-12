@@ -157,31 +157,28 @@
               }
             ]
           },
-          "categories": {
-            "items": {
-              "$ref": "#/components/schemas/Category"
-            },
-            "title": "Categories",
-            "type": "array"
-          },
           "config": {
             "$ref": "#/components/schemas/AppConfig"
           },
-          "featured": {
+          "home_styles": {
             "items": {
-              "$ref": "#/components/schemas/Tile"
+              "type": "object"
             },
-            "title": "Featured",
+            "title": "Home Styles",
             "type": "array"
-          },
-          "freeform_question": {
-            "$ref": "#/components/schemas/Question"
           },
           "messages": {
             "items": {
               "type": "object"
             },
             "title": "Messages",
+            "type": "array"
+          },
+          "shots": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Shots",
             "type": "array"
           },
           "user": {
@@ -198,43 +195,12 @@
         "required": [
           "user",
           "balance",
-          "categories",
-          "featured",
-          "freeform_question",
+          "home_styles",
+          "shots",
           "messages",
           "config"
         ],
         "title": "BootstrapResponse",
-        "type": "object"
-      },
-      "Category": {
-        "properties": {
-          "emoji": {
-            "title": "Emoji",
-            "type": "string"
-          },
-          "id": {
-            "$ref": "#/components/schemas/TileCategory"
-          },
-          "label": {
-            "title": "Label",
-            "type": "string"
-          },
-          "tiles": {
-            "items": {
-              "$ref": "#/components/schemas/Tile"
-            },
-            "title": "Tiles",
-            "type": "array"
-          }
-        },
-        "required": [
-          "id",
-          "emoji",
-          "label",
-          "tiles"
-        ],
-        "title": "Category",
         "type": "object"
       },
       "CategoryOut": {
@@ -786,37 +752,6 @@
         "title": "PublicUser",
         "type": "object"
       },
-      "Question": {
-        "properties": {
-          "allow_custom": {
-            "default": false,
-            "title": "Allow Custom",
-            "type": "boolean"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "options": {
-            "default": [],
-            "items": {
-              "type": "string"
-            },
-            "title": "Options",
-            "type": "array"
-          },
-          "text": {
-            "title": "Text",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "text"
-        ],
-        "title": "Question",
-        "type": "object"
-      },
       "RegisterRequest": {
         "properties": {
           "email": {
@@ -1048,77 +983,6 @@
         ],
         "title": "SubscribeBody",
         "type": "object"
-      },
-      "Tile": {
-        "properties": {
-          "category": {
-            "$ref": "#/components/schemas/TileCategory"
-          },
-          "cost": {
-            "default": 1,
-            "title": "Cost",
-            "type": "integer"
-          },
-          "emoji": {
-            "title": "Emoji",
-            "type": "string"
-          },
-          "featured": {
-            "default": false,
-            "title": "Featured",
-            "type": "boolean"
-          },
-          "hint": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Hint"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "needs_photo": {
-            "default": false,
-            "title": "Needs Photo",
-            "type": "boolean"
-          },
-          "questions": {
-            "default": [],
-            "items": {
-              "$ref": "#/components/schemas/Question"
-            },
-            "title": "Questions",
-            "type": "array"
-          },
-          "title": {
-            "title": "Title",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "category",
-          "emoji",
-          "title"
-        ],
-        "title": "Tile",
-        "type": "object"
-      },
-      "TileCategory": {
-        "enum": [
-          "image",
-          "postcard",
-          "announcement",
-          "video"
-        ],
-        "title": "TileCategory",
-        "type": "string"
       },
       "UnsubscribeBody": {
         "properties": {
@@ -2054,71 +1918,6 @@
         "summary": "Verify",
         "tags": [
           "auth"
-        ]
-      }
-    },
-    "/api/balance": {
-      "get": {
-        "operationId": "balance_api_balance_get",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "arteki-session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Arteki-Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Balance"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Balance",
-        "tags": [
-          "tiles"
         ]
       }
     },
@@ -3623,80 +3422,6 @@
         "summary": "Get Style",
         "tags": [
           "catalog"
-        ]
-      }
-    },
-    "/api/tiles": {
-      "get": {
-        "description": "Full catalog: 4 categories with all 31 tiles and their questions.",
-        "operationId": "list_tiles_api_tiles_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/Category"
-                  },
-                  "title": "Response List Tiles Api Tiles Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "List Tiles",
-        "tags": [
-          "tiles"
-        ]
-      }
-    },
-    "/api/tiles/featured": {
-      "get": {
-        "description": "The 6 featured tiles shown first in the chat.",
-        "operationId": "featured_tiles_api_tiles_featured_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/Tile"
-                  },
-                  "title": "Response Featured Tiles Api Tiles Featured Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Featured Tiles",
-        "tags": [
-          "tiles"
-        ]
-      }
-    },
-    "/api/tiles/freeform-question": {
-      "get": {
-        "description": "The single style question asked for free-form prompts.",
-        "operationId": "freeform_question_api_tiles_freeform_question_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Question"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Freeform Question",
-        "tags": [
-          "tiles"
         ]
       }
     },

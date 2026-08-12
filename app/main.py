@@ -26,7 +26,6 @@ from app.routers import (
     payments,
     profile,
     push,
-    tiles,
     webhooks,
 )
 
@@ -98,7 +97,6 @@ app.include_router(onboarding.router)
 app.include_router(styles.router)
 app.include_router(profile.router)
 app.include_router(chat.router)
-app.include_router(tiles.router)
 app.include_router(generate.router)
 app.include_router(generations.router)
 app.include_router(payments.router)
