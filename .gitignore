@@ -17,3 +17,6 @@ kubeconfig
 .DS_Store
 .idea/
 .vscode/
+
+# Результаты сравнительных прогонов: тяжёлые картинки, выводы переносятся в PROVIDERS.md
+docs/research/runs/
