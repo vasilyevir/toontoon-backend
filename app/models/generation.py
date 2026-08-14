@@ -64,6 +64,10 @@ class GenerateRequest(BaseModel):
     answers: dict[str, str] = Field(default_factory=dict)
     prompt: Optional[str] = None
     style: Optional[str] = None
+    # Стиль из каталога: «нажал на пример — подставил своё фото». Промпт тогда
+    # берётся из строки стиля, а не сочиняется: витрина показывает конкретный
+    # результат, и получить его можно только тем же текстом, которым он сделан.
+    style_id: Optional[str] = None
     photo_url: Optional[str] = None
     # Optional: id of a chat session (POST /api/chats) to append the result
     # (or error) to automatically. Omit to generate without chat history.

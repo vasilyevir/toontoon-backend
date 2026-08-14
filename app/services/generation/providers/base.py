@@ -7,6 +7,7 @@ above it, which is why swapping a model never reaches into the pipeline.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import Optional
 
 from app.services.generation.operations import GenerationRequest, GenerationResult, Operation
 
@@ -23,11 +24,10 @@ class Provider(ABC):
     @property
     @abstractmethod
     def model(self) -> str:
-        """The concrete model, recorded on every generation it produces.
+        """Модель по умолчанию — та, что подставится, если строка реестра молчит.
 
-        Stored per result rather than read from config at display time: models
-        get swapped, and a history that claims yesterday's work was made by
-        today's model is useless for comparing them.
+        Пишется в каждую генерацию: модели меняют, и история, где вчерашняя
+        работа приписана сегодняшней модели, для сравнения бесполезна.
         """
 
     def available(self) -> bool:
@@ -35,9 +35,17 @@ class Provider(ABC):
         return True
 
     @abstractmethod
-    async def run(self, request: GenerationRequest) -> GenerationResult:
-        """Perform the generation or raise.
+    async def run(
+        self, request: GenerationRequest, *, model: Optional[str] = None
+    ) -> GenerationResult:
+        """Выполнить запрос указанной моделью — или отказаться.
 
-        Raising is how a provider says "try the next one": the registry catches
-        it, moves on, and only gives up when everyone has failed.
+        Модель приходит из строки реестра, а не из настроек: один адаптер
+        обслуживает несколько поколений одного вендора, и какое из них
+        работает на этом потоке — вопрос данных, а не релиза (CH-21). Так у
+        Kling сосуществуют третья версия на основном потоке и вторая там, где
+        нужна явная ручка на лицо.
+
+        Отказ — это способ сказать «бери следующего»: реестр ловит исключение,
+        идёт дальше по приоритету и сдаётся, только когда отказались все.
         """

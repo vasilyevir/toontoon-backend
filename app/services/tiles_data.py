@@ -1,4 +1,4 @@
-"""The ARTEKI tile catalog (English).
+"""The TOONTOON tile catalog (English).
 
 Image (6), Postcard (15) and Video (8) tiles, each with 2–4 quick-reply
 questions, mirroring the product flow. Featured tiles are shown first in the

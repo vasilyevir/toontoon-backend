@@ -3,7 +3,7 @@
 Boostyfi is not live yet, so every method works in two modes:
 
 * ``BOOSTIFY_MOCK=true``  -> returns deterministic fake data so the whole
-  ARTEKI flow (login, balance, two-phase payment, transactions) works
+  TOONTOON flow (login, balance, two-phase payment, transactions) works
   end-to-end without a real Boostyfi backend.
 * ``BOOSTIFY_MOCK=false`` -> performs the real HTTP calls against
   ``BOOSTIFY_BASE_URL`` (https://api.boostyfi.com/api/v1) using the OAuth
@@ -193,7 +193,7 @@ async def get_balance(access_token: str) -> Balance:
 
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.get(
-            f"{settings.boostify_base_url}/sso/arteki/balance",
+            f"{settings.boostify_base_url}/sso/toontoon/balance",
             headers={"Authorization": f"Bearer {access_token}"},
         )
         # Wallet API may not be deployed yet (404) — return a zero balance
@@ -216,7 +216,7 @@ async def get_balance(access_token: str) -> Balance:
         locked          = _int(data.get("locked", 0))
         grant_expires_at = data.get("grant_expires_at")  # ISO-8601 str or None
 
-        # ``grant_remaining`` is the real spending limit inside Arteki.
+        # ``grant_remaining`` is the real spending limit inside Toontoon.
         # The raw ``available`` (user's total holdings, e.g. 999999) is
         # misleading in the product UI — we expose grant_remaining instead.
         return Balance(
@@ -234,7 +234,7 @@ async def create_payment(access_token: str, *, amount: int, reason: str) -> Paym
 
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.post(
-            f"{settings.boostify_base_url}/sso/arteki/payment/create",
+            f"{settings.boostify_base_url}/sso/toontoon/payment/create",
             headers={"Authorization": f"Bearer {access_token}"},
             json={"amount": amount, "reason": reason},
         )
@@ -260,7 +260,7 @@ async def confirm_payment(access_token: str, payment_id: str) -> Payment:
 
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.post(
-            f"{settings.boostify_base_url}/sso/arteki/payment/confirm",
+            f"{settings.boostify_base_url}/sso/toontoon/payment/confirm",
             headers={"Authorization": f"Bearer {access_token}"},
             json={"payment_id": payment_id},
         )
@@ -281,7 +281,7 @@ async def cancel_payment(access_token: str, payment_id: str) -> Payment:
 
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.post(
-            f"{settings.boostify_base_url}/sso/arteki/payment/cancel",
+            f"{settings.boostify_base_url}/sso/toontoon/payment/cancel",
             headers={"Authorization": f"Bearer {access_token}"},
             json={"payment_id": payment_id},
         )
@@ -300,15 +300,15 @@ async def get_transactions(access_token: str, *, limit: int = 20, offset: int = 
     if settings.boostify_mock:
         now = int(time.time())
         return [
-            {"payment_id": "pay_mock_1", "amount": -1, "reason": "arteki:image_generate",
+            {"payment_id": "pay_mock_1", "amount": -1, "reason": "toontoon:image_generate",
              "status": "confirmed", "created_at": now - 3600},
-            {"payment_id": "pay_mock_2", "amount": -2, "reason": "arteki:video_generate",
+            {"payment_id": "pay_mock_2", "amount": -2, "reason": "toontoon:video_generate",
              "status": "confirmed", "created_at": now - 7200},
         ]
 
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.get(
-            f"{settings.boostify_base_url}/sso/arteki/transactions",
+            f"{settings.boostify_base_url}/sso/toontoon/transactions",
             headers={"Authorization": f"Bearer {access_token}"},
             params={"limit": limit, "offset": offset},
         )

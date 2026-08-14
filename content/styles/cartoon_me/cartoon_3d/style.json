@@ -1,0 +1,10 @@
+{
+  "title": "Cartoon Me",
+  "description": "You, drawn as an animated feature character — stylised, but close to life.",
+  "cost": 1,
+  "is_home": true,
+  "is_shot": true,
+  "sort_order": 1,
+  "sample_source": "an ordinary casual smartphone snapshot of a woman in her twenties standing in a hallway, flat overhead light, coats on hooks behind, plain sweatshirt, small smile, amateur framing",
+  "anchor": "semi_real_3d"
+}

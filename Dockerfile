@@ -1,4 +1,4 @@
-# ── ARTEKI backend (FastAPI) ───────────────────────────────────────────────────
+# ── TOONTOON backend (FastAPI) ───────────────────────────────────────────────────
 # NOTE for DevOps:
 #   - Requires Redis (all persistence — users/sessions/generations — lives in
 #     Redis, there is no SQL DB). Set redis.enabled: true in deploy/values.yaml

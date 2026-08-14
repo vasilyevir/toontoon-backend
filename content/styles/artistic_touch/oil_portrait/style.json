@@ -1,0 +1,9 @@
+{
+  "title": "Oil Portrait",
+  "description": "A painted portrait with visible brushwork — the kind that hangs in a hallway.",
+  "cost": 1,
+  "is_home": true,
+  "is_shot": true,
+  "sort_order": 10,
+  "sample_source": "an ordinary casual smartphone snapshot of a woman in her thirties standing in a plain living room, flat overhead light, bookshelf behind, plain grey top, neutral expression, amateur framing"
+}

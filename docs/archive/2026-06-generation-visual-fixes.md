@@ -2,9 +2,9 @@
 > Документ описывает пайплайн до переезда на PostgreSQL и объектное хранилище
 > и до появления ядра генерации. Актуальное — в docs/API.md и docs/adr/.
 
-# ARTEKI — Фиксы генерации: визуально-эстетический слой
+# TOONTOON — Фиксы генерации: визуально-эстетический слой
 
-> База: `GENERATION_SPEC.md` + аудит `arteki/docs/prompt-templates-*.md`.
+> База: `GENERATION_SPEC.md` + аудит `toontoon/docs/prompt-templates-*.md`.
 > Предыдущий файл `GENERATION_FIXES.md` закрыл **семантические признаки субъекта**
 > (живое/неживое, род, число, возраст). Этот файл закрывает второй слой:
 > **как выглядит картинка** — поза, мимика, палитра, свет, композиция, обаяние.
@@ -627,6 +627,6 @@ polished refined animated look, high detail, crisp clean shapes,
 ## Связанные файлы
 
 - [GENERATION_FIXES.md](./GENERATION_FIXES.md) — фиксы семантических признаков (паспорт субъекта, род, число, возраст, _has_living_subject)
-- [arteki/docs/prompt-semantic-attributes.md](./arteki/docs/prompt-semantic-attributes.md) — канонический источник паспорта
-- [arteki/docs/prompt-templates-pictures.md](./arteki/docs/prompt-templates-pictures.md) — шаблоны 6 картинок
-- [arteki/docs/prompt-templates-cards.md](./arteki/docs/prompt-templates-cards.md) — шаблоны 15 открыток
+- [toontoon/docs/prompt-semantic-attributes.md](./toontoon/docs/prompt-semantic-attributes.md) — канонический источник паспорта
+- [toontoon/docs/prompt-templates-pictures.md](./toontoon/docs/prompt-templates-pictures.md) — шаблоны 6 картинок
+- [toontoon/docs/prompt-templates-cards.md](./toontoon/docs/prompt-templates-cards.md) — шаблоны 15 открыток

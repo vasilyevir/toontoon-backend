@@ -21,15 +21,25 @@ from app.services.generation.operations import (
     Operation,
 )
 from app.services.generation.providers.base import Provider
+from app.services.generation.providers.kling import KlingProvider
 from app.services.generation.providers.openai_images import OpenAIImagesProvider
 from app.services.generation.providers.pollinations import PollinationsProvider
 
-logger = logging.getLogger("arteki.generation")
+logger = logging.getLogger("toontoon.generation")
 
 # Every adapter we ship. Presence here does not enable anything: a provider is
 # used only if the database says so.
 ADAPTERS: dict[str, Provider] = {
-    p.id: p for p in (OpenAIImagesProvider(), PollinationsProvider())
+    p.id: p
+    for p in (
+        OpenAIImagesProvider(),
+        # Два поколения Kling живут одновременно: третья версия ссылается на
+        # снимок из промпта, вторая даёт отдельную ручку на лицо. Какая где
+        # работает — решает приоритет в базе.
+        KlingProvider("kling"),
+        KlingProvider("kling_v2"),
+        PollinationsProvider(),
+    )
 }
 
 
@@ -66,7 +76,8 @@ async def candidates(
 
 
 async def run(
-    session: AsyncSession, request: GenerationRequest
+    session: AsyncSession, request: GenerationRequest,
+    *, prefer: Optional[str] = None,
 ) -> GenerationResult:
     """Perform the request with the first provider that manages it.
 
@@ -76,6 +87,12 @@ async def run(
     """
     request.validate()
     options = await candidates(session, request.operation)
+    if prefer:
+        # Стиль может попросить конкретного исполнителя — например, чтобы
+        # сравнить вендоров на одном и том же промпте. Это именно
+        # предпочтение, а не жёсткая привязка: если он недоступен, очередь
+        # отработает как обычно, и человек получит картинку, а не отказ.
+        options.sort(key=lambda pair: pair[0].id != prefer)
     if not options:
         raise GenerationUnavailable(
             f"No provider enabled for {request.operation.value}"
@@ -85,7 +102,10 @@ async def run(
     for row, adapter in options:
         started = time.monotonic()
         try:
-            result = await adapter.run(request)
+            # Модель берётся из строки, а не из настроек адаптера: один
+            # адаптер обслуживает несколько поколений вендора, и какое из них
+            # работает на этом потоке — данные, а не релиз.
+            result = await adapter.run(request, model=row.model)
         except Exception as exc:  # noqa: BLE001 — any failure means "next one"
             last_error = exc
             logger.warning("Provider %s failed on %s: %r", row.id, request.operation.value, exc)

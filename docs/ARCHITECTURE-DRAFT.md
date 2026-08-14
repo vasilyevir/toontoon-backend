@@ -3,7 +3,7 @@
 Парный документ к [CHANGES-DRAFT.md](CHANGES-DRAFT.md): там — что меняем и почему,
 здесь — на чём это стоит. Пока черновик под ревью; на этапе пересборки документации
 разъезжается по двум репозиториям (серверная часть остаётся здесь, раздел про iOS
-уезжает в `arteki-ios-app/docs/ARCHITECTURE.md`).
+уезжает в `toontoon-ios-app/docs/ARCHITECTURE.md`).
 
 Всё, что ниже, исходит из принятых решений: mobile-first, гость — полноценный
 субъект, история бессрочная, стили вместо tiles, подписка App Store с двумя
@@ -18,7 +18,7 @@
 **1. Вся система живёт в Redis. SQL нет вообще.** В Redis лежат пользователи
 (`user:email:*`, `user:apple:*`), сессии, генерации (`generation:{id}` + список
 `user:generations:{uid}`), чаты, шеринг, токены магических ссылок и **баланс**
-(поле `teki_balance` прямо на объекте пользователя). Ни одной таблицы, ни одной
+(поле `toontoon_balance` прямо на объекте пользователя). Ни одной таблицы, ни одной
 транзакции, ни одного журнала операций.
 
 Для сессий и кэша это нормально. Для денег — нет. Как только появляется подписка
@@ -351,7 +351,7 @@ create index on wallet_ledger (user_id, created_at desc);
 | `generation:{id}`, `user:generations:{uid}` | `generations` |
 | `chat:{id}`, `user:chats:{uid}` | `chats`, `chat_messages` |
 | `share:{share_id}` | колонка `generations.share_id` |
-| `teki_balance` (поле пользователя) | `wallet_balances` + `wallet_ledger` |
+| `toontoon_balance` (поле пользователя) | `wallet_balances` + `wallet_ledger` |
 | `session:{sid}` | остаётся в Redis |
 | `magic:{token}`, `reset:{token}` | остаётся в Redis (TTL — родная механика) |
 | rate limits, локи, кэш каталога | остаётся в Redis |
@@ -582,7 +582,7 @@ app/
 плоская раскладка перестанет работать.
 
 ```
-ArtekiApp/
+ToontoonApp/
   App/            AppRoot, TabRouter (4 вкладки), AppConfig, OnboardingGate
   DesignSystem/   Theme, компоненты
   Networking/
@@ -621,7 +621,7 @@ ArtekiApp/
 
 ```
 ┌──────────────────────────────────────────┐
-│  arteki                    ⟨ ◈ 850 ⟩     │ ← шапка: логотип + баланс-пилюля.
+│  toontoon                    ⟨ ◈ 850 ⟩     │ ← шапка: логотип + баланс-пилюля.
 │                                          │   Тап по балансу → апгрейд.
 │  Что создадим сегодня?                   │   Виден и гостю.
 │                                          │

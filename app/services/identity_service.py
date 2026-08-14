@@ -19,12 +19,12 @@ from app.db.repositories import wallet as wallet_repo
 
 async def _grant_signup_bonus(db: AsyncSession, user_id: str) -> None:
     """One-time welcome balance. The idempotency key is what makes "once" true."""
-    if settings.signup_teki_balance <= 0:
+    if settings.signup_toontoon_balance <= 0:
         return
     await wallet_repo.grant(
         db,
         user_id,
-        amount=settings.signup_teki_balance,
+        amount=settings.signup_toontoon_balance,
         bucket="free",
         reason="signup",
         idempotency_key=f"signup:{user_id}",
@@ -70,7 +70,7 @@ async def get_or_create_oauth_user(
         user = await users_repo.get_by_email(db, email)
 
     if user is None:
-        fallback = (email or "").split("@", 1)[0] or "Arteki user"
+        fallback = (email or "").split("@", 1)[0] or "Toontoon user"
         user = m.User(
             kind="registered",
             email=email.strip().lower() if email else None,

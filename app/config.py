@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # App
-    app_name: str = "ARTEKI API"
+    app_name: str = "TOONTOON API"
     debug: bool = True
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
     public_base_url: str = "http://localhost:8000"
@@ -39,7 +39,7 @@ class Settings(BaseSettings):
 
     # PostgreSQL — everything that must survive a restart (app/db).
     # Port 5433 locally: 5432 is usually taken by another project's container.
-    database_url: str = "postgresql+asyncpg://arteki:arteki@localhost:5433/arteki"
+    database_url: str = "postgresql+asyncpg://toontoon:toontoon@localhost:5433/toontoon"
     database_echo: bool = False
     database_pool_size: int = 10
     database_max_overflow: int = 5
@@ -51,9 +51,9 @@ class Settings(BaseSettings):
     storage_backend: str = "s3"  # s3 | local
     s3_endpoint_url: str = "http://localhost:9100"  # MinIO; empty for real AWS
     s3_region: str = "us-east-1"
-    s3_bucket: str = "arteki-dev"
-    s3_access_key: str = "arteki"
-    s3_secret_key: str = "arteki-dev-secret"
+    s3_bucket: str = "toontoon-dev"
+    s3_access_key: str = "toontoon"
+    s3_secret_key: str = "toontoon-dev-secret"
     # Results are private: clients get a short-lived signed link, never a raw
     # object URL. Long enough to load a gallery screen, short enough that a
     # leaked link is worthless tomorrow.
@@ -64,13 +64,13 @@ class Settings(BaseSettings):
     thumbnail_quality: int = 82
 
     # Sessions
-    session_cookie_name: str = "arteki-session"
+    session_cookie_name: str = "toontoon-session"
     session_ttl_days: int = 30
     magic_link_ttl_minutes: int = 15
     password_reset_ttl_minutes: int = 60
     session_cookie_samesite: str = "lax"
     session_cookie_secure: bool = False
-    signup_teki_balance: int = 30
+    signup_toontoon_balance: int = 30
 
     # ── Экономика ────────────────────────────────────────────────────────────
     # Значения взяты из разбора Glam AI (docs/ECONOMY.md) как стартовая точка.
@@ -106,8 +106,12 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
     # Image generation via OpenAI Images API.
-    openai_image_model: str = "gpt-image-1"  # auto-falls back to dall-e-3 if unavailable
-    openai_image_size: str = "1024x1024"
+    # Модель, которой рисует адаптер openai_images. Автопадения на dall-e-3
+    # здесь больше нет: при отказе OpenAI реестр уводит запрос к следующему
+    # провайдеру, а не подменяет модель внутри одного.
+    openai_image_model: str = "gpt-image-1"
+    # Ближайший вертикальный размер, который принимает gpt-image-1 (2:3).
+    openai_image_size: str = "1024x1536"
     openai_image_quality: str = "medium"  # gpt-image-1: low/medium/high/auto; dall-e-3: standard/hd
     openai_image_timeout: float = 55.0
 
@@ -117,18 +121,44 @@ class Settings(BaseSettings):
 
     # Generation
     rate_limit_per_hour: int = 30
-    image_teki_cost: int = 1
-    video_teki_cost: int = 2
-    # Image provider: "openai" (gpt-image-1 / dall-e-3) or "pollinations".
-    image_provider: str = "openai"
+    image_toontoon_cost: int = 1
+    video_toontoon_cost: int = 2
+    # Какая модель исполняет операцию — решает реестр провайдеров в базе
+    # (таблица generation_providers), а не настройка: включение модели и порядок
+    # фолбэка не должны требовать релиза.
     pollinations_image_url: str = "https://image.pollinations.ai"
-    pollinations_text_url: str = "https://text.pollinations.ai"
     pollinations_model: str = "flux"
+
+    # ─── Kling ───────────────────────────────────────────────────────────────
+    # У Kling живут две консоли с разной авторизацией, и какая досталась
+    # аккаунту — видно по числу выданных ключей.
+    #
+    # Новая «API Platform» выдаёт ОДИН ключ (`api-key-kling-…`), и он идёт в
+    # заголовок как есть. Старая «Open Platform» выдаёт пару access/secret, из
+    # которой на нашей стороне собирается JWT на полчаса. Поддержаны обе:
+    # заполняется либо первое поле, либо два вторых.
+    kling_api_key: str = ""
+    kling_access_key: str = ""
+    kling_secret_key: str = ""
+    kling_base_url: str = "https://api.klingai.com"
+    # Проверено вживую: `kling-v3` работает и держит лицо через
+    # image_reference=face. Имя без суффикса: `kling-v3-0` API отвергает.
+    kling_image_model: str = "kling-v3"
+    # Вертикаль по умолчанию: продукт мобильный, результат смотрят и
+    # показывают с телефона, а квадрат там выглядит обрезанным.
+    kling_aspect_ratio: str = "9:16"
+    # Насколько строго держаться исходника: сила референса в целом и отдельно
+    # по лицу. Вынесены в настройки, потому что на прогоне их придётся
+    # перебирать, а перебирать значения перекомпиляцией — плохой способ.
+    kling_image_fidelity: float = 0.5
+    kling_human_fidelity: float = 0.8
+    kling_image_reference: str = "face"  # face | subject
+    kling_request_timeout: float = 30.0
+    kling_poll_timeout: float = 90.0
+    kling_poll_interval: float = 3.0
     # Optional Pollinations API token (register at https://auth.pollinations.ai).
     # Without it the anonymous tier frequently returns 402 under load.
     pollinations_token: str = ""
-    pollinations_referrer: str = "arteki"
-    vision_timeout_seconds: int = 7
 
     # Video generation (kie.ai / ByteDance Seedance).
     # ВЫКЛЮЧЕНО в первой версии: все шесть направлений онбординга — про фото,
@@ -156,7 +186,7 @@ class Settings(BaseSettings):
     # Web Push (VAPID)
     vapid_private_key: str = ""
     vapid_public_key: str = ""
-    vapid_email: str = "mailto:hello@arteki.ai"
+    vapid_email: str = "mailto:hello@toontoon.ai"
 
     @property
     def push_enabled(self) -> bool:
@@ -215,12 +245,12 @@ class Settings(BaseSettings):
     # started with ?platform=app, the callback redirects here instead of the
     # web frontend so the app (ASWebAuthenticationSession) can capture the
     # session token from the URL.
-    app_deep_link_scheme: str = "arteki"
+    app_deep_link_scheme: str = "toontoon"
 
     # Boostyfi (OAuth + Wallet)
     boostify_mock: bool = True
     boostify_base_url: str = "https://api.boostyfi.com/api/v1"
-    boostify_client_id: str = "arteki"
+    boostify_client_id: str = "toontoon"
     boostify_client_secret: str = "change-me"
     boostify_redirect_uri: str = "http://localhost:8000/api/auth/boostify/callback"
     boostify_webhook_secret: str = "change-me-too"

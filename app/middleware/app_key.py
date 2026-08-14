@@ -6,12 +6,12 @@ Canonical string (MUST byte-match the iOS client's APISecurity.decorate):
 
   * METHOD    — uppercase HTTP method (e.g. POST)
   * PATH      — request path incl. the /api prefix, no query (e.g. /api/auth/login)
-  * TIMESTAMP — unix seconds as a string (X-Arteki-Timestamp)
+  * TIMESTAMP — unix seconds as a string (X-Toontoon-Timestamp)
   * body      — raw request body (empty for GET; empty for multipart uploads,
                 which is why /api/uploads is exempt)
 
 Signature = HMAC-SHA256(key=APP_SECRET, msg=canonical), lowercase hex, sent as
-X-Arteki-Signature. The app-key is echoed in X-Arteki-App-Key.
+X-Toontoon-Signature. The app-key is echoed in X-Toontoon-App-Key.
 
 Behaviour is gated by settings.app_key_required:
   * false (default) — pass everything through untouched (zero prod impact).
@@ -77,9 +77,9 @@ class AppKeyMiddleware:
 
     def _verify(self, scope: Scope, path: str, body: bytes) -> str | None:
         headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope["headers"]}
-        app_key = headers.get("x-arteki-app-key")
-        ts = headers.get("x-arteki-timestamp")
-        sig = headers.get("x-arteki-signature")
+        app_key = headers.get("x-toontoon-app-key")
+        ts = headers.get("x-toontoon-timestamp")
+        sig = headers.get("x-toontoon-signature")
 
         if not app_key or not hmac.compare_digest(app_key, settings.app_key):
             return "app key required"

@@ -10,7 +10,7 @@ from app.models.user import AuthProvider
 class Session(BaseModel):
     """Server-side session stored in Redis under ``session:{sid}``.
 
-    The session id itself lives in the ``arteki-session`` http-only cookie.
+    The session id itself lives in the ``toontoon-session`` http-only cookie.
     """
 
     sid: str

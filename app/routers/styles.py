@@ -11,9 +11,10 @@ than one padded with placeholders nobody can generate.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,6 +23,7 @@ from app.db.repositories import styles as styles_repo
 from app.db.session import get_session as get_db_session
 from app.deps import Context, optional_context
 from app.routers.onboarding import CATEGORIES
+from app.storage import get_storage
 
 router = APIRouter(prefix="/api", tags=["catalog"])
 
@@ -30,6 +32,7 @@ CATEGORY_TITLES = {
     "ai_photo_studio": "AI Photo Studio",
     "artistic_touch": "Artistic Touch",
     "cartoon_me": "Cartoon Me",
+    "lifestyle_travel": "Lifestyle & Travel",
     "fantasy_mode": "Fantasy Mode",
     "pet_magic": "Pet Magic",
     "family_fun": "Family Fun",
@@ -55,8 +58,11 @@ class CategoryOut(BaseModel):
     styles: list[StyleOut]
 
 
+def _example_keys(row: m.Style) -> list[str]:
+    return (row.examples or {}).get("keys", []) if isinstance(row.examples, dict) else []
+
+
 def _style_out(row: m.Style) -> StyleOut:
-    examples = (row.examples or {}).get("media_ids", []) if isinstance(row.examples, dict) else []
     return StyleOut(
         id=row.id,
         title=row.title,
@@ -65,7 +71,17 @@ def _style_out(row: m.Style) -> StyleOut:
         operation=row.operation,
         input_spec=row.input_spec or {},
         cost=row.cost,
-        examples=[f"/api/media/{mid}" for mid in examples],
+        # Примеры каталога отдаёт свой публичный маршрут, а не /api/media:
+        # там проверка владельца, а у витринной картинки владельца нет и быть
+        # не должно. Класть её в чужие медиа значит либо ослабить проверку,
+        # либо завести фиктивного пользователя ради маркетинга.
+        # `?v=` — отпечаток картинки из имени ключа. Маршрут индексный, адрес
+        # без версии не менялся бы при замене примера, и клиент показывал бы
+        # кэш до истечения суток.
+        examples=[
+            f"/api/styles/{row.id}/example/{index}?v={Path(key).stem.split('-')[-1]}"
+            for index, key in enumerate(_example_keys(row))
+        ],
     )
 
 
@@ -113,6 +129,34 @@ async def home_styles(
     rows = await styles_repo.list_styles(db, home_only=True, limit=limit * 3)
     ranked = styles_repo.rank_for(rows, liked)[:limit]
     return [_style_out(r) for r in ranked]
+
+
+@router.get("/styles/{style_id}/example/{index}")
+async def style_example(
+    style_id: str, index: int, db: AsyncSession = Depends(get_db_session)
+) -> Response:
+    """Витринная картинка стиля — публично и с длинным кэшем.
+
+    Это единственная картинка в системе, которую можно отдавать кому угодно:
+    она наша, снята для каталога и показывается до входа. Всё остальное живёт
+    за `/api/media` с проверкой владельца.
+    """
+    row = await styles_repo.get(db, style_id)
+    keys = _example_keys(row) if row else []
+    if not keys or index < 0 or index >= len(keys):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Not found")
+
+    data = await get_storage().get(keys[index])
+    if data is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Not found")
+
+    return Response(
+        content=data,
+        media_type="image/jpeg",
+        # Содержимое по этому адресу не меняется: замена примера — это новый
+        # ключ в строке стиля, а не другие байты по старому адресу.
+        headers={"Cache-Control": "public, max-age=86400, immutable"},
+    )
 
 
 @router.get("/styles/{style_id}", response_model=StyleOut)

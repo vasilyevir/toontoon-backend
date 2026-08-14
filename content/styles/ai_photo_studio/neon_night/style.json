@@ -1,0 +1,8 @@
+{
+  "title": "Neon Night",
+  "description": "A cinematic portrait in coloured light: magenta and teal, the city at night behind you.",
+  "cost": 1,
+  "is_home": true,
+  "is_shot": true,
+  "sort_order": 40
+}

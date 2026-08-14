@@ -3,7 +3,7 @@
 ## Быстрый старт
 
 ```bash
-docker start arteki-postgres arteki-redis arteki-minio   # или создать, см. ниже
+docker start toontoon-postgres toontoon-redis toontoon-minio   # или создать, см. ниже
 .venv/bin/python -m alembic upgrade head
 PYTHONPATH=. .venv/bin/python -m app.db.seed             # тарифы и провайдеры
 ./run-local.sh                                           # http://localhost:8020
@@ -24,21 +24,21 @@ curl -s -X POST localhost:8020/api/auth/guest            # должен верн
 | PostgreSQL | 5433 | 5432 обычно занят чужим проектом |
 | Redis | 6379 | свободен |
 | MinIO (S3) | 9100 | 9000 занят MinIO соседнего проекта |
-| MinIO (консоль) | 9101 | http://localhost:9101, логин `arteki` / `arteki-dev-secret` |
+| MinIO (консоль) | 9101 | http://localhost:9101, логин `toontoon` / `toontoon-dev-secret` |
 
 Все контейнеры слушают только `127.0.0.1` — снаружи машины до них не достучаться.
 
 ## Создать контейнеры с нуля
 
 ```bash
-docker run -d --name arteki-postgres -p 127.0.0.1:5433:5432 \
-  -e POSTGRES_USER=arteki -e POSTGRES_PASSWORD=arteki -e POSTGRES_DB=arteki \
+docker run -d --name toontoon-postgres -p 127.0.0.1:5433:5432 \
+  -e POSTGRES_USER=toontoon -e POSTGRES_PASSWORD=toontoon -e POSTGRES_DB=toontoon \
   postgres:16-alpine
 
-docker run -d --name arteki-redis -p 127.0.0.1:6379:6379 redis:7-alpine
+docker run -d --name toontoon-redis -p 127.0.0.1:6379:6379 redis:7-alpine
 
-docker run -d --name arteki-minio -p 127.0.0.1:9100:9000 -p 127.0.0.1:9101:9001 \
-  -e MINIO_ROOT_USER=arteki -e MINIO_ROOT_PASSWORD=arteki-dev-secret \
+docker run -d --name toontoon-minio -p 127.0.0.1:9100:9000 -p 127.0.0.1:9101:9001 \
+  -e MINIO_ROOT_USER=toontoon -e MINIO_ROOT_PASSWORD=toontoon-dev-secret \
   minio/minio:RELEASE.2024-11-07T00-52-20Z server /data --console-address ":9001"
 ```
 
@@ -87,7 +87,7 @@ PYTHONPATH=. .venv/bin/python -m scripts.dump_reference --check  # сверит�
 
 ## Приложение iOS против локального сервера
 
-В `Config.xcconfig` уже стоит `ARTEKI_BASE_URL = http://localhost:8020`,
+В `Config.xcconfig` уже стоит `TOONTOON_BASE_URL = http://localhost:8020`,
 пиннинг выключен, в `Info.plist` добавлен `NSAllowsLocalNetworking`.
 На симуляторе работает как есть; для устройства в той же сети подставь IP
 мака (`ipconfig getifaddr en0`).

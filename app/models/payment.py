@@ -16,7 +16,7 @@ class PaymentStatus(str, Enum):
 class Payment(BaseModel):
     """Result of reserving funds for a generation (two-phase payment).
 
-    For magic-link users this is backed by the local TEKI balance; for Boostify
+    For magic-link users this is backed by the local TOONTOON balance; for Boostify
     users it mirrors a Boostify payment.
     """
 
@@ -28,9 +28,9 @@ class Payment(BaseModel):
 class Balance(BaseModel):
     """Wallet balance shown in the UI.
 
-    For magic-link users ``available`` is the local TEKI balance.
+    For magic-link users ``available`` is the local TOONTOON balance.
     For Boostyfi users:
-      - ``available``       = how much the user authorised to spend in Arteki
+      - ``available``       = how much the user authorised to spend in Toontoon
                               (= grant_remaining). This is what the UI shows and
                               what the pre-flight check uses.
       - ``locked``          = vesting/locked IMBA (informational only).

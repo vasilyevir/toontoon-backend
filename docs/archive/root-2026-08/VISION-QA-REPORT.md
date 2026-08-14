@@ -1,4 +1,4 @@
-# ARTEKI Generation — Vision QA Report
+# TOONTOON Generation — Vision QA Report
 **Date:** 2026-06-20  
 **Method:** GPT-4o-mini Vision on 12 real production generations (images + video thumbnails)  
 **Model:** gpt-4o-mini, low-detail, structured JSON output  
@@ -15,7 +15,7 @@
 | **Critical failures** | **2** |
 | **UX deception failures** | **1** |
 
-The style and render quality are generally excellent — ARTEKI produces beautiful, premium-looking 3D cartoon content. **The problem is with content accuracy**: what the user chose is often not what they receive.
+The style and render quality are generally excellent — TOONTOON produces beautiful, premium-looking 3D cartoon content. **The problem is with content accuracy**: what the user chose is often not what they receive.
 
 ---
 
@@ -94,7 +94,7 @@ The style and render quality are generally excellent — ARTEKI produces beautif
 - **What was generated:** Cozy miniature village with stone paths and little houses — a classic "cozy default"  
 - **Root cause:** `_build_inspiring_video` maps answer options via a dict lookup. The key `"Mountains"` (or `"🏔️ Mountains"`) does **not match** the dict key (likely `"горы"` or a different English casing). The builder silently falls to the default cozy scene.  
 - **This is the P1 builder-mismatch bug confirmed visually.**
-- **Verdict:** ❌ Wrong content. User wasted TEKI on content they did not choose. `quality=good` (it looks beautiful — just not what was ordered).  
+- **Verdict:** ❌ Wrong content. User wasted TOONTOON on content they did not choose. `quality=good` (it looks beautiful — just not what was ordered).  
 - **Severity:** P1 — Critical
 
 ---
@@ -193,4 +193,4 @@ Make `_OCCASION_DATA["birthday"]` scene deterministically include balloons and e
 
 ## Overall Verdict
 
-> **Style: A+. Content accuracy: C.** ARTEKI generates visually stunning content but frequently ignores user choices due to backend builder key mismatches. The `animate_pet` tile is completely broken and should be hidden until fixed. Fixing P0+P1 would bring content accuracy from 58% → ~90%.
+> **Style: A+. Content accuracy: C.** TOONTOON generates visually stunning content but frequently ignores user choices due to backend builder key mismatches. The `animate_pet` tile is completely broken and should be hidden until fixed. Fixing P0+P1 would bring content accuracy from 58% → ~90%.

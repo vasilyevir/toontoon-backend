@@ -1,9 +1,9 @@
-# ARTEKI — Generation Report & Smoke Test (2026-06-20)
+# TOONTOON — Generation Report & Smoke Test (2026-06-20)
 
 This document explains **exactly how content generation works** (images, postcards,
 videos), the **results of live smoke tests** run against the production code, and a
 **prioritized list of real problems** found — especially the ones that cause "good
-quality but wrong content" generations that waste TEKI/credits.
+quality but wrong content" generations that waste TOONTOON/credits.
 
 ---
 
@@ -20,7 +20,7 @@ quality but wrong content" generations that waste TEKI/credits.
 
 **Both pipelines technically work.** The core issue is **not** that generation is broken —
 it's that **~42% of video tile answer-options are silently ignored** (mismatch between the
-tile questions and the prompt builders), so users pay 2 TEKI and get a generic/wrong video.
+tile questions and the prompt builders), so users pay 2 TOONTOON and get a generic/wrong video.
 Details in §8.
 
 ---
@@ -33,7 +33,7 @@ Frontend (/generate)                Backend (FastAPI)                    Externa
 pick tile / free text  ──POST /api/generate──►  routers/generate.py
                                                   │ 1. rate-limit (30/h/user)
                                                   │ 2. resolve tile + cost
-                                                  │ 3. wallet.reserve(TEKI)
+                                                  │ 3. wallet.reserve(TOONTOON)
                                                   │
                         ┌─────────────────────────┴───────────────────────┐
                         │ IMAGE (sync)                  VIDEO (async job)   │
@@ -51,14 +51,14 @@ pick tile / free text  ──POST /api/generate──►  routers/generate.py
               return result_url            client polls GET /generations/{id}
 ```
 
-### Two-phase TEKI billing (both paths)
-1. **Reserve** TEKI up-front (`wallet.reserve`). Insufficient → `402`.
+### Two-phase TOONTOON billing (both paths)
+1. **Reserve** TOONTOON up-front (`wallet.reserve`). Insufficient → `402`.
 2. **Run** the generation.
 3. **Confirm** on success (`wallet.confirm`) / **Cancel+refund** on failure (`wallet.cancel`).
 
-- Image cost: **1 TEKI** · Video cost: **2 TEKI** (driven by `tile.cost` or type default).
-- Type/tile mismatch is rejected **before** reserving TEKI (`generate.py` L70–79).
-- New users start with **50 TEKI** (`SIGNUP_TEKI_BALANCE=50`).
+- Image cost: **1 TOONTOON** · Video cost: **2 TOONTOON** (driven by `tile.cost` or type default).
+- Type/tile mismatch is rejected **before** reserving TOONTOON (`generate.py` L70–79).
+- New users start with **50 TOONTOON** (`SIGNUP_TOONTOON_BALANCE=50`).
 - Rate limit: **30 generations / hour / user**.
 
 ---
@@ -158,11 +158,11 @@ beautiful cozy 3D forest scene. ✅ (but it ignored the user's "Mountains" choic
 
 ## 6. Tiles inventory (29 total)
 
-- **Image (6, 1 TEKI):** cartoon_character, cute_animal, birds, fish, nature, food
-- **Postcard (15, 1 TEKI):** birthday, jubilee, valentine, wedding, anniversary,
+- **Image (6, 1 TOONTOON):** cartoon_character, cute_animal, birds, fish, nature, food
+- **Postcard (15, 1 TOONTOON):** birthday, jubilee, valentine, wedding, anniversary,
   mothers_day, fathers_day, easter, thanksgiving, new_year, graduation, get_well,
   just_because, good_morning, good_day
-- **Video (8, 2 TEKI):** animate_photo, animate_pet, cartoon_character_video,
+- **Video (8, 2 TOONTOON):** animate_photo, animate_pet, cartoon_character_video,
   video_greeting, living_nature, cute_animal_video, morning_video, inspiring_video
 
 ---
@@ -201,7 +201,7 @@ falls back to a default** and the user's choice is discarded.
 
 **Proof (live):** `inspiring_video` with subject="Mountains", light="Sunny" produced a cozy
 **forest treehouse** (scene_cozy default), not a sunny mountain (scene_epic). The user paid
-2 TEKI for content unrelated to their choices.
+2 TOONTOON for content unrelated to their choices.
 
 **Fix:** align `tiles_data` video option strings with the builder dictionary keys
 (or add the option strings as keys/aliases in `video_prompts.py`). Lowercase + emoji-strip
@@ -236,7 +236,7 @@ drop the text questions from video tiles to avoid promising something we don't d
 
 ### 🟠 P5 — `dall-e-3` fallback is dead on this account
 OpenAI `/models` does **not** list `dall-e-3` for the current key. If `gpt-image-1` ever
-returns 400/403, the fallback also 404s → the image fails and TEKI is refunded. Single point
+returns 400/403, the fallback also 404s → the image fails and TOONTOON is refunded. Single point
 of failure. **Fix:** confirm dall-e-3 access or set the fallback to a model the account has
 (or fall back to Pollinations).
 
@@ -274,14 +274,14 @@ offer photo upload where it has no effect.
 | kie.ai credits | **2993** |
 | Seedance models | `bytedance/seedance-2-fast`, `bytedance/seedance-2` (valid) |
 | Video | 720p · 9:16 · 8–10s · poll 6s/600s |
-| `SIGNUP_TEKI_BALANCE` | 50 · image=1 · video=2 · rate-limit=30/h |
+| `SIGNUP_TOONTOON_BALANCE` | 50 · image=1 · video=2 · rate-limit=30/h |
 | Push (VAPID) | configured ✓ |
 | `PUBLIC_BASE_URL` | `http://193.149.190.155` (HTTP, not HTTPS) |
 
 ---
 
-## 10. Recommended fix order (most TEKI saved first)
-1. **P1 + P2** — align video tile options ↔ builder keys (stops 42% of wasted video TEKI).
+## 10. Recommended fix order (most TOONTOON saved first)
+1. **P1 + P2** — align video tile options ↔ builder keys (stops 42% of wasted video TOONTOON).
 2. **P4** — render text on videos (or remove the text questions).
 3. **P5** — fix/replace the dead dall-e-3 image fallback (prevents image outages).
 4. **P3 / P6 / P8** — drop/relocate video negative prompt, English push text, use `mood`.

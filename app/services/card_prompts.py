@@ -61,7 +61,7 @@ _LAYOUT_TECHNICAL = (
     "NO text NO words NO letters NO writing NO captions NO inscriptions NO labels in the image — image background only, "
     "Technical: warm cinematic lighting with soft rim light and gentle sun rays, soft natural shadows, "
     "glossy smooth cartoon materials with rich surface texture (not flat, not matte plastic), "
-    "ray-traced global illumination, high quality 3D render, 8k resolution, "
+    "ray-traced GI, high quality 3D render, 8k resolution, "
     "crisp sharp details, clean anti-aliased edges, soft depth of field with gentle background bokeh"
 )
 

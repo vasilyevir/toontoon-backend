@@ -51,7 +51,7 @@ _SCENE_EPIC = (
 _TECHNICAL = (
     "Technical: warm cinematic lighting with soft rim light and gentle sun rays, soft natural shadows, "
     "glossy smooth cartoon materials with rich surface texture (not flat, not matte plastic), "
-    "ray-traced global illumination, high quality 3D render, 8k resolution, "
+    "ray-traced GI, high quality 3D render, 8k resolution, "
     "crisp sharp details, clean anti-aliased edges, soft depth of field with gentle background bokeh"
 )
 _LAYOUT_CENTER = "subject centered in frame, soft bokeh background, clean uncluttered composition,"

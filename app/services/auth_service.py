@@ -73,7 +73,7 @@ async def get_or_create_magic_user(email: str) -> User:
         provider=AuthProvider.MAGIC,
         email=email,
         name=email.split("@", 1)[0],
-        teki_balance=settings.signup_teki_balance,
+        toontoon_balance=settings.signup_toontoon_balance,
     )
     await save_user(user)
     return user
@@ -89,14 +89,14 @@ async def get_user_by_email(email: str) -> Optional[User]:
 
 
 async def create_email_user(email: str, password_hash: str, name: str) -> User:
-    """Create a new email+password user with the signup TEKI balance."""
+    """Create a new email+password user with the signup TOONTOON balance."""
     user = User(
         id=new_id("usr_"),
         provider=AuthProvider.EMAIL,
         email=email,
         name=name,
         password_hash=password_hash,
-        teki_balance=settings.signup_teki_balance,
+        toontoon_balance=settings.signup_toontoon_balance,
     )
     await save_user(user)
     return user
@@ -141,7 +141,7 @@ async def get_or_create_google_user(info: dict) -> User:
         email=info.get("email"),
         name=info.get("name") or (info.get("email") or "Google user").split("@", 1)[0],
         avatar=info.get("avatar"),
-        teki_balance=settings.signup_teki_balance,
+        toontoon_balance=settings.signup_toontoon_balance,
     )
     await save_user(user)
     await redis.set(f"user:google:{google_id}", user.id)
@@ -169,7 +169,7 @@ async def get_or_create_apple_user(info: dict) -> User:
         provider=AuthProvider.APPLE,
         email=email,
         name=info.get("name") or (email or "Apple user").split("@", 1)[0],
-        teki_balance=settings.signup_teki_balance,
+        toontoon_balance=settings.signup_toontoon_balance,
     )
     await save_user(user)
     await redis.set(f"user:apple:{apple_id}", user.id)

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session as get_db_session
 from app.db.repositories import generations as generations_repo
+from app.db.repositories import styles as styles_repo
 from app.db.repositories import media as media_repo
 from app.db import models as m
 from app.db.models import MediaAsset
@@ -31,7 +32,7 @@ from app.services import generation as generation_core
 from app.services.generation import registry as _registry
 generation_core.registry = _registry
 
-logger = logging.getLogger("arteki.generate")
+logger = logging.getLogger("toontoon.generate")
 
 router = APIRouter(prefix="/api", tags=["generate"])
 
@@ -75,7 +76,7 @@ async def generate(
 ) -> GenerateResponse:
     """Two-phase generation:
 
-    1. reserve TEKI (create payment)
+    1. reserve TOONTOON (create payment)
     2. run the generation
     3. confirm on success / cancel (refund) on failure
     """
@@ -90,11 +91,22 @@ async def generate(
     if body.tile_id and tile is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Unknown tile")
 
+    style_row = await styles_repo.get(db, body.style_id) if body.style_id else None
+    if body.style_id and style_row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Unknown style")
+    # Стиль из витрины обещает конкретный результат, и обещание держится
+    # фотографией: без неё это будет другая картинка, а человек уже заплатил.
+    if style_row is not None and (style_row.input_spec or {}).get("needs_photo") and not body.photo_url:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="This style needs your photo.",
+        )
+
     # Cost is driven by the tile (videos cost more) or the requested type.
     if tile is not None:
         tile_is_video = tile.category.value == "video"
         # Reject a request whose declared type contradicts the tile's category
-        # BEFORE reserving TEKI, so a mismatch never charges the wrong amount
+        # BEFORE reserving TOONTOON, so a mismatch never charges the wrong amount
         # or routes into the wrong pipeline (logic-fix 7.3 / QA 9.4).
         if body.type == GenerationType.VIDEO and not tile_is_video:
             raise HTTPException(
@@ -108,9 +120,13 @@ async def generate(
             )
         cost = tile.cost
         gen_type = GenerationType.VIDEO if tile_is_video else GenerationType.IMAGE
+    elif style_row is not None:
+        # Цена написана на карточке до нажатия — она и списывается.
+        gen_type = GenerationType.IMAGE
+        cost = style_row.cost
     else:
         gen_type = body.type
-        cost = settings.video_teki_cost if gen_type == GenerationType.VIDEO else settings.image_teki_cost
+        cost = settings.video_toontoon_cost if gen_type == GenerationType.VIDEO else settings.image_toontoon_cost
 
     # Видео вне скоупа первой версии. Проверяем ДО резервирования, чтобы отказ
     # не проходил через кошелёк вообще.
@@ -120,7 +136,7 @@ async def generate(
             detail="Video generation is not available in this version.",
         )
 
-    reason = f"arteki:{gen_type.value}_generate"
+    reason = f"toontoon:{gen_type.value}_generate"
     # Note on refunds in this handler: the request runs inside one database
     # transaction, and raising rolls it back — so a failed image generation
     # leaves no charge at all, rather than a charge plus a refund. The explicit
@@ -130,7 +146,7 @@ async def generate(
     try:
         payment = await wallet.reserve(db, user.id, amount=cost, reason=reason)
     except wallet.InsufficientFunds:
-        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, detail="Not enough TEKI")
+        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, detail="Not enough TOONTOON")
 
     # ── Video: long-running (keyframes → Seedance, ~4–5 min). Run as a background
     # job and let the client poll GET /api/generations/{id}. We persist a QUEUED
@@ -140,7 +156,7 @@ async def generate(
             await wallet.cancel(db, user.id, payment)
             raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Video generator is not configured. Your TEKI was refunded.",
+                detail="Video generator is not configured. Your TOONTOON was refunded.",
             )
 
         generation = Generation(
@@ -184,16 +200,10 @@ async def generate(
     # be reachable by a link.
     photo = await _load_photo(db, user.id, body.photo_url)
 
-    # The prompt is still built the old way (tile answers + GPT); only the part
-    # that talks to a model has moved into the generation core.
-    prompt, negative = await content_gen.build_prompt_for(
-        tile=tile, answers=body.answers, free_text=body.prompt, style=body.style,
-        photo_description=None,
-    )
-
-    # Which operation this actually is — decided by what we were given, not by
-    # what we would like it to be. With a photo it is a real image_to_image only
-    # if a provider is enabled for it; otherwise it is honest text_to_image.
+    # Операция решается ДО сборки промпта, а не после: редактированию нужен
+    # текст другого жанра — инструкция «сохрани человека, помести в такую-то
+    # сцену» вместо описания сцены с нуля. Собрать промпт, а потом узнать, что
+    # он поедет на фото-путь, значит отправить модели описание чужой картинки.
     operation = generation_core.Operation.TEXT_TO_IMAGE
     if photo is not None:
         can_edit = await generation_core.registry.candidates(
@@ -201,6 +211,29 @@ async def generate(
         )
         if can_edit:
             operation = generation_core.Operation.IMAGE_TO_IMAGE
+    editing = operation is generation_core.Operation.IMAGE_TO_IMAGE
+
+    try:
+        if style_row is not None:
+            # Промпт стиля написан руками и проверен глазами на примере из
+            # каталога. Отдавать его GPT на переписывание значит показывать
+            # одно, а генерировать другое.
+            prompt, negative = content_gen.build_style_prompt(style_row, editing=editing)
+        else:
+            prompt, negative = await content_gen.build_prompt_for(
+                tile=tile, answers=body.answers, free_text=body.prompt, style=body.style,
+                editing=editing,
+            )
+    except content_gen.PromptUnavailable:
+        # Переводить запрос нечем. Отказ с возвратом — единственный честный
+        # ответ: картинка, собранная из непереведённого текста, к просьбе
+        # отношения не имеет, а списание за неё выглядит как обман.
+        await wallet.cancel(db, user.id, payment)
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="We couldn't process your request right now, your TOONTOON was refunded — please try again in a minute.",
+        )
+
 
     # The attempt is recorded before the provider is called, so a failure leaves
     # a trace instead of nothing at all.
@@ -212,6 +245,7 @@ async def generate(
         prompt=prompt,
         request_params={
             "tile_id": body.tile_id,
+            "style_id": body.style_id,
             "answers": body.answers,
             "style": body.style,
             "photo_media_id": _media_id(body.photo_url),
@@ -230,13 +264,16 @@ async def generate(
     )
 
     try:
-        result = await generation_core.run(db, request)
+        result = await generation_core.run(
+            db, request,
+            prefer=(style_row.prompt_template or {}).get("provider") if style_row else None,
+        )
     except generation_core.GenerationUnavailable as exc:
         await _record_failure(record, str(exc))
         await wallet.cancel(db, user.id, payment)
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Image generator is busy right now, your TEKI was refunded — please try again.",
+            detail="Image generator is busy right now, your TOONTOON was refunded — please try again.",
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception("Generation failed for user %s (tile=%s)", user.id, body.tile_id)

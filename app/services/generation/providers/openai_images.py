@@ -18,6 +18,7 @@ from typing import Optional
 import httpx
 
 from app.config import settings
+from app.services import prompt_style
 from app.services.generation.operations import (
     GenerationRequest,
     GenerationResult,
@@ -26,9 +27,25 @@ from app.services.generation.operations import (
 )
 from app.services.generation.providers.base import Provider
 
-logger = logging.getLogger("arteki.generation.openai")
+logger = logging.getLogger("toontoon.generation.openai")
 
 _API = "https://api.openai.com/v1"
+
+
+def _with_guards(prompt: str, *, editing: bool) -> str:
+    """Дописать в промпт то, что у других провайдеров ушло бы в негатив.
+
+    Images API не принимает negative prompt — параметра просто нет. Пока это
+    не было учтено, все шестьсот с лишним символов запретов (пять пальцев, без
+    текста в кадре, не мутные цвета) уходили в никуда на основной модели и
+    работали только на резервной. Единственный способ сказать это gpt-image-1 —
+    сформулировать положительно и добавить в сам промпт.
+
+    Наборов два: общий начинается со слов «friendly non-scary cartoon face», и
+    на снимке живого человека это инструкция ровно против того, что обещает
+    экран, — поэтому у фото-пути свой.
+    """
+    return f"{prompt}, {prompt_style.guards_for(editing=editing)}"
 
 
 class OpenAIImagesProvider(Provider):
@@ -45,19 +62,22 @@ class OpenAIImagesProvider(Provider):
     def available(self) -> bool:
         return settings.openai_enabled
 
-    async def run(self, request: GenerationRequest) -> GenerationResult:
+    async def run(
+        self, request: GenerationRequest, *, model: Optional[str] = None
+    ) -> GenerationResult:
+        model = model or self.model
         if request.operation is Operation.IMAGE_TO_IMAGE:
-            data = await self._edit(request)
+            data = await self._edit(request, model)
         else:
-            data = await self._generate(request)
+            data = await self._generate(request, model)
         return GenerationResult(
-            data=data, mime="image/png", provider_id=self.id, model=self.model
+            data=data, mime="image/png", provider_id=self.id, model=model
         )
 
-    async def _generate(self, request: GenerationRequest) -> bytes:
+    async def _generate(self, request: GenerationRequest, model: str) -> bytes:
         body = {
-            "model": self.model,
-            "prompt": (request.prompt or "")[:32000],
+            "model": model,
+            "prompt": _with_guards(request.prompt or "", editing=False)[:32000],
             "n": 1,
             "size": settings.openai_image_size,
         }
@@ -70,7 +90,7 @@ class OpenAIImagesProvider(Provider):
             )
         return self._decode(resp)
 
-    async def _edit(self, request: GenerationRequest) -> bytes:
+    async def _edit(self, request: GenerationRequest, model: str) -> bytes:
         """Edit the uploaded image. This is the call the whole photo-first
         product depends on."""
         files = {
@@ -79,8 +99,8 @@ class OpenAIImagesProvider(Provider):
         if request.mask:
             files["mask"] = ("mask.png", request.mask, "image/png")
         data = {
-            "model": self.model,
-            "prompt": (request.prompt or "")[:32000],
+            "model": model,
+            "prompt": _with_guards(request.prompt or "", editing=True)[:32000],
             "n": "1",
             "size": settings.openai_image_size,
         }

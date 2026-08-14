@@ -19,7 +19,7 @@ class AuthProvider(str, Enum):
 
 
 class User(BaseModel):
-    """A persisted ARTEKI user. Stored in Redis under ``user:{id}``."""
+    """A persisted TOONTOON user. Stored in Redis under ``user:{id}``."""
 
     id: str
     provider: AuthProvider = AuthProvider.MAGIC
@@ -29,7 +29,7 @@ class User(BaseModel):
 
     # Local wallet — only authoritative for magic-link users. For Boostify
     # users the balance is always read live from Boostify and this is ignored.
-    teki_balance: int = 0
+    toontoon_balance: int = 0
 
     # Link back to the Boostify identity when provider == boostify.
     boostify_user_id: Optional[str] = None

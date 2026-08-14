@@ -24,7 +24,7 @@ from app.db.session import session_scope
 from app.models.tile import Tile
 from app.services import video_prompts
 
-logger = logging.getLogger("arteki.video_gen")
+logger = logging.getLogger("toontoon.video_gen")
 
 UPLOAD_DIR = Path("uploads")
 
@@ -308,7 +308,7 @@ async def run_video_job(
                             role=ChatRole.AI,
                             generation_id=gen_id,
                             is_generation_error=True,
-                            text="Video generation failed — your TEKI was refunded.",
+                            text="Video generation failed — your TOONTOON was refunded.",
                         ),
                     )
             except Exception:

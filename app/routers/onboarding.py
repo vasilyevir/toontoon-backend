@@ -25,10 +25,14 @@ from app.deps import Context, required_context
 router = APIRouter(prefix="/api/onboarding", tags=["onboarding"])
 
 # The six directions the quiz offers; also the top level of the catalogue.
+# Порядок здесь — это порядок разделов на главной. AI Photo Studio первым:
+# это основное обещание продукта, и отдавать первый экран чему-то другому
+# значит рассказывать не с того места.
 CATEGORIES = (
     "ai_photo_studio",
     "artistic_touch",
     "cartoon_me",
+    "lifestyle_travel",
     "fantasy_mode",
     "pet_magic",
     "family_fun",

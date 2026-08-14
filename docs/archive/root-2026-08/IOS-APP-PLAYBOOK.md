@@ -1,6 +1,6 @@
 # Универсальный playbook: нативное iOS-приложение 1:1 с веб-продуктом
 
-Переиспользуемый гайд для сборки следующих приложений по той же схеме, что и ARTEKI.
+Переиспользуемый гайд для сборки следующих приложений по той же схеме, что и TOONTOON.
 Подходит для любого продукта вида **«есть веб-версия (Next.js/React) + бэкенд-API,
 нужно нативное iOS-приложение, повторяющее веб 1:1»**. Копируй этот файл в новый
 репозиторий и иди по шагам. Всё проверено на реальном проекте.
@@ -149,7 +149,7 @@ Config.xcconfig
 Сначала снимаем токены с веба (Tailwind config / CSS-переменные / девтулзы) и
 переносим точь-в-точь:
 ```swift
-enum ArtekiColor { static let bg = Color(hex: 0x0A0A0A); /* … все цвета из веба */ }
+enum ToontoonColor { static let bg = Color(hex: 0x0A0A0A); /* … все цвета из веба */ }
 enum Spacing { static let s: CGFloat = 8; static let base: CGFloat = 16; /* … */ }
 enum Radius  { static let s: CGFloat = 8; static let l: CGFloat = 16; static let pill: CGFloat = 100 }
 enum AppFont { static func sans(_ s: CGFloat, _ w: Font.Weight = .regular) -> Font {

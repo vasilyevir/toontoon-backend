@@ -11,7 +11,7 @@ import logging
 
 from app.config import settings
 
-logger = logging.getLogger("arteki.push")
+logger = logging.getLogger("toontoon.push")
 
 _REDIS_PREFIX = "push_subs:"
 _MAX_SUBS_PER_USER = 10

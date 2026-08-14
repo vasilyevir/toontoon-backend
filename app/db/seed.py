@@ -18,10 +18,12 @@ from app.db.session import connect, disconnect, session_scope
 
 # id, product_id, title, billing_period, price_usd (cents), weekly_quota, sort
 PLANS = [
-    ("weekly", "ai.arteki.sub.weekly", "Безлимит", "week", 999, 850, 10),
-    ("monthly", "ai.arteki.sub.monthly", "Pro Unlimited", "month", 1499, 1500, 20),
-    ("yearly", "ai.arteki.sub.yearly", "Pro Unlimited", "year", 4999, 1000, 30),
-    ("business_yearly", "ai.arteki.sub.business.yearly", "Бизнес Безлимит", "year", 9900, 5000, 40),
+    # Названия видны на экране подписки, а интерфейс английский: три из
+    # четырёх были русскими и на экране смотрелись бы как чужой текст.
+    ("weekly", "ai.toontoon.sub.weekly", "Weekly", "week", 999, 850, 10),
+    ("monthly", "ai.toontoon.sub.monthly", "Pro Unlimited", "month", 1499, 1500, 20),
+    ("yearly", "ai.toontoon.sub.yearly", "Pro Unlimited", "year", 4999, 1000, 30),
+    ("business_yearly", "ai.toontoon.sub.business.yearly", "Business Unlimited", "year", 9900, 5000, 40),
 ]
 
 
@@ -60,6 +62,13 @@ async def seed_plans() -> None:
 # а в том, узнаётся ли человек (CH-19).
 PROVIDERS = [
     ("openai_images", ["text_to_image"], "gpt-image-1", 10, True),
+    # Kling — основной кандидат на «твоё фото в этом стиле». Обе строки
+    # выключены: сперва прогон на портретах, потом прод.
+    #   kling     — третья версия, основной поток с референсами.
+    #   kling_v2  — вторая, про запас: та же схема запроса, другое качество
+    #               и другая цена.
+    ("kling", ["text_to_image", "image_to_image"], "kling-v3", 5, False),
+    ("kling_v2", ["text_to_image", "image_to_image"], "kling-v2-1", 6, False),
     ("pollinations", ["text_to_image"], "flux", 20, True),
 ]
 

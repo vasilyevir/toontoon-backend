@@ -22,12 +22,12 @@ import httpx
 from app.config import settings
 from app.services import prompt_style
 
-logger = logging.getLogger("arteki.video_prompts")
+logger = logging.getLogger("toontoon.video_prompts")
 
 STYLE_3D = "vibrant 3D cartoon render, modern animated feature film look, big expressive friendly eyes, soft rounded chunky shapes, smooth glossy surfaces with subtle texture, bold warm saturated colors, cheerful charming character design, bright modern animation quality"
 STYLE_3D_SCENE_COZY = "cozy stylized 3D cartoon render, modern animated feature film look, soft rounded chunky toy-like shapes, charming miniature diorama aesthetic, richly detailed tactile materials with visible texture (wood grain, stone, fabric), warm naturalistic saturated colors, lush detailed environment, no people, no characters, inviting heartwarming atmosphere"
 STYLE_3D_SCENE_EPIC = "epic stylized 3D cartoon landscape render, modern animated feature film look, bold saturated colors, dramatic depth and scale, lush detailed environment, no people, no characters, majestic cinematic atmosphere"
-TECHNICAL = "Technical: warm cinematic lighting with soft rim light and gentle sun rays, soft natural shadows, glossy smooth cartoon materials with rich surface texture (not flat, not matte plastic), ray-traced global illumination, high quality 3D render, 8k resolution, crisp sharp details, clean anti-aliased edges, soft depth of field with gentle background bokeh"
+TECHNICAL = "Technical: warm cinematic lighting with soft rim light and gentle sun rays, soft natural shadows, glossy smooth cartoon materials with rich surface texture (not flat, not matte plastic), ray-traced GI, high quality 3D render, 8k resolution, crisp sharp details, clean anti-aliased edges, soft depth of field with gentle background bokeh"
 LAYOUT_TEXT = "generous negative space in upper third for text overlay, centered composition, rule of thirds, high contrast between subject and soft bokeh background, no busy patterns behind text areas, clean uncluttered layout, no text and no letters rendered in the image"
 LAYOUT_CENTER = "subject centered in frame, soft bokeh background, clean uncluttered composition"
 NEGATIVE = "distorted anatomy, photorealistic horror, uncanny valley faces, creepy expressions, messy cluttered background, small unreadable text, watermarks, signatures, cropped limbs, blurry faces, extra fingers or limbs, low quality, jpeg artifacts, scary dark atmosphere, dull muted colors, washed out palette, grey tones, flat 2D illustration, flat vector art, matte plastic look, flat even lighting"
@@ -537,9 +537,9 @@ def build_photo_motion_prompt(answers: dict[str, str]) -> str:
 _STYLE_3D_INLINE = "vibrant 3D cartoon render, modern animated feature film look, big expressive friendly eyes, soft rounded chunky shapes, smooth glossy surfaces with subtle texture, bold warm saturated colors, cheerful charming character design, bright modern animation quality"
 _STYLE_COZY_INLINE = "cozy stylized 3D cartoon render, modern animated feature film look, soft rounded chunky toy-like shapes, charming miniature diorama aesthetic, richly detailed tactile materials with visible texture, warm naturalistic saturated colors, lush detailed environment, no people, no characters, inviting heartwarming atmosphere"
 _STYLE_EPIC_INLINE = "epic stylized 3D cartoon landscape render, modern animated feature film look, bold saturated colors, dramatic depth and scale, lush detailed environment, no people, no characters, majestic cinematic atmosphere"
-_TECHNICAL_INLINE = "Technical: warm cinematic lighting with soft rim light and gentle sun rays, soft natural shadows, glossy smooth cartoon materials with rich surface texture (not flat, not matte plastic), ray-traced global illumination, high quality 3D render, 8k resolution, crisp sharp details, clean anti-aliased edges, soft depth of field with gentle background bokeh"
+_TECHNICAL_INLINE = "Technical: warm cinematic lighting with soft rim light and gentle sun rays, soft natural shadows, glossy smooth cartoon materials with rich surface texture (not flat, not matte plastic), ray-traced GI, high quality 3D render, 8k resolution, crisp sharp details, clean anti-aliased edges, soft depth of field with gentle background bokeh"
 
-_FREE_TEXT_SYSTEM = f"""You are a video prompt builder for Arteki, a 3D cartoon animation platform.
+_FREE_TEXT_SYSTEM = f"""You are a video prompt builder for Toontoon, a 3D cartoon animation platform.
 The user describes a video they want (input may be in Russian or any language).
 Categorize and build a text-to-video prompt using our branded 3D cartoon style.
 

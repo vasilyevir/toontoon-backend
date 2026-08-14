@@ -1,4 +1,4 @@
-"""ARTEKI backend — FastAPI application entrypoint."""
+"""TOONTOON backend — FastAPI application entrypoint."""
 from __future__ import annotations
 
 import logging
@@ -42,21 +42,21 @@ async def lifespan(app: FastAPI):
     try:
         await db.connect()
     except Exception as exc:  # noqa: BLE001 — startup diagnostics
-        logging.getLogger("arteki.db").error(
+        logging.getLogger("toontoon.db").error(
             "PostgreSQL unavailable (%s). Continuing: no router reads from it yet. "
-            "Start it with: docker start arteki-postgres",
+            "Start it with: docker start toontoon-postgres",
             exc,
         )
     try:
         await storage.startup()
     except Exception as exc:  # noqa: BLE001 — startup diagnostics
-        logging.getLogger("arteki.storage").error(
-            "Object storage unavailable (%s). Start it with: docker start arteki-minio", exc
+        logging.getLogger("toontoon.storage").error(
+            "Object storage unavailable (%s). Start it with: docker start toontoon-minio", exc
         )
     if settings.expose_dev_tokens and not settings.debug:
         # Не падаем — падение посреди ночи хуже, — но молчать нельзя: с этим
         # флагом чужой пароль меняется одним запросом.
-        logging.getLogger("arteki").error(
+        logging.getLogger("toontoon").error(
             "EXPOSE_DEV_TOKENS=true при DEBUG=false: токены сброса пароля уходят "
             "в ответе API. Выключите его до публикации."
         )
@@ -69,7 +69,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.app_name,
     version="1.0.0",
-    description="Identity, wallet and AI content generation for ARTEKI.",
+    description="Identity, wallet and AI content generation for TOONTOON.",
     lifespan=lifespan,
 )
 

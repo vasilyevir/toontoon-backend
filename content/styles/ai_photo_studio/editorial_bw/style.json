@@ -1,0 +1,8 @@
+{
+  "title": "Editorial B&W",
+  "description": "A black-and-white magazine portrait: one strong light, deep shadow, nothing else.",
+  "cost": 1,
+  "is_home": true,
+  "is_shot": true,
+  "sort_order": 20
+}

@@ -11,7 +11,7 @@ loop ≤ 15 секунд. Сцена без персонажа, со звуко�
 | Формат | вертикаль 9:16, 720p |
 | Текст в кадре | нет |
 | Звук | `generate_audio` (синтезирует Seedance) |
-| Цена | 2 TEKI |
+| Цена | 2 TOONTOON |
 
 ---
 
@@ -23,7 +23,7 @@ loop ≤ 15 секунд. Сцена без персонажа, со звуко�
 1. юзер выбирает nature-video
    → отвечает на 5 вопросов: place / time_season / special / mood / audio
 2. ответы собраны ─────────▶ POST /api/video
-                              ├ auth + баланс ≥ 2 TEKI + rateLimit
+                              ├ auth + баланс ≥ 2 TOONTOON + rateLimit
                               ├ detectMode(answers) → STRUCTURED | FREE_TEXT
                               ├ buildStoryboardInstruction("nature-video", answers, mode)
                               ├ chatCompletion → строгий JSON:
@@ -35,7 +35,7 @@ loop ≤ 15 секунд. Сцена без персонажа, со звуко�
                               └ сохраняем taskId
    ◀── { generationId } ──────┘
 3. бабл «генерим видео ~4-5 мин…» + прогресс; клиент поллит /api/video/status?id
-4. state:success → resultUrl, status:"done"; списываем 2 TEKI; бабл → <video loop muted autoplay>
+4. state:success → resultUrl, status:"done"; списываем 2 TOONTOON; бабл → <video loop muted autoplay>
 ```
 
 ---
@@ -386,10 +386,10 @@ POST https://api.kie.ai/api/v1/jobs/createTask   (Authorization: Bearer ${KIE_AP
 
 GET https://api.kie.ai/api/v1/jobs/recordInfo?taskId=...
 → data.state: success → JSON.parse(data.resultJson).resultUrls[0] = видео
-            fail    → data.failMsg (TEKI не списываем)
+            fail    → data.failMsg (TOONTOON не списываем)
 ```
 
-`KIE_API_KEY` — только server-side. TEKI списываем только при `state:success`.
+`KIE_API_KEY` — только server-side. TOONTOON списываем только при `state:success`.
 
 ---
 
@@ -398,11 +398,11 @@ GET https://api.kie.ai/api/v1/jobs/recordInfo?taskId=...
 | Файл | Что сделать |
 |---|---|
 | `src/lib/videoTemplates.ts` | интерфейс `VideoTemplate`; инстанс `nature-video`; `buildStoryboardInstruction(tileId, answers, mode)` с маппингами §5; STRUCTURED/FREE_TEXT из §8–9 |
-| `src/lib/tileConfig.ts` | вопросы `nature-video` (§4); `priceTeki = 2` |
+| `src/lib/tileConfig.ts` | вопросы `nature-video` (§4); `priceToontoon = 2` |
 | `src/lib/redis.ts` | поле `Generation.taskId?` |
 | `src/lib/seedance.ts` (новый) | клиент kie.ai: `createVideoTask(input)`, `getVideoTask(taskId)`, маппинг §11 |
 | `src/app/api/video/route.ts` (новый) | storyboard → якорь Pollinations → `/api/img` → createTask → `Generation{running}` |
-| `src/app/api/video/status/route.ts` (новый) | `recordInfo` → обновить `Generation`, на `success` списать 2 TEKI |
+| `src/app/api/video/status/route.ts` (новый) | `recordInfo` → обновить `Generation`, на `success` списать 2 TOONTOON |
 | `src/app/chat/page.tsx` + `chatReducer.ts` | вопросы §4, граничные баблы §10, прогресс-бабл → `<video>`, ленивый до-полл при возврате |
 | env | `KIE_API_KEY` |
 
@@ -421,4 +421,4 @@ GET https://api.kie.ai/api/v1/jobs/recordInfo?taskId=...
 - [ ] LLM отдаёт валидный JSON `{ mode, loop, durationSec, anchor, motion, audio, negative }`
 - [ ] Все плейсхолдеры заполнены, лишние удалены
 - [ ] Противоречие пресетов → уточняем; живое → подсказка; пустое → переспрос
-- [ ] TEKI списываются только при `state:success`
+- [ ] TOONTOON списываются только при `state:success`

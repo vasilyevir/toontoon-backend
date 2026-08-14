@@ -9,11 +9,11 @@
 #   PORT=8080 ./run-local.sh  # другой порт
 #
 # Порт 8000 занят контейнером gbr-backend, 8010 — aeo-analyzer, поэтому дефолт 8020.
-# Redis: контейнер `arteki-redis` (docker start arteki-redis), либо
+# Redis: контейнер `toontoon-redis` (docker start toontoon-redis), либо
 # USE_FAKE_REDIS=true ./run-local.sh — без Redis вообще (данные не переживут рестарт).
 #
-# Postgres: контейнер `arteki-postgres` на порту 5433 (5432 обычно занят чужим
-# проектом). Поднять: docker start arteki-postgres
+# Postgres: контейнер `toontoon-postgres` на порту 5433 (5432 обычно занят чужим
+# проектом). Поднять: docker start toontoon-postgres
 # Миграции:  .venv/bin/python -m alembic upgrade head
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -26,11 +26,11 @@ export FRONTEND_URL="${FRONTEND_URL:-http://localhost:3000}"
 export CORS_ORIGINS="${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,${BASE}}"
 export BOOSTIFY_REDIRECT_URI="${BOOSTIFY_REDIRECT_URI:-${BASE}/api/auth/boostify/callback}"
 export SESSION_COOKIE_SECURE=false
-export DATABASE_URL="${DATABASE_URL:-postgresql+asyncpg://arteki:arteki@localhost:5433/arteki}"
+export DATABASE_URL="${DATABASE_URL:-postgresql+asyncpg://toontoon:toontoon@localhost:5433/toontoon}"
 # Sign in with Apple: секрета на нашей стороне не нужно, достаточно знать
 # audience = Bundle ID приложения. Без этого /api/app/bootstrap отдаёт
 # apple_enabled=false и апка прячет кнопку Apple.
-export APPLE_BUNDLE_ID="${APPLE_BUNDLE_ID:-ai.arteki.ios}"
+export APPLE_BUNDLE_ID="${APPLE_BUNDLE_ID:-ai.toontoon.ios}"
 export APP_KEY_REQUIRED="${APP_KEY_REQUIRED:-false}"
 export DEBUG=true
 

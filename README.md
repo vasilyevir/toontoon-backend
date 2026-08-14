@@ -1,6 +1,6 @@
-# arteki-web-backend
+# toontoon-web-backend
 
-Бэкенд ARTEKI: личность, кошелёк, каталог стилей и генерация изображений.
+Бэкенд TOONTOON: личность, кошелёк, каталог стилей и генерация изображений.
 Разрабатывается **под мобильное приложение** — веб-фронт в контракте
 не учитывается.
 
@@ -40,7 +40,7 @@ app/
 ## Разработка
 
 ```bash
-docker start arteki-postgres arteki-redis arteki-minio
+docker start toontoon-postgres toontoon-redis toontoon-minio
 .venv/bin/python -m alembic upgrade head
 PYTHONPATH=. .venv/bin/python -m app.db.seed
 ./run-local.sh                                    # http://localhost:8020
@@ -65,9 +65,9 @@ PYTHONPATH=. .venv/bin/python -m scripts.dump_reference
 
 | Параметр | Значение |
 | --- | --- |
-| Образ | `ghcr.io/atom-group-software/arteki-web-backend` |
-| Release | `arteki-web-backend` |
-| Namespace | `arteki-web` |
+| Образ | `ghcr.io/atom-group-software/toontoon-web-backend` |
+| Release | `toontoon-web-backend` |
+| Namespace | `toontoon-web` |
 | Конфиг релиза | `deploy/values.yaml` |
 
 Папки `deploy/` и `.github/workflows/` без согласования с DevOps не трогаем.

@@ -1,0 +1,9 @@
+{
+  "title": "Ink Sketch",
+  "description": "A quick pen-and-ink drawing with confident, unfinished lines.",
+  "cost": 1,
+  "is_home": false,
+  "is_shot": false,
+  "sort_order": 30,
+  "sample_source": "an ordinary casual smartphone snapshot of a man in his twenties standing in a kitchen, flat ceiling light, cabinets behind, plain dark hoodie, neutral expression, amateur framing"
+}

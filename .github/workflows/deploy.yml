@@ -9,11 +9,11 @@ on:
 
 env:
   # ghcr требует lowercase; имя орги содержит заглавные → путь захардкожен.
-  IMAGE: ghcr.io/atom-group-software/arteki-web-backend
+  IMAGE: ghcr.io/atom-group-software/toontoon-web-backend
   CHART: oci://ghcr.io/atom-group-software/charts/app
   CHART_VERSION: "0.2.0"
-  RELEASE: arteki-web-backend
-  NAMESPACE: arteki-web
+  RELEASE: toontoon-web-backend
+  NAMESPACE: toontoon-web
 
 jobs:
   build:

@@ -1,0 +1,10 @@
+{
+  "title": "Comic Hero",
+  "description": "Bold ink, halftone dots, a cover you could pick off a shelf.",
+  "cost": 1,
+  "is_home": false,
+  "is_shot": false,
+  "sort_order": 30,
+  "sample_source": "an ordinary casual smartphone snapshot of a man in his thirties standing on a balcony, flat cloudy daylight, railing behind, plain jacket, neutral expression, amateur framing",
+  "anchor": "anime"
+}

@@ -9,7 +9,7 @@
 
 | Переменная | Тип | По умолчанию |
 | --- | --- | --- |
-| `APP_NAME` | str | `ARTEKI API` |
+| `APP_NAME` | str | `TOONTOON API` |
 | `DEBUG` | bool | `True` |
 | `CORS_ORIGINS` | str | `http://localhost:3000,http://127.0.0.1:3000` |
 | `PUBLIC_BASE_URL` | str | «задаётся в окружении» |
@@ -29,19 +29,19 @@
 | `STORAGE_BACKEND` | str | `s3` |
 | `S3_ENDPOINT_URL` | str | «задаётся в окружении» |
 | `S3_REGION` | str | `us-east-1` |
-| `S3_BUCKET` | str | `arteki-dev` |
+| `S3_BUCKET` | str | `toontoon-dev` |
 | `S3_ACCESS_KEY` | str | «задаётся в окружении» |
 | `S3_SECRET_KEY` | str | «задаётся в окружении» |
 | `S3_SIGNED_URL_TTL_SECONDS` | int | `900` |
 | `THUMBNAIL_MAX_SIDE` | int | `512` |
 | `THUMBNAIL_QUALITY` | int | `82` |
-| `SESSION_COOKIE_NAME` | str | `arteki-session` |
+| `SESSION_COOKIE_NAME` | str | `toontoon-session` |
 | `SESSION_TTL_DAYS` | int | `30` |
 | `MAGIC_LINK_TTL_MINUTES` | int | `15` |
 | `PASSWORD_RESET_TTL_MINUTES` | int | `60` |
 | `SESSION_COOKIE_SAMESITE` | str | `lax` |
 | `SESSION_COOKIE_SECURE` | bool | `False` |
-| `SIGNUP_TEKI_BALANCE` | int | `30` |
+| `SIGNUP_TOONTOON_BALANCE` | int | `30` |
 | `DAILY_REWARD_SCHEDULE` | str | `10,10,10,10,10,20,30` |
 | `FREE_BALANCE_CAP` | int | `300` |
 | `FREE_WEEKLY_QUOTA` | int | `100` |
@@ -50,19 +50,27 @@
 | `OPENAI_API_KEY` | str | пусто |
 | `OPENAI_MODEL` | str | `gpt-4o-mini` |
 | `OPENAI_IMAGE_MODEL` | str | `gpt-image-1` |
-| `OPENAI_IMAGE_SIZE` | str | `1024x1024` |
+| `OPENAI_IMAGE_SIZE` | str | `1024x1536` |
 | `OPENAI_IMAGE_QUALITY` | str | `medium` |
 | `OPENAI_IMAGE_TIMEOUT` | float | `55.0` |
 | `RATE_LIMIT_PER_HOUR` | int | `30` |
-| `IMAGE_TEKI_COST` | int | `1` |
-| `VIDEO_TEKI_COST` | int | `2` |
-| `IMAGE_PROVIDER` | str | `openai` |
+| `IMAGE_TOONTOON_COST` | int | `1` |
+| `VIDEO_TOONTOON_COST` | int | `2` |
 | `POLLINATIONS_IMAGE_URL` | str | «задаётся в окружении» |
-| `POLLINATIONS_TEXT_URL` | str | «задаётся в окружении» |
 | `POLLINATIONS_MODEL` | str | `flux` |
+| `KLING_API_KEY` | str | пусто |
+| `KLING_ACCESS_KEY` | str | пусто |
+| `KLING_SECRET_KEY` | str | пусто |
+| `KLING_BASE_URL` | str | «задаётся в окружении» |
+| `KLING_IMAGE_MODEL` | str | `kling-v3` |
+| `KLING_ASPECT_RATIO` | str | `9:16` |
+| `KLING_IMAGE_FIDELITY` | float | `0.5` |
+| `KLING_HUMAN_FIDELITY` | float | `0.8` |
+| `KLING_IMAGE_REFERENCE` | str | `face` |
+| `KLING_REQUEST_TIMEOUT` | float | `30.0` |
+| `KLING_POLL_TIMEOUT` | float | `90.0` |
+| `KLING_POLL_INTERVAL` | float | `3.0` |
 | `POLLINATIONS_TOKEN` | str | пусто |
-| `POLLINATIONS_REFERRER` | str | `arteki` |
-| `VISION_TIMEOUT_SECONDS` | int | `7` |
 | `VIDEO_ENABLED` | bool | `False` |
 | `KIE_API_KEY` | str | пусто |
 | `KIE_BASE_URL` | str | «задаётся в окружении» |
@@ -76,7 +84,7 @@
 | `VIDEO_POLL_TIMEOUT` | float | `900.0` |
 | `VAPID_PRIVATE_KEY` | str | пусто |
 | `VAPID_PUBLIC_KEY` | str | пусто |
-| `VAPID_EMAIL` | str | `mailto:hello@arteki.ai` |
+| `VAPID_EMAIL` | str | `mailto:hello@toontoon.ai` |
 | `CLOUDINARY_CLOUD_NAME` | str | пусто |
 | `CLOUDINARY_API_KEY` | str | пусто |
 | `CLOUDINARY_API_SECRET` | str | пусто |
@@ -85,10 +93,10 @@
 | `GOOGLE_REDIRECT_URI` | str | пусто |
 | `APPLE_BUNDLE_ID` | str | пусто |
 | `APPLE_SERVICE_ID` | str | пусто |
-| `APP_DEEP_LINK_SCHEME` | str | `arteki` |
+| `APP_DEEP_LINK_SCHEME` | str | `toontoon` |
 | `BOOSTIFY_MOCK` | bool | `True` |
 | `BOOSTIFY_BASE_URL` | str | «задаётся в окружении» |
-| `BOOSTIFY_CLIENT_ID` | str | `arteki` |
+| `BOOSTIFY_CLIENT_ID` | str | `toontoon` |
 | `BOOSTIFY_CLIENT_SECRET` | str | «задаётся в окружении» |
 | `BOOSTIFY_REDIRECT_URI` | str | `http://localhost:8000/api/auth/boostify/callback` |
 | `BOOSTIFY_WEBHOOK_SECRET` | str | «задаётся в окружении» |

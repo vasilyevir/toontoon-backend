@@ -11,8 +11,8 @@
             "title": "Google Enabled",
             "type": "boolean"
           },
-          "image_teki_cost": {
-            "title": "Image Teki Cost",
+          "image_toontoon_cost": {
+            "title": "Image Toontoon Cost",
             "type": "integer"
           },
           "push_enabled": {
@@ -23,14 +23,14 @@
             "title": "Video Enabled",
             "type": "boolean"
           },
-          "video_teki_cost": {
-            "title": "Video Teki Cost",
+          "video_toontoon_cost": {
+            "title": "Video Toontoon Cost",
             "type": "integer"
           }
         },
         "required": [
-          "image_teki_cost",
-          "video_teki_cost",
+          "image_toontoon_cost",
+          "video_toontoon_cost",
           "push_enabled",
           "google_enabled",
           "apple_enabled",
@@ -97,7 +97,7 @@
         "type": "object"
       },
       "Balance": {
-        "description": "Wallet balance shown in the UI.\n\nFor magic-link users ``available`` is the local TEKI balance.\nFor Boostyfi users:\n  - ``available``       = how much the user authorised to spend in Arteki\n                          (= grant_remaining). This is what the UI shows and\n                          what the pre-flight check uses.\n  - ``locked``          = vesting/locked IMBA (informational only).\n  - ``grant_cap``       = total spending cap the user set when connecting.\n  - ``grant_expires_at``= ISO-8601 datetime when the grant expires (or None).",
+        "description": "Wallet balance shown in the UI.\n\nFor magic-link users ``available`` is the local TOONTOON balance.\nFor Boostyfi users:\n  - ``available``       = how much the user authorised to spend in Toontoon\n                          (= grant_remaining). This is what the UI shows and\n                          what the pre-flight check uses.\n  - ``locked``          = vesting/locked IMBA (informational only).\n  - ``grant_cap``       = total spending cap the user set when connecting.\n  - ``grant_expires_at``= ISO-8601 datetime when the grant expires (or None).",
         "properties": {
           "available": {
             "title": "Available",
@@ -409,6 +409,17 @@
               }
             ],
             "title": "Style"
+          },
+          "style_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Style Id"
           },
           "tile_id": {
             "anyOf": [
@@ -1033,7 +1044,7 @@
     }
   },
   "info": {
-    "description": "Identity, wallet and AI content generation for ARTEKI.",
+    "description": "Identity, wallet and AI content generation for TOONTOON.",
     "title": "ARTEKI API",
     "version": "generated"
   },
@@ -2290,7 +2301,7 @@
     },
     "/api/generate": {
       "post": {
-        "description": "Two-phase generation:\n\n1. reserve TEKI (create payment)\n2. run the generation\n3. confirm on success / cancel (refund) on failure",
+        "description": "Two-phase generation:\n\n1. reserve TOONTOON (create payment)\n2. run the generation\n3. confirm on success / cancel (refund) on failure",
         "operationId": "generate_api_generate_post",
         "parameters": [
           {
@@ -3486,6 +3497,56 @@
           }
         },
         "summary": "Get Style",
+        "tags": [
+          "catalog"
+        ]
+      }
+    },
+    "/api/styles/{style_id}/example/{index}": {
+      "get": {
+        "description": "Витринная картинка стиля — публично и с длинным кэшем.\n\nЭто единственная картинка в системе, которую можно отдавать кому угодно:\nона наша, снята для каталога и показывается до входа. Всё остальное живёт\nза `/api/media` с проверкой владельца.",
+        "operationId": "style_example_api_styles__style_id__example__index__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "style_id",
+            "required": true,
+            "schema": {
+              "title": "Style Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "index",
+            "required": true,
+            "schema": {
+              "title": "Index",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Style Example",
         "tags": [
           "catalog"
         ]

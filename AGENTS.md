@@ -1,6 +1,6 @@
-# ARTEKI Backend
+# TOONTOON Backend
 
-FastAPI backend for ARTEKI — identity, TEKI wallet, and AI content generation.
+FastAPI backend for TOONTOON — identity, TOONTOON wallet, and AI content generation.
 The Next.js frontend lives in `/opt/frontend` (separate project).
 
 > Status: fully working end-to-end with mock providers. Generation uses
@@ -40,17 +40,17 @@ app/
 ├── config.py          pydantic-settings; all env in one place
 ├── redis_client.py    async Redis (real or fakeredis), single shared client
 ├── deps.py            session-cookie → (user, session) dependencies
-├── cookies.py         set/clear the arteki-session cookie consistently
+├── cookies.py         set/clear the toontoon-session cookie consistently
 ├── core/
 │   ├── security.py        token generation + HMAC webhook signatures
-│   ├── transliterate.py   Cyrillic → Latin for prompts
 │   └── rate_limit.py      fixed-window limiter in Redis
 ├── models/            Pydantic models (user, session, generation, payment, tile)
 ├── services/
 │   ├── auth_service.py        users / sessions / magic-link tokens in Redis
 │   ├── boostify.py            Boostify client — MOCK + real HTTP (v2)
 │   ├── wallet.py              unified wallet over both providers (two-phase pay)
-│   ├── content_gen.py         Pollinations image + vision + video mock
+│   ├── content_gen.py         сборка промпта (GPT + механический запасной путь)
+│   ├── generation/            реестр провайдеров: операция → модель, фолбэк
 │   ├── generations_service.py generation records, library, share links
 │   └── tiles_data.py          the 31-tile catalog (static)
 └── routers/
@@ -67,11 +67,12 @@ app/
 - **Redis is the only datastore** (per the spec): users, sessions, magic tokens,
   generation history, share links, rate-limit counters, OAuth state.
 - **Two auth contours, one wallet.** `wallet.py` hides whether the balance is the
-  local `teki_balance` (magic-link) or live from Boostify (v2). Routers never
+  local `toontoon_balance` (magic-link) or live from Boostify (v2). Routers never
   branch on provider — except transaction history, which is genuinely different.
-- **Generation is isolated** behind `content_gen.generate(...)`. Swapping
-  Pollinations for the real stack = editing one function body; the signature and
-  all routers stay the same.
+- **Модель выбирает реестр, а не код.** `services/generation` берёт провайдера
+  из таблицы `generation_providers` по операции и приоритету и падает на
+  следующего при отказе. Включить модель или поменять порядок — строка в базе,
+  не релиз. `content_gen` отвечает только за текст промпта.
 - **Boostify has a mock mode** (`BOOSTIFY_MOCK=true`) so the full v2 flow works
   today; flip to `false` + fill credentials when Boostify ships.
 
@@ -82,7 +83,7 @@ app/
 | Method | Endpoint | Auth | Purpose |
 | --- | --- | --- | --- |
 | POST | `/api/auth/magic-link` | — | Issue magic token; returns `{ ok, devLink }` (email not sent) |
-| GET | `/api/auth/verify?token=` | — | Consume token → set `arteki-session` cookie → redirect to frontend |
+| GET | `/api/auth/verify?token=` | — | Consume token → set `toontoon-session` cookie → redirect to frontend |
 | GET | `/api/auth/boostify/login` | — | Start Boostify OAuth |
 | GET | `/api/auth/boostify/callback` | — | Exchange code → session → redirect |
 | GET | `/api/auth/me` | optional | Current user or `null` |
@@ -104,7 +105,7 @@ app/
 
 ### Generation flow (`POST /api/generate`)
 1. Rate limit (`RATE_LIMIT_PER_HOUR`, default 30/h per user).
-2. Resolve tile + cost (image = 1 TEKI, video = 2 TEKI).
+2. Resolve tile + cost (image = 1 TOONTOON, video = 2 TOONTOON).
 3. **Reserve** funds (`wallet.reserve`) → 402 if not enough.
 4. Run generation (optional photo → Pollinations vision, 7s timeout, graceful
    fallback → build Pollinations image URL; video → mock MP4).
@@ -134,9 +135,9 @@ it up:
 
 ## What's mocked / pending (by request)
 
-- **Generation = Pollinations** (temporary). Swap `services/content_gen.py:generate`
-  for the real generation system + services when provided. Video is a placeholder
-  MP4 (no public Pollinations video endpoint).
+- **Генерация по фото не работает по-настоящему.** `image_to_image` написан,
+  но в реестре выключен до проверки на реальных лицах: пока не ясно, узнаётся
+  ли человек на результате. Видео отключено (`video_enabled=false`).
 - **Boostify = mock** (`BOOSTIFY_MOCK=true`): OAuth returns a demo user, balance is
   `200 available / 1000 locked`, payments succeed. Real HTTP calls are already
   implemented for when Boostify is live.
@@ -148,13 +149,13 @@ it up:
 2. Token claims (`sub`, `email`, `name`, `avatar`).
 3. Are **locked** tokens spendable in-product? (mock assumes yes)
 4. Behaviour when Boostify is unreachable (block login or degrade?).
-5. Is `reason` required on charge for analytics? (we send `arteki:<type>_generate`)
+5. Is `reason` required on charge for analytics? (we send `toontoon:<type>_generate`)
 
 ---
 
 ## Verified (smoke tests)
 Magic-link login → `me` → balance(3) → generate image (balance 3→2, library +1) →
-share → public share (no auth) → video generate (2 TEKI, balance→0) → insufficient
+share → public share (no auth) → video generate (2 TOONTOON, balance→0) → insufficient
 funds (402) → free-form generate (prompt+style) → transactions. Boostify mock:
 OAuth → session → balance(200/1000) → two-phase generate. Profile rename, logout,
 account delete. Webhook: bad signature 401 / valid signature 200. Unauthenticated

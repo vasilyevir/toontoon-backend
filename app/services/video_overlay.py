@@ -32,7 +32,7 @@ import httpx
 
 from app.config import settings
 
-logger = logging.getLogger("arteki.video_overlay")
+logger = logging.getLogger("toontoon.video_overlay")
 
 UPLOAD_DIR = Path("uploads")
 

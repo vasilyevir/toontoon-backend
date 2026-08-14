@@ -1,6 +1,6 @@
 """FastAPI dependencies for auth/session resolution.
 
-The session id lives in the ``arteki-session`` cookie (name is configurable via
+The session id lives in the ``toontoon-session`` cookie (name is configurable via
 ``settings.session_cookie_name``) or in an ``Authorization: Bearer`` header —
 the web uses the first, native clients the second, and both resolve to the same
 Redis-backed session.

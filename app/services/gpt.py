@@ -1,4 +1,4 @@
-"""GPT-4o mini — two roles in the ARTEKI product.
+"""GPT-4o mini — two roles in the TOONTOON product.
 
 Role 1 — Prompt builder
   Takes a tile + user answers and returns a rich English prompt
@@ -7,11 +7,12 @@ Role 1 — Prompt builder
 
 Role 2 — Chat assistant
   Handles free-form conversation on the frontend: greets the user,
-  suggests tiles, asks follow-up questions, stays on-brand as Arteki.
+  suggests tiles, asks follow-up questions, stays on-brand as Toontoon.
   POST /api/chat uses this.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -179,7 +180,28 @@ Strict rules:
   Instead describe a clean empty area where text can be placed later.
 """
 
-_CHAT_SYSTEM = """You are Arteki, a warm, friendly AI assistant that helps people create
+# Путь с фотографией. Сцена «с нуля» здесь вредна: модель получает снимок и
+# должна его ПЕРЕРАБОТАТЬ, а не сочинить похожую картинку. Поэтому и жанр
+# текста другой — инструкция редактору, а не описание кадра.
+_EDIT_SYSTEM = """You write ONE instruction for an image editor that receives a photo of a
+real person and must restyle it. The person on the photo must remain the same person.
+
+Write ONLY the instruction (35–70 words), in English, whatever language the user writes in.
+
+Strict rules:
+- NEVER describe the person's face, age, hair colour, skin tone, body or gender.
+  The editor already has the photo; describing them invites a different-looking person.
+  Refer to them only as "the person in the photo".
+- Describe ONLY what changes: the setting, the outfit, the lighting, the mood, the camera angle.
+- If the user asks for something that would change who the person is (another face,
+  another body, a celebrity), describe the setting and outfit instead and leave the person alone.
+- NO style words, NO technical words, NO quality words — the system adds those separately.
+- NEVER use: beautiful, high quality, realistic, perfect, 4k, hd, masterpiece,
+  Pixar, Disney, Ghibli, DreamWorks.
+- No letters or text in the image. If a greeting was provided, ask for clean empty space instead.
+"""
+
+_CHAT_SYSTEM = """You are Toontoon, a warm, friendly AI assistant that helps people create
 beautiful images, postcards and videos.
 
 IMPORTANT: Always reply in English, regardless of the language the user writes in. Keep
@@ -189,11 +211,11 @@ Your users are mostly people aged 40–60 who are not very tech-savvy. Be simple
 inspiring. Write short sentences.
 
 What you can make:
-- Images (1 TEKI): Cartoon character, Cute animal, Birds, Fish, Nature, Food
-- Postcards (1 TEKI): Birthday, Jubilee, Valentine's Day, Wedding, Anniversary,
+- Images (1 TOONTOON): Cartoon character, Cute animal, Birds, Fish, Nature, Food
+- Postcards (1 TOONTOON): Birthday, Jubilee, Valentine's Day, Wedding, Anniversary,
   Mother's Day, Father's Day, Easter, Thanksgiving, New Year, Graduation, Get Well,
   Just Because, Good Morning, Good Day
-- Videos (2 TEKI): Animate a photo, Animate a pet, Cartoon character,
+- Videos (2 TOONTOON): Animate a photo, Animate a pet, Cartoon character,
   Video greeting, Living nature, Cute animal, Good morning, Inspiring video
 
 When the user describes an idea, suggest the most fitting content type.
@@ -211,8 +233,22 @@ did not mention.
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
 
+# Повторяем только быстрые отказы: лимит запросов, авария на той стороне и
+# оборванное соединение возвращаются мгновенно, поэтому вторая попытка почти
+# ничего не стоит. Таймаут не повторяем сознательно — он уже съел свои 20
+# секунд, и второй заход рискует упереться в таймаут прокси, оставив человека
+# вообще без ответа.
+_RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+_RETRY_PAUSE_SECONDS = 1.0
+
+
 async def _call(messages: list[dict], *, max_tokens: int = 300, temperature: float = 0.7) -> str:
-    """Make a chat completion call and return the assistant's text."""
+    """Make a chat completion call and return the assistant's text.
+
+    Retries once on a fast, transient failure. Падение сюда стоит дорого: без
+    промпта запрос либо отменяется, либо собирается механически, поэтому одна
+    дешёвая пересдача окупается.
+    """
     headers = {
         "Authorization": f"Bearer {settings.openai_api_key}",
         "Content-Type": "application/json",
@@ -224,9 +260,22 @@ async def _call(messages: list[dict], *, max_tokens: int = 300, temperature: flo
         "temperature": temperature,
     }
     async with httpx.AsyncClient(timeout=20) as client:
-        resp = await client.post(_OPENAI_CHAT_URL, headers=headers, json=payload)
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
+        for attempt in (1, 2):
+            try:
+                resp = await client.post(_OPENAI_CHAT_URL, headers=headers, json=payload)
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                if attempt == 2 or exc.response.status_code not in _RETRY_STATUSES:
+                    raise
+                log.warning("OpenAI HTTP %s — повтор", exc.response.status_code)
+            except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError) as exc:
+                if attempt == 2:
+                    raise
+                log.warning("OpenAI соединение оборвалось (%s) — повтор", type(exc).__name__)
+            else:
+                return resp.json()["choices"][0]["message"]["content"].strip()
+            await asyncio.sleep(_RETRY_PAUSE_SECONDS)
+    raise RuntimeError("unreachable")  # pragma: no cover
 
 
 def _split_prompt_negative(text: str) -> tuple[str, str]:
@@ -259,7 +308,7 @@ async def build_prompt(
     answers: dict[str, str],
     free_text: Optional[str],
     style: Optional[str],
-    photo_description: Optional[str] = None,
+    editing: bool = False,
 ) -> tuple[str, str]:
     """Return ``(prompt, negative_prompt)`` for the image generator.
 
@@ -301,9 +350,6 @@ async def build_prompt(
                 instruction = card_prompts.build_structured_instruction(tpl, named)
                 if free_text:
                     instruction += f"\n\nEXTRA USER NOTE (fold into the scene mood): {free_text}"
-        if photo_description:
-            instruction += f"\n\nREFERENCE PHOTO SHOWS: {photo_description}"
-
         messages = [
             {"role": "system", "content": _TEMPLATING_SYSTEM},
             {"role": "user", "content": instruction},
@@ -319,6 +365,11 @@ async def build_prompt(
     # ── Everything else: scene + style anchor + technical block ──────────────
     if style:
         style_key = prompt_style.map_style(style)
+    elif editing:
+        # Со снимком человека мультяшный якорь выбирать нельзя: «живой субъект»
+        # на фотографии — это всегда человек, и автовыбор уводил бы каждое фото
+        # в мультик независимо от того, что обещал экран.
+        style_key = "realistic"
     else:
         # Auto-select anchor: living subjects → 3d_cartoon; objects/scenes → scene_cozy.
         # This prevents the character-design anchor from biasing inanimate generations
@@ -345,13 +396,11 @@ async def build_prompt(
                 parts.append(f"{q.text} {val}")
     if free_text:
         parts.append(f"User idea: {free_text}")
-    if photo_description:
-        parts.append(f"Reference photo shows: {photo_description}")
 
     user_msg = "\n".join(parts) or "A warm, friendly greeting image"
 
     messages = [
-        {"role": "system", "content": _SCENE_SYSTEM},
+        {"role": "system", "content": _EDIT_SYSTEM if editing else _SCENE_SYSTEM},
         {"role": "user", "content": user_msg},
     ]
     try:
@@ -361,8 +410,11 @@ async def build_prompt(
 
     if not scene:
         return "", ""
-    prompt = prompt_style.assemble(scene, style_key=style_key, is_text=is_text)
-    log.info("[build_prompt] style=%s → key=%s | scene: %s", style, style_key, scene[:120])
+    prompt = prompt_style.assemble(
+        scene, style_key=style_key, is_text=is_text, editing=editing
+    )
+    log.info("[build_prompt] style=%s → key=%s editing=%s | scene: %s",
+             style, style_key, editing, scene[:120])
     log.info("[build_prompt] final_prompt: %s", prompt[:200])
     return prompt, prompt_style.NEGATIVE_PROMPT
 
@@ -375,13 +427,13 @@ async def chat_reply(
     message: str,
     history: list[dict],
 ) -> str:
-    """Return Arteki's reply to a user message in the chat.
+    """Return Toontoon's reply to a user message in the chat.
 
     ``history`` is a list of ``{"role": "user"|"assistant", "content": str}``.
     Falls back to a static reply if OpenAI is not configured.
     """
     if not settings.openai_enabled:
-        return "Hi! I'm Arteki. What would you like to create — a postcard, an image, or a video?"
+        return "Hi! I'm Toontoon. What would you like to create — a postcard, an image, or a video?"
 
     messages = [{"role": "system", "content": _CHAT_SYSTEM}]
     messages.extend(history[-10:])  # Keep last 10 turns for context.

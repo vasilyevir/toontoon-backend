@@ -11,7 +11,7 @@ from botocore.exceptions import ClientError
 from app.config import settings
 from app.storage.base import Storage
 
-logger = logging.getLogger("arteki.storage")
+logger = logging.getLogger("toontoon.storage")
 
 
 class S3Storage(Storage):

@@ -21,7 +21,7 @@ DEFAULT_STYLE = "3d_cartoon"
 _TECHNICAL = (
     "Technical: warm cinematic lighting with soft rim light and gentle sun rays, "
     "soft natural shadows, glossy smooth cartoon materials with rich surface texture "
-    "(not flat, not matte plastic), ray-traced global illumination, high quality 3D render, "
+    "(not flat, not matte plastic), ray-traced GI, high quality 3D render, "
     "8k resolution, crisp sharp details, clean anti-aliased edges, "
     "soft depth of field with gentle background bokeh"
 )
@@ -65,11 +65,32 @@ PRESETS: dict[str, dict[str, str]] = {
         ),
         "technical": _TECHNICAL,
     },
+    # Полуреалистичная анимация: пропорции и кожа ближе к живым, но это
+    # по-прежнему рисунок. Между "3d_cartoon" (игрушечные формы, огромные
+    # глаза) и "realistic" (фотография) — и именно сюда попадает то, что люди
+    # называют «как в мультфильме, только реальнее».
+    "semi_real_3d": {
+        "anchor": (
+            "stylized 3D animated feature film look with lifelike proportions, "
+            "softly rendered skin with visible texture and freckles, "
+            "expressive but naturally sized eyes with clear catchlights, "
+            "flowing detailed hair with individual strands catching the light, "
+            "warm cinematic colour grading, painterly rendering, "
+            "not toy-like, not plastic, not photographic"
+        ),
+        "technical": (
+            "Technical: warm golden hour light with strong rim light, "
+            "soft volumetric glow, shallow depth of field, "
+            "high quality render, crisp details, clean edges"
+        ),
+    },
     "anime": {
         "anchor": (
             "anime illustration style, clean cel shading, expressive large eyes, "
             "vibrant yet soft color palette, detailed hand-drawn linework, "
-            "Studio Ghibli inspired warmth"
+            # Здесь стояло «Studio Ghibli inspired warmth» — бренд-фильтр вырезал
+            # название и оставлял «Studio  inspired warmth». Описание вместо имени.
+            "warm hand-painted backgrounds with nostalgic pastoral mood"
         ),
         "technical": (
             "Technical: clean crisp lineart, soft cinematic lighting, high resolution, "
@@ -118,6 +139,28 @@ NEGATIVE_PROMPT = (
     "subject too small in frame, bad framing, empty wasted composition, "
     "text, letters, words, captions, watermark, signature, logo"
 )
+
+# Негатив для рисованных стилей.
+#
+# Общий список запрещает «flat 2D illustration, flat vector art, matte plastic
+# look» — для фотографии это правильно, а для аниме и мультика это инструкция
+# против самой задачи: модель получала «нарисуй» и «не рисуй» одновременно и
+# выдавала фотографию. Оставлены только запреты, осмысленные и для рисунка.
+NEGATIVE_DRAWN = (
+    "distorted anatomy, creepy expressions, dead eyes, blank stare, "
+    "messy cluttered background, small unreadable text, "
+    "watermarks, signatures, cropped limbs, extra fingers or limbs, "
+    "low quality, jpeg artifacts, scary dark atmosphere, "
+    "dull muted colors, washed out palette, muddy dirty colors, oversaturated acidic neon, "
+    "stiff lifeless pose, flat dull expression, boring symmetrical static stance, "
+    "subject too small in frame, bad framing, empty wasted composition, "
+    "text, letters, words, captions, watermark, signature, logo"
+)
+
+
+def negative_for(style_key: str) -> str:
+    return NEGATIVE_DRAWN if is_drawn(style_key) else NEGATIVE_PROMPT
+
 
 # Categories whose tiles place a text/greeting on the image.
 _TEXT_CATEGORIES = {"postcard", "announcement"}
@@ -169,11 +212,19 @@ def is_text_tile(category: str | None) -> bool:
     return category in _TEXT_CATEGORIES if category else False
 
 
-def assemble(scene: str, *, style_key: str, is_text: bool) -> str:
-    """Wrap a scene description with the style anchor (first) and technical (last)."""
+def assemble(scene: str, *, style_key: str, is_text: bool, editing: bool = False,
+             subject: str = "person") -> str:
+    """Wrap a scene description with the style anchor (first) and technical (last).
+
+    На редактировании снимка порядок другой: первым идёт требование сохранить
+    человека, и только потом стиль. Модель читает промпт слева направо, а
+    сходство лица — то единственное, ради чего фотографию вообще прислали;
+    начинать с описания стиля значит предлагать нарисовать заново.
+    """
     preset = PRESETS.get(style_key, PRESETS[DEFAULT_STYLE])
     scene = scene.strip().strip(".").strip()
-    parts = [preset["anchor"], scene]
+    parts = [identity_clause(subject=subject, drawn=is_drawn(style_key))] if editing else []
+    parts += [preset["anchor"], scene]
     if is_text:
         parts.append(LAYOUT_BLOCK)
     parts.append(preset["technical"])
@@ -192,6 +243,64 @@ QUALITY_BLOCK = (
     "vivid harmonious colors, cinematic composition"
 )
 
+# ─── Путь с фотографией ──────────────────────────────────────────────────────
+
+# Первое, что читает модель на редактировании снимка. Формулировка нарочно
+# избыточна: у третьего поколения Kling нет ручки на лицо, и сходство держится
+# только текстом, поэтому перечислено по пунктам, что именно менять нельзя.
+IDENTITY_CLAUSE = (
+    "keep the same person from the reference photo: same face and facial features, "
+    "same hairstyle and hair colour, same skin tone, same body type, same age and gender, "
+    "clearly recognisable as the same individual, do not replace them with another person"
+)
+
+# То же для питомца. Отдельный текст, а не правка общего: «same age and gender,
+# same skin tone» на кошке — это инструкция ни о чём, а модель всё равно её
+# читает и тратит на неё внимание.
+PET_IDENTITY_CLAUSE = (
+    "keep the same animal from the reference photo: same breed and body shape, "
+    "same fur colour and markings, same eye colour, same face, "
+    "clearly recognisable as the same pet, do not replace it with another animal"
+)
+
+
+# То же требование для рисованных стилей.
+#
+# Полного совпадения черт у нарисованного лица не бывает, и требовать «то же
+# лицо, тот же тон кожи» — значит тянуть модель обратно в фотографию. Здесь
+# перечислено то, по чему человек узнаёт себя на рисунке: причёска, форма лица,
+# телосложение, одежда.
+DRAWN_IDENTITY_CLAUSE = (
+    "keep the same person from the reference photo recognisable as a drawn character: "
+    "same hairstyle and hair colour, same face shape, same build, same clothing, "
+    "do not replace them with a different character"
+)
+
+
+def identity_clause(*, subject: str, drawn: bool = False) -> str:
+    if subject == "pet":
+        return PET_IDENTITY_CLAUSE
+    return DRAWN_IDENTITY_CLAUSE if drawn else IDENTITY_CLAUSE
+
+
+# Стили, которые рисуют, а не снимают. Всё, кроме фотореалистичного якоря.
+def is_drawn(style_key: str) -> bool:
+    return style_key != "realistic"
+
+
+# Запреты для фото-пути у OpenAI. Отдельный набор, потому что общий начинается
+# со слов «friendly non-scary cartoon face»: на снимке живого человека это
+# инструкция ровно в обратную сторону от того, что обещает экран.
+PHOTO_VISUAL_GUARDS = (
+    "photorealistic result, natural realistic skin texture with pores and fine detail, "
+    "correct anatomy with five fingers, natural facial proportions, "
+    "subject large and clear in frame, tidy uncluttered background, "
+    "clean natural colour grading, "
+    "NO text NO letters NO words NO watermark in the image, "
+    "not a cartoon, not an illustration, not a 3D render"
+)
+
+
 # For OpenAI Images API — that API ignores negative_prompt, so we embed guards in the positive.
 OPENAI_VISUAL_GUARDS = (
     "clean correct anatomy with five fingers, friendly non-scary cartoon face, "
@@ -201,6 +310,11 @@ OPENAI_VISUAL_GUARDS = (
     "NO text NO letters NO words NO watermark in the image, "
     "glossy textured surfaces (not flat, not matte plastic)"
 )
+
+
+def guards_for(*, editing: bool) -> str:
+    """Какие запреты дописать в промпт: путь со снимком отличается от рисунка."""
+    return PHOTO_VISUAL_GUARDS if editing else OPENAI_VISUAL_GUARDS
 
 # VIS-2 — Named palettes per occasion/type
 PALETTES: dict[str, str] = {

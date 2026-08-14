@@ -27,8 +27,8 @@ router = APIRouter(prefix="/api/app", tags=["app"])
 
 
 class AppConfig(BaseModel):
-    image_teki_cost: int
-    video_teki_cost: int
+    image_toontoon_cost: int
+    video_toontoon_cost: int
     push_enabled: bool
     google_enabled: bool
     apple_enabled: bool
@@ -98,8 +98,8 @@ async def bootstrap(
         shots=[_style(s) for s in shots],
         messages=messages,
         config=AppConfig(
-            image_teki_cost=settings.image_teki_cost,
-            video_teki_cost=settings.video_teki_cost,
+            image_toontoon_cost=settings.image_toontoon_cost,
+            video_toontoon_cost=settings.video_toontoon_cost,
             push_enabled=settings.push_enabled,
             google_enabled=settings.google_enabled,
             apple_enabled=settings.apple_enabled,

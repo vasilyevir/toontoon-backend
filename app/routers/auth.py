@@ -78,7 +78,7 @@ async def create_guest(
     await wallet_repo.grant(
         db,
         user.id,
-        amount=settings.signup_teki_balance,
+        amount=settings.signup_toontoon_balance,
         bucket="free",
         reason="signup",
         idempotency_key=f"signup:{user.id}",

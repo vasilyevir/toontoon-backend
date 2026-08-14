@@ -1,7 +1,7 @@
 """Server-side chat/session history.
 
 Until now, "chats" only existed in the WEB frontend's ``localStorage``
-(``arteki_chat_history`` + ``arteki_chat_msgs_{id}``, see
+(``toontoon_chat_history`` + ``toontoon_chat_msgs_{id}``, see
 ``gen-frontend/src/app/generate/page.tsx``) — the backend only persisted
 individual ``Generation`` records, with no concept of a conversation/session
 grouping them together. That's invisible to any other client (native app,

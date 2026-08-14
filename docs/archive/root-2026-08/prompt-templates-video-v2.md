@@ -2,7 +2,7 @@
 
 Версия: 2.0 | Дата: 2026-06-18 | Статус: Approved-draft
 
-Полный фреймворк видео-генерации Arteki: все 8 видео-тайлов + свободный ввод.
+Полный фреймворк видео-генерации Toontoon: все 8 видео-тайлов + свободный ввод.
 Видео строится на той же системе стилей, что и картинки
 (prompt-templates-pictures.md, prompt-templates-cards.md): те же STYLE_3D / SCENE_COZY /
 SCENE_EPIC, TECHNICAL, NEGATIVE, паспорт субъекта (prompt-semantic-attributes.md).
@@ -562,7 +562,7 @@ LLM превращает в уютную волшебную небылицу (ф
 | `textOverlay` | пост-оверлей реальным шрифтом, в Seedance не уходит |
 | фото юзера (группа C) | `first_frame_url` = фото (image-to-video); `prompt` = motion-пресет |
 
-Точный контракт createTask/recordInfo, цена, поллинг, TEKI — в video-flow.md.
+Точный контракт createTask/recordInfo, цена, поллинг, TOONTOON — в video-flow.md.
 
 ---
 
@@ -576,7 +576,7 @@ LLM превращает в уютную волшебную небылицу (ф
 | `src/lib/redis.ts` | `Generation.taskId?` |
 | `src/lib/seedance.ts` (новый) | клиент kie.ai: createTask (text-to-video / image-to-video для C) + маппинг |
 | `src/app/api/video/route.ts` (новый) | собрать `prompt = anchor + ". " + motion` -> Seedance text-to-video; группа C -> image-to-video от фото; режимы STRUCTURED/FREE_TEXT/freetext |
-| `src/app/api/video/status/route.ts` (новый) | recordInfo -> Generation, списание TEKI на success |
+| `src/app/api/video/status/route.ts` (новый) | recordInfo -> Generation, списание TOONTOON на success |
 | `src/app/chat/page.tsx` + `chatReducer.ts` | вопросы, граничные баблы, видео-бабл, фото-аплоад для C |
 | env | `KIE_API_KEY` |
 
@@ -597,4 +597,4 @@ LLM превращает в уютную волшебную небылицу (ф
 - [ ] Группа C: фото обязательно; `first_frame_url` = фото юзера; `prompt` = motion-пресет
 - [ ] Нелогичный свободный ввод -> волшебная небылица (не переспрашиваем)
 - [ ] LLM отдаёт валидный JSON по §4.2 (Seedance `prompt` = anchor + motion)
-- [ ] TEKI списываются только при `state:success`
+- [ ] TOONTOON списываются только при `state:success`
