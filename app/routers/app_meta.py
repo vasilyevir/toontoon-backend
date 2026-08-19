@@ -74,7 +74,7 @@ async def bootstrap(
         u, session = ctx
         user = PublicUser.from_row(u, provider=session.provider)
         balance = await wallet.get_balance(db, u.id)
-        rows = await chat_repo.list_messages(db, u.id, limit=20)
+        rows = await chat_repo.list_messages(db, u, limit=20)
         messages = [
             {
                 "id": r.id,

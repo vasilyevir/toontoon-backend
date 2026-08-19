@@ -151,3 +151,43 @@ PHOTOS_NEEDED: dict[str, int] = {"product": 2}
 
 def photos_needed(intent: str) -> int:
     return PHOTOS_NEEDED.get(intent, 1)
+
+
+# Сколько веса должна набрать просьба, чтобы за неё можно было браться.
+#
+# Полсотни — это снимок и одно тяжёлое поле, либо два тяжёлых без снимка. Ниже
+# начинается угадывание: «хочу постер» с фотографией набирает тридцать, и кадр
+# по нему выйдет каким угодно.
+#
+# Порог, а не список обязательных полей, потому что поля разного веса и
+# заменяют друг друга: сказанные техника и цвета стоят больше, чем формат,
+# и требовать формат от того, кто описал остальное, — вопрос ради вопроса.
+READY_WEIGHT = 50
+
+
+def covered_weight(known: dict[str, str], *, intent: str, has_photo: bool) -> int:
+    """Насколько описана просьба — теми же весами, что и полоса готовности."""
+    weights = WEIGHTS.get(intent, WEIGHTS[DEFAULT_INTENT])
+    total = sum(weights.get(field, 0) for field, value in known.items() if value)
+    if has_photo:
+        total += weights.get("photo", 0)
+    return total
+
+
+def is_ready(
+    known: dict[str, str],
+    *,
+    intent: str,
+    has_photo: bool,
+    asked: list[str] | None = None,
+) -> bool:
+    """Можно ли браться за кадр или сначала спросить.
+
+    Один вопрос — потолок. Не потому, что второй бесполезен, а потому, что
+    человек пришёл за картинкой, а не за анкетой: после первого уточнения
+    честнее показать кадр и дать его поправить, чем выяснять всё до конца на
+    словах. Поправить готовое дешевле, чем вообразить несуществующее.
+    """
+    if asked:
+        return True
+    return covered_weight(known, intent=intent, has_photo=has_photo) >= READY_WEIGHT

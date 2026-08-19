@@ -814,9 +814,17 @@ async def extract_slots(text: str, slots: list[str], *,
 # ─── Что делать дальше с готовым кадром ──────────────────────────────────────
 
 _IDEAS_SYSTEM = (
-    "You are shown the prompt that produced a picture, and you propose what to "
-    "change next. Your reader is not a designer: the hardest part for them is "
-    "not tapping, it is knowing what to ask for.\n"
+    "You are shown the prompt that produced a picture, and you answer the "
+    "person who just got it: a short warm line about the picture that ends by "
+    "opening the door to more, then what could be changed next. Your reader is "
+    "not a designer: the hardest part for them is not tapping, it is knowing "
+    "what to ask for.\n"
+    "Format, exactly five lines and nothing else:\n"
+    "Line 1 — one sentence, twelve words at most, ending in a question that "
+    "invites another go: «That turned out sharp. Want to push it further?». "
+    "Name what is actually in this picture — a line that fits any result is "
+    "not worth reading.\n"
+    "Lines 2 to 5 — four ideas.\n"
     "Rules:\n"
     "- Write exactly four ideas, one per line, nothing else. No numbering, no "
     "bullets, no quotes, no headings.\n"
@@ -833,14 +841,19 @@ _IDEAS_SYSTEM = (
 )
 
 
-async def next_step_ideas(*, prompt: str, intent: str | None = None) -> list[str]:
-    """Четыре готовые правки к кадру.
+async def next_step_ideas(*, prompt: str, intent: str | None = None) -> tuple[str, list[str]]:
+    """Слово о готовом кадре и четыре правки к нему.
 
-    Пустой список — законный ответ: модель отказала или промпта нет. Приложение
-    тогда показывает обычные кнопки уточнений, и человек не видит поломки.
+    Слово — с открытым вопросом: разговор не должен заканчиваться картинкой.
+    Человек получил кадр и остаётся один на один с пустым полем ввода; вопрос
+    «хотите что-нибудь с ней сделать?» стоит дешевле любой кнопки и работает
+    лучше — на него отвечают.
+
+    Пустой ответ законен: модель отказала или промпта нет. Приложение тогда
+    показывает обычные кнопки уточнений, и человек не видит поломки.
     """
     if not settings.openai_enabled or not prompt.strip():
-        return []
+        return "", []
 
     what = f"This is a {intent}." if intent else ""
     try:
@@ -854,17 +867,27 @@ async def next_step_ideas(*, prompt: str, intent: str | None = None) -> list[str
             model=settings.slot_extraction_model or None,
         )
     except Exception:  # noqa: BLE001 — без идей экран живёт, без кадра нет
-        return []
+        return "", []
 
+    lines = _clean_idea_lines(raw, limit=5)
+    if not lines:
+        return "", []
+    return lines[0], lines[1:]
+
+
+def _clean_idea_lines(raw: str, *, limit: int = 4) -> list[str]:
+    """Строки предложений без нумерации и маркеров.
+
+    Модель то нумерует, то ставит маркеры, сколько ни проси. Снимаем это кодом,
+    а не очередной строкой в промпте: правило, которое можно выполнить кодом, в
+    промпте только занимает внимание.
+    """
     ideas = []
     for line in raw.splitlines():
-        # Модель то нумерует, то ставит маркеры, сколько ни проси. Снимаем это
-        # здесь, а не очередной строкой в промпте: правило, которое можно
-        # выполнить кодом, в промпте только занимает внимание.
         cleaned = line.strip().lstrip("-•*0123456789.） )").strip().strip('"').strip()
         if len(cleaned) > 3:
             ideas.append(cleaned)
-    return ideas[:4]
+    return ideas[:limit]
 
 
 # ─── Кто на приложенных снимках ──────────────────────────────────────────────
@@ -933,3 +956,117 @@ async def reference_roles(images: list[tuple[bytes, str]], message: str) -> list
     if len(roles) != len(images) or "person" not in roles:
         return []
     return roles
+
+# ─── Что можно сделать с приложенным снимком ─────────────────────────────────
+
+_PHOTO_IDEAS_SYSTEM = (
+    "You are shown a photograph a person just attached, and you answer it: "
+    "first a remark about the picture itself, then what you could make out of "
+    "it. They have not said a word yet — the picture is the whole request so "
+    "far, and your lines are the first thing they read.\n"
+    "Format, exactly five lines and nothing else:\n"
+    "Line 1 — one warm human sentence about THIS picture, twelve words at most. "
+    "Notice something real: the light, the pose, the calm, the colour of the "
+    "wall. «Great portrait» fits any photograph and reads as flattery; «lovely "
+    "soft window light on that one» reads as looking.\n"
+    "Lines 2 to 5 — four ideas.\n"
+    "Rules:\n"
+    "- Exactly four ideas, one per line. No numbering, no bullets, no quotes.\n"
+    "- Each line is a finished instruction they can send as it is: «Turn this "
+    "into an anime poster in white and blue», «Put me on a rooftop at sunset "
+    "in cinematic light». Six to fourteen words.\n"
+    "- Address the person as «me» — it is their own photo.\n"
+    "- Look at what is actually in the picture and use it: what they wear, "
+    "where they are, the light, the mood. A stranger's idea would fit any "
+    "photograph; yours must fit this one.\n"
+    "- Four different directions, not four shades of one. Vary the technique "
+    "(a photograph, anime, a 3D cartoon), the setting and the purpose "
+    "(a portrait, a poster, a greeting card).\n"
+    "- If there is no person in the picture, propose what to do with the thing "
+    "or the place that is there, and never invent a person.\n"
+    "- English, plain and warm. Never name a studio, a brand or a league.\n"
+)
+
+
+async def photo_remark_and_ideas(image: bytes) -> tuple[str, list[str]]:
+    """Что сказать про снимок и что предложить с ним сделать.
+
+    Снимок — это уже просьба, просто без слов: человек приложил своё лицо и
+    ждёт, что мы предложим. Пустой экран с мигающей строкой ввода на этом месте
+    возвращает его к чистому листу, а лист — самая дорогая часть работы.
+
+    Реплика идёт первой строкой, потому что разговор начинается с ответа на
+    показанное, а не со списка услуг. «Хороший портрет» подходит к любой
+    фотографии и читается как лесть; сказать про свет из окна — значит
+    посмотреть.
+
+    Пустой ответ законен: зрение недоступно или отказало. Тогда человек просто
+    пишет сам, как писал бы всегда.
+    """
+    if not settings.openai_enabled or not image:
+        return "", []
+
+    small = base64.b64encode(storage_images.preview(image, side=512)).decode()
+    try:
+        raw = await _call(
+            [
+                {"role": "system", "content": _PHOTO_IDEAS_SYSTEM},
+                {"role": "user", "content": [
+                    {"type": "text", "text": "Here is the photograph."},
+                    {"type": "image_url",
+                     "image_url": {"url": f"data:image/jpeg;base64,{small}"}},
+                ]},
+            ],
+            max_tokens=260,
+            temperature=0.8,
+            model=settings.slot_extraction_model or None,
+        )
+    except Exception:  # noqa: BLE001 — без идей экран живёт
+        return "", []
+
+    lines = _clean_idea_lines(raw, limit=5)
+    if not lines:
+        return "", []
+    # Первая строка — реплика, остальные предложения. Если модель ответила
+    # одними идеями, реплики просто не будет: выдумывать её из первой идеи
+    # значило бы предложить сделать то, что мы уже якобы разглядели.
+    return lines[0], lines[1:]
+
+_STARTER_IDEAS_SYSTEM = (
+    "A person has opened an app that makes pictures of them, and has not "
+    "attached anything or said anything yet. Propose four things worth making.\n"
+    "Rules:\n"
+    "- Exactly four lines, one idea each. No numbering, no bullets, no quotes.\n"
+    "- Each line is a finished request they could send as it is, six to "
+    "fourteen words, written as «me»: «Make an anime poster of me in white and "
+    "blue».\n"
+    "- Four different directions: a portrait, a poster, a card to send, "
+    "something playful. Vary the technique and the mood.\n"
+    "- Concrete and visual. «Something creative» is not an idea.\n"
+    "- English, plain and warm. Never name a studio, a brand or a league.\n"
+)
+
+
+async def starter_ideas() -> list[str]:
+    """С чего начать, когда нет ни снимка, ни кадра, ни слова.
+
+    Пустой экран и мигающая строка ввода — это чистый лист, а лист и есть самая
+    дорогая часть работы. Четыре готовые фразы стоят сотые доли цента и
+    отвечают на единственный вопрос, который у человека есть в эту секунду:
+    «а что тут вообще можно?»
+    """
+    if not settings.openai_enabled:
+        return []
+    try:
+        raw = await _call(
+            [
+                {"role": "system", "content": _STARTER_IDEAS_SYSTEM},
+                {"role": "user", "content": "What should I make?"},
+            ],
+            max_tokens=200,
+            temperature=0.9,
+            model=settings.slot_extraction_model or None,
+        )
+    except Exception:  # noqa: BLE001 — без идей экран живёт
+        return []
+    return _clean_idea_lines(raw)

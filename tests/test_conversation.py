@@ -249,3 +249,52 @@ def test_the_model_is_told_the_photo_is_here():
     assert "attached their photo" in directive
     assert "never ask for it again" in directive.lower()
     assert "attached their photo" not in gpt.chat_directive(c.ASK_ABOUT["format"], POSTER_SAID)
+
+
+# ─── Когда браться за кадр, а когда спросить ────────────────────────────────
+
+def test_a_described_request_is_taken_as_is():
+    """«Постер в стиле аниме, бело-сине-красный, как для NBA» плюс снимок.
+
+    Тридцать за фотографию, восемнадцать за технику, восемь за цвета, три за
+    референс — пятьдесят девять. Спрашивать после этого не о чем: человек всё
+    сказал, и следующий вопрос читается как «тебя не слушали».
+    """
+    assert c.is_ready(POSTER_SAID, intent="poster", has_photo=True)
+
+
+def test_two_words_are_not_a_request():
+    """«Хочу постер» и фотография — это тридцать из ста.
+
+    Кадр по такому выйдет каким угодно, и человек заплатит за угадывание.
+    """
+    assert not c.is_ready({}, intent="poster", has_photo=True)
+    assert c.next_gap({}, intent="poster", photo_attached=True, photo_on_file=True) == "format"
+
+
+def test_one_question_is_the_ceiling():
+    """После первого уточнения берёмся за кадр, даже если описано не всё.
+
+    Человек пришёл за картинкой, а не за анкетой: поправить готовое дешевле,
+    чем вообразить несуществующее.
+    """
+    assert not c.is_ready({}, intent="poster", has_photo=True, asked=[])
+    assert c.is_ready({}, intent="poster", has_photo=True, asked=["format"])
+
+
+def test_the_photo_counts_towards_the_description():
+    """Снимок — самая тяжёлая часть просьбы: без него кадр не про этого человека."""
+    said = {"technique": "anime", "palette": "white and blue"}
+    assert c.covered_weight(said, intent="poster", has_photo=True) == 56
+    assert c.covered_weight(said, intent="poster", has_photo=False) == 26
+    assert not c.is_ready(said, intent="poster", has_photo=False)
+
+
+def test_heavy_fields_can_replace_each_other():
+    """Порог, а не список обязательных полей.
+
+    Сказанные техника и надпись стоят больше формата — требовать формат от
+    того, кто описал остальное, значит спрашивать ради вопроса.
+    """
+    assert c.is_ready({"technique": "anime", "text": "NIKITA"},
+                      intent="poster", has_photo=True)

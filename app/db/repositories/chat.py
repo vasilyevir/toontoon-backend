@@ -25,9 +25,11 @@ async def add_message(
     role: str,
     content: Optional[str] = None,
     generation_id: Optional[str] = None,
+    media_id: Optional[str] = None,
 ) -> m.ChatMessage:
     message = m.ChatMessage(
-        user_id=user_id, role=role, content=content, generation_id=generation_id
+        user_id=user_id, role=role, content=content,
+        generation_id=generation_id, media_id=media_id,
     )
     session.add(message)
     await session.flush()
@@ -36,7 +38,7 @@ async def add_message(
 
 async def list_messages(
     session: AsyncSession,
-    user_id: str,
+    user: m.User,
     *,
     limit: int = 30,
     before: Optional[datetime] = None,
@@ -45,13 +47,21 @@ async def list_messages(
 
     The single thread grows without bound, so loading it whole is not an
     option — that is the price of dropping thread lists, and it is paid here.
+
+    «Очистка» здесь настоящая: всё, что было до неё, не показывается. Раньше
+    экран продолжал показывать старое, а модель его уже не помнила — человек
+    видел свою переписку и разговаривал с собеседником, который её забыл. Сами
+    строки остаются в базе: они привязаны к работам и к списаниям, и удалять их
+    ради вида нельзя.
     """
     stmt = (
         select(m.ChatMessage)
-        .where(m.ChatMessage.user_id == user_id)
+        .where(m.ChatMessage.user_id == user.id)
         .order_by(m.ChatMessage.created_at.desc(), m.ChatMessage.id.desc())
         .limit(limit)
     )
+    if user.chat_context_started_at is not None:
+        stmt = stmt.where(m.ChatMessage.created_at >= user.chat_context_started_at)
     if before is not None:
         stmt = stmt.where(m.ChatMessage.created_at < before)
     return (await session.scalars(stmt)).all()

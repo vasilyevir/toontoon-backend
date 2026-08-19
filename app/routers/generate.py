@@ -461,6 +461,12 @@ async def generate(
     # разговора, которого не было. Он и так лежит в истории работ, где его и
     # ищут.
     if body.from_chat:
+        # Что именно человек попросил на этот раз: уточнение, если оно было, —
+        # иначе исходная просьба. При правке кадра в треде должно стоять
+        # «сделай фон ночным», а не промпт двухчасовой давности.
+        said = (body.refine_note or body.prompt or "").strip()
+        if body.post_prompt and said:
+            await chat_repo.add_message(db, user_id=user.id, role="user", content=said)
         await chat_repo.add_message(
             db, user_id=user.id, role="assistant", generation_id=generation_id
         )

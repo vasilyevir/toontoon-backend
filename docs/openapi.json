@@ -66,6 +66,38 @@
         "title": "AppleAuthRequest",
         "type": "object"
       },
+      "AttachmentRequest": {
+        "properties": {
+          "media_id": {
+            "title": "Media Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "media_id"
+        ],
+        "title": "AttachmentRequest",
+        "type": "object"
+      },
+      "AttachmentResponse": {
+        "properties": {
+          "ideas": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Ideas",
+            "type": "array"
+          },
+          "remark": {
+            "default": "",
+            "title": "Remark",
+            "type": "string"
+          }
+        },
+        "title": "AttachmentResponse",
+        "type": "object"
+      },
       "AuthProvider": {
         "enum": [
           "magic",
@@ -277,9 +309,20 @@
             "title": "History",
             "type": "array"
           },
+          "media_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Media Id"
+          },
           "message": {
+            "default": "",
             "maxLength": 2000,
-            "minLength": 1,
             "title": "Message",
             "type": "string"
           },
@@ -289,9 +332,6 @@
             "type": "boolean"
           }
         },
-        "required": [
-          "message"
-        ],
         "title": "ChatRequest",
         "type": "object"
       },
@@ -307,6 +347,11 @@
               }
             ],
             "title": "Ask About"
+          },
+          "ready": {
+            "default": false,
+            "title": "Ready",
+            "type": "boolean"
           },
           "reply": {
             "title": "Reply",
@@ -468,6 +513,11 @@
               }
             ],
             "title": "Photo Url"
+          },
+          "post_prompt": {
+            "default": false,
+            "title": "Post Prompt",
+            "type": "boolean"
           },
           "prompt": {
             "anyOf": [
@@ -635,6 +685,11 @@
             },
             "title": "Ideas",
             "type": "array"
+          },
+          "remark": {
+            "default": "",
+            "title": "Remark",
+            "type": "string"
           }
         },
         "required": [
@@ -1088,6 +1143,17 @@
       },
       "StoredMessage": {
         "properties": {
+          "attachment_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachment Url"
+          },
           "content": {
             "anyOf": [
               {
@@ -2303,9 +2369,85 @@
         ]
       }
     },
+    "/api/chat/attachment": {
+      "post": {
+        "description": "Снимок кладётся в переписку и сразу получает ответ — четыре идеи.\n\nОдной ручкой, а не двумя, потому что для человека это одно событие: он\nприложил фотографию и смотрит, что мы скажем. Две ручки означали бы две\nзадержки подряд, и вторую он проводил бы, глядя на своё фото в пустом треде.\n\nРеплики за него мы при этом не сочиняем: раньше приложение отправляло\nвместо него «Here is my photo.» — только чтобы пройти проверку на непустой\nтекст, — и в переписке стояло то, чего он не писал.",
+        "operationId": "attachment_api_chat_attachment_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "arteki-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Arteki-Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AttachmentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Attachment",
+        "tags": [
+          "chat"
+        ]
+      }
+    },
     "/api/chat/clear": {
       "post": {
-        "description": "Start a new conversation.\n\nThe transcript stays and can be scrolled back to — only the model's memory\nis reset. The client should draw a visible divider at this point, otherwise\nscrolling up and finding a conversation the assistant \"forgot\" looks broken.",
+        "description": "Start a new conversation.\n\nЭкран после этого пуст, а строки остаются в базе: они привязаны к работам и\nк списаниям TOONTOON, и удалять их ради вида нельзя. Раньше очистка сбрасывала\nтолько память модели, а переписка оставалась на экране — человек видел свой\nразговор и говорил с собеседником, который его забыл.",
         "operationId": "clear_api_chat_clear_post",
         "parameters": [
           {
@@ -3376,6 +3518,72 @@
         ]
       }
     },
+    "/api/ideas/starters": {
+      "get": {
+        "description": "С чего начать, когда ещё ничего нет.\n\nПустой экран и мигающая строка ввода — это чистый лист, а лист и есть самая\nдорогая часть работы. Эти четыре фразы отвечают на единственный вопрос,\nкоторый у человека сейчас есть: «а что тут вообще можно?»",
+        "operationId": "starters_api_ideas_starters_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "arteki-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Arteki-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdeasResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Starters",
+        "tags": [
+          "ideas"
+        ]
+      }
+    },
     "/api/media/{media_id}": {
       "get": {
         "description": "Return an object the caller is entitled to.\n\nEntitlement is one of two things: it is theirs, or it belongs to a\ngeneration they explicitly shared.",
@@ -3456,6 +3664,81 @@
         "summary": "Get Media",
         "tags": [
           "media"
+        ]
+      }
+    },
+    "/api/media/{media_id}/ideas": {
+      "get": {
+        "description": "Что можно сделать со снимком, который человек только что приложил.\n\nСнимок — это уже просьба, просто без слов, и отвечать на неё пустым полем\nввода значит вернуть человека к чистому листу. Здесь смотрит зрение: идеи\nдолжны цепляться за то, что на кадре, — иначе они подошли бы к любому\nснимку, а такие не читают.",
+        "operationId": "photo_ideas_api_media__media_id__ideas_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "media_id",
+            "required": true,
+            "schema": {
+              "title": "Media Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "arteki-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Arteki-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdeasResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Photo Ideas",
+        "tags": [
+          "ideas"
         ]
       }
     },

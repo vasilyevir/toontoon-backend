@@ -19,7 +19,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.models import MediaAsset
+from app.db.repositories import chat as chat_repo
 from app.db.repositories import generations as generations_repo
+from app.storage import get_storage
 from app.db.session import get_session as get_db_session
 from app.deps import Context, required_context
 from app.services import gpt as gpt_service
@@ -28,7 +31,44 @@ router = APIRouter(prefix="/api", tags=["ideas"])
 
 
 class IdeasResponse(BaseModel):
+    # Слово о кадре с открытым вопросом: разговор не должен заканчиваться
+    # картинкой. Человек получил её и остаётся один на один с пустым полем.
+    remark: str = ""
     ideas: list[str]
+
+
+@router.get("/ideas/starters", response_model=IdeasResponse)
+async def starters(_: Context = Depends(required_context)) -> IdeasResponse:
+    """С чего начать, когда ещё ничего нет.
+
+    Пустой экран и мигающая строка ввода — это чистый лист, а лист и есть самая
+    дорогая часть работы. Эти четыре фразы отвечают на единственный вопрос,
+    который у человека сейчас есть: «а что тут вообще можно?»
+    """
+    return IdeasResponse(ideas=await gpt_service.starter_ideas())
+
+
+@router.get("/media/{media_id}/ideas", response_model=IdeasResponse)
+async def photo_ideas(
+    media_id: str,
+    ctx: Context = Depends(required_context),
+    db: AsyncSession = Depends(get_db_session),
+) -> IdeasResponse:
+    """Что можно сделать со снимком, который человек только что приложил.
+
+    Снимок — это уже просьба, просто без слов, и отвечать на неё пустым полем
+    ввода значит вернуть человека к чистому листу. Здесь смотрит зрение: идеи
+    должны цепляться за то, что на кадре, — иначе они подошли бы к любому
+    снимку, а такие не читают.
+    """
+    user, _ = ctx
+    asset = await db.get(MediaAsset, media_id)
+    if asset is None or asset.user_id != user.id or asset.deleted_at is not None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Not found")
+
+    data = await get_storage().get(asset.storage_key)
+    _, ideas = await gpt_service.photo_remark_and_ideas(data or b"")
+    return IdeasResponse(ideas=ideas)
 
 
 @router.get("/generations/{gen_id}/ideas", response_model=IdeasResponse)
@@ -47,7 +87,12 @@ async def ideas(
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Not found")
 
-    return IdeasResponse(ideas=await gpt_service.next_step_ideas(
+    remark, ideas = await gpt_service.next_step_ideas(
         prompt=row.prompt or "",
         intent=(row.request_params or {}).get("intent"),
-    ))
+    )
+    # Слово ложится в переписку, идеи — нет: слово это разговор, и завтра оно
+    # должно быть на месте, а идеи живут до выбора.
+    if remark:
+        await chat_repo.add_message(db, user_id=user.id, role="assistant", content=remark)
+    return IdeasResponse(remark=remark, ideas=ideas)

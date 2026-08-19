@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +23,7 @@ from app.db import models as m
 from app.db.repositories import chat as chat_repo
 from app.db.repositories import media as media_repo
 from app.db.session import get_session as get_db_session
+from app.storage import get_storage
 from app.deps import Context, optional_context, required_context
 from app.services import conversation
 from app.services import gpt as gpt_service
@@ -36,7 +37,13 @@ class ChatMessage(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    message: str = Field(min_length=1, max_length=2000)
+    # Пустой текст законен, если приложен снимок: фотография — это уже просьба.
+    # Раньше поле требовало хотя бы один символ, и приложение сочиняло за
+    # человека реплику «Here is my photo.» — в треде стояло то, чего он не писал,
+    # а модель отвечала на выдуманное.
+    message: str = Field(default="", max_length=2000)
+    # Приложенный снимок. Строка переписки хранит его отдельно от текста.
+    media_id: Optional[str] = None
     # Kept for compatibility with the current app build, but ignored: the
     # server owns the context now and takes it from the stored thread, so a
     # client can no longer decide what the model remembers.
@@ -61,6 +68,8 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     reply: str
+    # Просьба описана достаточно — можно браться за кадр, не спрашивая больше.
+    ready: bool = False
     # О чём именно спрошено: `photo`, `format`, `technique`, … или пусто, если
     # спрашивать больше не о чем.
     #
@@ -79,6 +88,8 @@ class StoredMessage(BaseModel):
     generation_id: Optional[str] = None
     result_url: Optional[str] = None
     thumbnail_url: Optional[str] = None
+    # Снимок, приложенный человеком к этой реплике.
+    attachment_url: Optional[str] = None
     created_at: datetime
 
 
@@ -90,6 +101,7 @@ def _serialize(row: m.ChatMessage, result_media_id: Optional[str]) -> StoredMess
         generation_id=row.generation_id,
         result_url=f"/api/media/{result_media_id}" if result_media_id else None,
         thumbnail_url=f"/api/media/{result_media_id}?thumb=true" if result_media_id else None,
+        attachment_url=f"/api/media/{row.media_id}" if row.media_id else None,
         created_at=row.created_at,
     )
 
@@ -106,9 +118,14 @@ async def chat(
     practice this only happens for a probe or a browser without one; nothing is
     stored then.
     """
+    if not body.message.strip():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Say something first.")
+
     if ctx is None:
+        # Без сессии мы ничего не разбирали, и «готово» тут означало бы
+        # «не считали» — а приложение прочитает его как «запускай».
         reply = await gpt_service.chat_reply(message=body.message, history=[])
-        return ChatResponse(reply=reply)
+        return ChatResponse(reply=reply, ready=False)
 
     user, _ = ctx
     history = await chat_repo.context_messages(db, user, limit=settings.chat_context_messages)
@@ -144,9 +161,61 @@ async def chat(
         photo_attached=body.photo_attached,
     )
 
-    await chat_repo.add_message(db, user_id=user.id, role="user", content=body.message)
+    await chat_repo.add_message(db, user_id=user.id, role="user",
+                                content=body.message or None, media_id=body.media_id)
     await chat_repo.add_message(db, user_id=user.id, role="assistant", content=reply)
-    return ChatResponse(reply=reply, ask_about=gap)
+    return ChatResponse(
+        reply=reply,
+        ask_about=gap,
+        ready=conversation.is_ready(
+            known,
+            intent=intent,
+            has_photo=body.photo_attached or await media_repo.has_upload(db, user.id),
+            asked=body.asked,
+        ),
+    )
+
+
+class AttachmentRequest(BaseModel):
+    media_id: str
+
+
+class AttachmentResponse(BaseModel):
+    # Что мы сказали про сам снимок. Разговор начинается с ответа на
+    # показанное, а не со списка услуг.
+    remark: str = ""
+    ideas: list[str] = []
+
+
+@router.post("/chat/attachment", response_model=AttachmentResponse)
+async def attachment(
+    body: AttachmentRequest,
+    ctx: Context = Depends(required_context),
+    db: AsyncSession = Depends(get_db_session),
+) -> AttachmentResponse:
+    """Снимок кладётся в переписку и сразу получает ответ — четыре идеи.
+
+    Одной ручкой, а не двумя, потому что для человека это одно событие: он
+    приложил фотографию и смотрит, что мы скажем. Две ручки означали бы две
+    задержки подряд, и вторую он проводил бы, глядя на своё фото в пустом треде.
+
+    Реплики за него мы при этом не сочиняем: раньше приложение отправляло
+    вместо него «Here is my photo.» — только чтобы пройти проверку на непустой
+    текст, — и в переписке стояло то, чего он не писал.
+    """
+    user, _ = ctx
+    asset = await db.get(m.MediaAsset, body.media_id)
+    if asset is None or asset.user_id != user.id or asset.deleted_at is not None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Photo not found")
+
+    await chat_repo.add_message(db, user_id=user.id, role="user", media_id=asset.id)
+    data = await get_storage().get(asset.storage_key)
+    remark, ideas = await gpt_service.photo_remark_and_ideas(data or b"")
+    # Реплика ложится в переписку, идеи — нет. Реплика это разговор, и она
+    # должна быть на месте завтра; идеи живут до выбора и после него бессмысленны.
+    if remark:
+        await chat_repo.add_message(db, user_id=user.id, role="assistant", content=remark)
+    return AttachmentResponse(remark=remark, ideas=ideas)
 
 
 @router.get("/chat/messages", response_model=list[StoredMessage])
@@ -157,7 +226,7 @@ async def messages(
     before: Optional[datetime] = Query(default=None, description="Курсор: created_at предыдущей страницы"),
 ) -> list[StoredMessage]:
     user, _ = ctx
-    rows = await chat_repo.list_messages(db, user.id, limit=limit, before=before)
+    rows = await chat_repo.list_messages(db, user, limit=limit, before=before)
 
     # Results are rendered inline in the thread, so a message that produced one
     # carries its media link.
@@ -184,9 +253,10 @@ async def clear(
 ) -> dict:
     """Start a new conversation.
 
-    The transcript stays and can be scrolled back to — only the model's memory
-    is reset. The client should draw a visible divider at this point, otherwise
-    scrolling up and finding a conversation the assistant "forgot" looks broken.
+    Экран после этого пуст, а строки остаются в базе: они привязаны к работам и
+    к списаниям TOONTOON, и удалять их ради вида нельзя. Раньше очистка сбрасывала
+    только память модели, а переписка оставалась на экране — человек видел свой
+    разговор и говорил с собеседником, который его забыл.
     """
     user, _ = ctx
     await chat_repo.clear_context(db, user.id)

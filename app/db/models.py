@@ -465,6 +465,10 @@ class ChatMessage(Base):
     role: Mapped[str] = mapped_column(String(16), nullable=False)  # user | assistant
     content: Mapped[Optional[str]] = mapped_column(Text)
     generation_id: Mapped[Optional[str]] = mapped_column(ForeignKey("generations.id"))
+    # Приложенный снимок. Отдельным полем, а не ссылкой в тексте: `content`
+    # уезжает модели как реплика человека, и `/api/media/med_…` она прочитала бы
+    # как то, что он сказал.
+    media_id: Mapped[Optional[str]] = mapped_column(ForeignKey("media_assets.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=_now, nullable=False)
 
     __table_args__ = (Index("ix_chat_messages_user_created", "user_id", "created_at"),)
