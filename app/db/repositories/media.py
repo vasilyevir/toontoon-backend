@@ -30,6 +30,57 @@ async def find_upload_by_hash(
     return await session.scalar(stmt)
 
 
+async def has_upload(session: AsyncSession, user_id: str) -> bool:
+    """Присылал ли человек когда-нибудь свой снимок.
+
+    Спрашивается в разговоре: тому, кто уже делал кадры со своим лицом, стоит
+    напомнить приложить фотографию, а тому, кто ни разу, — не стоит. Разница
+    между напоминанием и приставанием ровно в этом факте.
+    """
+    stmt = select(m.MediaAsset.id).where(
+        m.MediaAsset.user_id == user_id,
+        m.MediaAsset.kind == "upload",
+        m.MediaAsset.deleted_at.is_(None),
+    ).limit(1)
+    return await session.scalar(stmt) is not None
+
+
+async def last_person_photo(session: AsyncSession, user_id: str) -> Optional[m.MediaAsset]:
+    """Снимок, который человек последним использовал как себя.
+
+    Не «последняя загрузка»: загрузить он мог образец стиля или чужую картинку.
+    Использованным как себя считается тот, что уехал исходником генерации, —
+    это факт, а не догадка. Если таких нет, берём последнюю загрузку: человек
+    её зачем-то прислал, и других кандидатов у нас всё равно нет.
+    """
+    used = (
+        select(m.MediaAsset)
+        .join(m.Generation, m.Generation.source_media_id == m.MediaAsset.id)
+        .where(
+            m.MediaAsset.user_id == user_id,
+            m.MediaAsset.kind == "upload",
+            m.MediaAsset.deleted_at.is_(None),
+        )
+        .order_by(m.Generation.created_at.desc())
+        .limit(1)
+    )
+    asset = await session.scalar(used)
+    if asset is not None:
+        return asset
+
+    latest = (
+        select(m.MediaAsset)
+        .where(
+            m.MediaAsset.user_id == user_id,
+            m.MediaAsset.kind == "upload",
+            m.MediaAsset.deleted_at.is_(None),
+        )
+        .order_by(m.MediaAsset.created_at.desc())
+        .limit(1)
+    )
+    return await session.scalar(latest)
+
+
 async def save_image(
     session: AsyncSession,
     *,

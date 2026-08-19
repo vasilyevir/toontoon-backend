@@ -62,13 +62,6 @@ async def seed_plans() -> None:
 # а в том, узнаётся ли человек (CH-19).
 PROVIDERS = [
     ("openai_images", ["text_to_image"], "gpt-image-1", 10, True),
-    # Kling — основной кандидат на «твоё фото в этом стиле». Обе строки
-    # выключены: сперва прогон на портретах, потом прод.
-    #   kling     — третья версия, основной поток с референсами.
-    #   kling_v2  — вторая, про запас: та же схема запроса, другое качество
-    #               и другая цена.
-    ("kling", ["text_to_image", "image_to_image"], "kling-v3", 5, False),
-    ("kling_v2", ["text_to_image", "image_to_image"], "kling-v2-1", 6, False),
     ("pollinations", ["text_to_image"], "flux", 20, True),
 ]
 

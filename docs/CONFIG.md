@@ -58,18 +58,16 @@
 | `VIDEO_TOONTOON_COST` | int | `2` |
 | `POLLINATIONS_IMAGE_URL` | str | «задаётся в окружении» |
 | `POLLINATIONS_MODEL` | str | `flux` |
-| `KLING_API_KEY` | str | пусто |
-| `KLING_ACCESS_KEY` | str | пусто |
-| `KLING_SECRET_KEY` | str | пусто |
-| `KLING_BASE_URL` | str | «задаётся в окружении» |
-| `KLING_IMAGE_MODEL` | str | `kling-v3` |
-| `KLING_ASPECT_RATIO` | str | `9:16` |
-| `KLING_IMAGE_FIDELITY` | float | `0.5` |
-| `KLING_HUMAN_FIDELITY` | float | `0.8` |
-| `KLING_IMAGE_REFERENCE` | str | `face` |
-| `KLING_REQUEST_TIMEOUT` | float | `30.0` |
-| `KLING_POLL_TIMEOUT` | float | `90.0` |
-| `KLING_POLL_INTERVAL` | float | `3.0` |
+| `OPENROUTER_API_KEY` | str | пусто |
+| `OPENROUTER_BASE_URL` | str | «задаётся в окружении» |
+| `OPENROUTER_IMAGE_MODEL` | str | `google/gemini-3.1-flash-image` |
+| `OPENROUTER_ASPECT_RATIO` | str | `9:16` |
+| `OPENROUTER_RESOLUTION` | str | `1K` |
+| `OPENROUTER_OUTPUT_FORMAT` | str | `png` |
+| `OPENROUTER_QUALITY` | str | `medium` |
+| `OPENROUTER_TEXT_MODEL` | str | `openai/gpt-4o-mini` |
+| `SLOT_EXTRACTION_MODEL` | str | `google/gemini-2.5-flash` |
+| `OPENROUTER_REQUEST_TIMEOUT` | float | `180.0` |
 | `POLLINATIONS_TOKEN` | str | пусто |
 | `VIDEO_ENABLED` | bool | `False` |
 | `KIE_API_KEY` | str | пусто |

@@ -21,8 +21,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db import models as m
 from app.db.repositories import chat as chat_repo
+from app.db.repositories import media as media_repo
 from app.db.session import get_session as get_db_session
 from app.deps import Context, optional_context, required_context
+from app.services import conversation
 from app.services import gpt as gpt_service
 
 router = APIRouter(prefix="/api", tags=["chat"])
@@ -39,10 +41,35 @@ class ChatRequest(BaseModel):
     # server owns the context now and takes it from the stored thread, so a
     # client can no longer decide what the model remembers.
     history: list[ChatMessage] = Field(default_factory=list, max_length=20)
+    # Приложен ли снимок к этому запросу. Нужно, чтобы не напоминать про
+    # фотографию тому, кто её только что приложил, и напомнить тому, кто забыл.
+    photo_attached: bool = False
+    # О чём в этом разговоре уже спрашивали. Приложение знает это точно — оно
+    # получало ответ на каждый ход, — и присылает обратно, чтобы один и тот же
+    # вопрос не повторялся. Без этого отказ запирает разговор: «без надписи»
+    # слот не заполняет, и про надпись спрашивалось бы бесконечно.
+    asked: list[str] = Field(default_factory=list, max_length=16)
+    # Что человек уже выбрал руками: пропорции, техника. Приложение знает это
+    # точно — он нажал кнопку, — а разбор фразы промахивается: на голом
+    # «Landscape» он молчит.
+    #
+    # Без этого сервер считал поле незакрытым, модель спрашивала про формат
+    # второй раз, а кнопки под её вопросом показывали уже следующее поле. Человек
+    # видел вопрос про одно и варианты про другое — и отвечал не туда.
+    answers: dict[str, str] = Field(default_factory=dict, max_length=16)
 
 
 class ChatResponse(BaseModel):
     reply: str
+    # О чём именно спрошено: `photo`, `format`, `technique`, … или пусто, если
+    # спрашивать больше не о чем.
+    #
+    # Приложению это нужно, чтобы показать под ответом то, чем на него отвечают.
+    # Раньше оно показывало выбор стиля всегда — и под вопросом «хотите себя на
+    # постере?» стояли кнопки «Cartoon 3D, Cozy scene, Anime». Вопрос и ответ
+    # на одном экране не сходились, а человек должен был догадаться, что кнопки
+    # не про то.
+    ask_about: Optional[str] = None
 
 
 class StoredMessage(BaseModel):
@@ -85,11 +112,41 @@ async def chat(
 
     user, _ = ctx
     history = await chat_repo.context_messages(db, user, limit=settings.chat_context_messages)
-    reply = await gpt_service.chat_reply(message=body.message, history=history)
+
+    # О чём спрашивать — решается здесь, а не моделью. Разбор идёт по всей
+    # реплике человека в этом разговоре, а не по последнему сообщению: стиль он
+    # назвал первой фразой, и спрашивать о нём на третьей — то же самое, что не
+    # слушать вовсе.
+    said = " ".join(
+        [m["content"] for m in history if m.get("role") == "user" and m.get("content")]
+        + [body.message]
+    )
+    intent = conversation.detect_intent(said)
+    known = await gpt_service.extract_slots(said, conversation.slots_for(intent))
+    # Выбранное кнопкой сильнее разобранного из речи: это не догадка о
+    # сказанном, а сам ответ.
+    known.update({
+        field: value for field, value in body.answers.items()
+        if field in gpt_service.SLOT_MEANING and value
+    })
+    gap = conversation.next_gap(
+        known,
+        intent=intent,
+        photo_attached=body.photo_attached,
+        photo_on_file=await media_repo.has_upload(db, user.id),
+        asked=body.asked,
+    )
+    reply = await gpt_service.chat_reply(
+        message=body.message,
+        history=history,
+        ask_about=conversation.ASK_ABOUT.get(gap) if gap else None,
+        known=known,
+        photo_attached=body.photo_attached,
+    )
 
     await chat_repo.add_message(db, user_id=user.id, role="user", content=body.message)
     await chat_repo.add_message(db, user_id=user.id, role="assistant", content=reply)
-    return ChatResponse(reply=reply)
+    return ChatResponse(reply=reply, ask_about=gap)
 
 
 @router.get("/chat/messages", response_model=list[StoredMessage])

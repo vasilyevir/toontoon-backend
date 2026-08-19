@@ -20,6 +20,14 @@ class Operation(str, Enum):
     INPAINT = "inpaint"
     OUTPAINT = "outpaint"
     UPSCALE = "upscale"
+    # Восстановление старого снимка: убрать шум и царапины, вернуть цвет.
+    #
+    # Отдельная операция, а не разновидность image_to_image, потому что обещание
+    # здесь противоположное. Стилизация меняет кадр и обязана сохранить лицо;
+    # реставрация обязана сохранить ВСЁ и не имеет права ничего дорисовывать —
+    # человек пришёл за своей бабушкой, а не за похожей на неё. Промпт ей тоже
+    # не нужен, и общий негатив со списком запретов на стиль здесь бессмыслен.
+    RESTORE = "restore"
 
 
 # What each operation needs on input. The launch screen in the app is built
@@ -32,6 +40,7 @@ REQUIRED_INPUTS: dict[Operation, tuple[str, ...]] = {
     Operation.INPAINT: ("prompt", "image", "mask"),
     Operation.OUTPAINT: ("prompt", "image"),
     Operation.UPSCALE: ("image",),
+    Operation.RESTORE: ("image",),
 }
 
 
@@ -49,8 +58,22 @@ class GenerationRequest:
     # adapter rather than from the whole system.
     image: Optional[bytes] = None
     image_mime: Optional[str] = None
+    # Дополнительные снимки для многосубъектных кадров: пара, семья, человек с
+    # товаром. Первый снимок остаётся в `image` — так не пришлось переписывать
+    # весь однолицый путь, который и дальше будет основным.
+    #
+    # Порядок значим: модели связывают референсы с упоминаниями в промпте по
+    # очереди, и перестановка меняет, кто в кадре кем окажется.
+    extra_images: list[tuple[bytes, str]] = field(default_factory=list)
     mask: Optional[bytes] = None
     params: dict = field(default_factory=dict)
+
+    @property
+    def references(self) -> list[tuple[bytes, str]]:
+        """Все приложенные снимки, основной первым."""
+        if self.image is None:
+            return list(self.extra_images)
+        return [(self.image, self.image_mime or "image/jpeg"), *self.extra_images]
 
     def validate(self) -> None:
         missing = [
@@ -73,3 +96,8 @@ class GenerationResult:
     # Filled by the caller; kept here so the record of what actually happened
     # travels with the result instead of being reconstructed later.
     duration_ms: Optional[int] = None
+    # Сколько эта генерация стоила на самом деле, если провайдер сказал. У
+    # большинства цену приходится брать из прайса и умножать на догадку о
+    # размере кадра; те, кто возвращает факт, избавляют от этой арифметики —
+    # а при сравнении вендоров цена и есть половина ответа.
+    cost_usd: Optional[float] = None

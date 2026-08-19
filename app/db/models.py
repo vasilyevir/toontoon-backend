@@ -305,6 +305,35 @@ class ShotsSchedule(Base):
     style_ids: Mapped[list[str]] = mapped_column(ARRAY(String(64)), nullable=False)
 
 
+class StyleFavorite(Base):
+    """Сохранённый стиль — закладка человека в каталоге.
+
+    Хранится за пользователем, а не за устройством: закладку ставят, чтобы
+    вернуться, и «вернуться» на другом телефоне — такой же законный случай.
+    До входа приложение держит закладки у себя и при первом входе присылает их
+    сюда: с гостевой сессией они бы потерялись при переустановке.
+
+    Слияние поэтому только добавляет. Человек, ставивший закладки на двух
+    устройствах, ожидает увидеть объединение, а не то, что последний вход
+    стёр предыдущий.
+    """
+
+    __tablename__ = "style_favorites"
+
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    # Без внешнего ключа на styles: каталог переезжает файлами, стиль могут
+    # временно убрать и вернуть, и закладка не должна исчезать вместе с ним.
+    # Пропавший стиль просто не отдаётся в списке.
+    style_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (Index("ix_style_favorites_user", "user_id", "created_at"),)
+
+
 class GenerationProvider(Base):
     """Registry of models. The adapter lives in code, the switch lives here.
 

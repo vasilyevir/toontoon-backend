@@ -253,6 +253,22 @@
       },
       "ChatRequest": {
         "properties": {
+          "answers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "maxProperties": 16,
+            "title": "Answers",
+            "type": "object"
+          },
+          "asked": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 16,
+            "title": "Asked",
+            "type": "array"
+          },
           "history": {
             "items": {
               "$ref": "#/components/schemas/ChatMessage"
@@ -266,6 +282,11 @@
             "minLength": 1,
             "title": "Message",
             "type": "string"
+          },
+          "photo_attached": {
+            "default": false,
+            "title": "Photo Attached",
+            "type": "boolean"
           }
         },
         "required": [
@@ -276,6 +297,17 @@
       },
       "ChatResponse": {
         "properties": {
+          "ask_about": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ask About"
+          },
           "reply": {
             "title": "Reply",
             "type": "string"
@@ -342,6 +374,20 @@
         "title": "EventIn",
         "type": "object"
       },
+      "FavoriteIDs": {
+        "properties": {
+          "style_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 500,
+            "title": "Style Ids",
+            "type": "array"
+          }
+        },
+        "title": "FavoriteIDs",
+        "type": "object"
+      },
       "ForgotPasswordRequest": {
         "properties": {
           "email": {
@@ -366,6 +412,17 @@
             "title": "Answers",
             "type": "object"
           },
+          "aspect": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aspect"
+          },
           "chat_id": {
             "anyOf": [
               {
@@ -376,6 +433,30 @@
               }
             ],
             "title": "Chat Id"
+          },
+          "extra_photo_urls": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 8,
+            "title": "Extra Photo Urls",
+            "type": "array"
+          },
+          "from_chat": {
+            "default": true,
+            "title": "From Chat",
+            "type": "boolean"
+          },
+          "intent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intent"
           },
           "photo_url": {
             "anyOf": [
@@ -399,6 +480,33 @@
             ],
             "title": "Prompt"
           },
+          "refine": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Refinement"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "refine_note": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refine Note"
+          },
+          "roles_chosen": {
+            "default": false,
+            "title": "Roles Chosen",
+            "type": "boolean"
+          },
           "style": {
             "anyOf": [
               {
@@ -420,6 +528,14 @@
               }
             ],
             "title": "Style Id"
+          },
+          "style_ref_urls": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 4,
+            "title": "Style Ref Urls",
+            "type": "array"
           },
           "tile_id": {
             "anyOf": [
@@ -464,6 +580,11 @@
           "url": {
             "title": "Url",
             "type": "string"
+          },
+          "used_saved_photo": {
+            "default": false,
+            "title": "Used Saved Photo",
+            "type": "boolean"
           }
         },
         "required": [
@@ -504,6 +625,52 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "IdeasResponse": {
+        "properties": {
+          "ideas": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Ideas",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ideas"
+        ],
+        "title": "IdeasResponse",
+        "type": "object"
+      },
+      "IntentPlan": {
+        "description": "Как устроен разговор про одно назначение.",
+        "properties": {
+          "fields": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Fields",
+            "type": "array"
+          },
+          "photos_needed": {
+            "title": "Photos Needed",
+            "type": "integer"
+          },
+          "weights": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Weights",
+            "type": "object"
+          }
+        },
+        "required": [
+          "fields",
+          "weights",
+          "photos_needed"
+        ],
+        "title": "IntentPlan",
         "type": "object"
       },
       "LoginRequest": {
@@ -630,6 +797,41 @@
         "title": "OnboardingState",
         "type": "object"
       },
+      "ParseRequest": {
+        "properties": {
+          "slots": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 12,
+            "title": "Slots",
+            "type": "array"
+          },
+          "text": {
+            "maxLength": 1000,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "ParseRequest",
+        "type": "object"
+      },
+      "ParseResponse": {
+        "properties": {
+          "filled": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Filled",
+            "type": "object"
+          }
+        },
+        "title": "ParseResponse",
+        "type": "object"
+      },
       "Plan": {
         "properties": {
           "billing_period": {
@@ -673,6 +875,22 @@
           "weekly_quota"
         ],
         "title": "Plan",
+        "type": "object"
+      },
+      "PlanResponse": {
+        "properties": {
+          "intents": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/IntentPlan"
+            },
+            "title": "Intents",
+            "type": "object"
+          }
+        },
+        "required": [
+          "intents"
+        ],
+        "title": "PlanResponse",
         "type": "object"
       },
       "ProfileUpdate": {
@@ -762,6 +980,17 @@
         ],
         "title": "PublicUser",
         "type": "object"
+      },
+      "Refinement": {
+        "description": "Что человек хочет поправить в уже полученном кадре.\n\nСписок закрытый и составлен не из воображения, а из отказов, замеренных на\nста одиннадцати кадрах в прогоне двенадцати моделей: часть моделей молча\nвозвращает фотографию вместо рисунка, часть под сильной переделкой\nидеализирует лицо, и это два разных лечения.",
+        "enum": [
+          "more_drawn",
+          "closer_to_photo",
+          "wider_frame",
+          "different_light"
+        ],
+        "title": "Refinement",
+        "type": "string"
       },
       "RegisterRequest": {
         "properties": {
@@ -2299,6 +2528,221 @@
         ]
       }
     },
+    "/api/favorites": {
+      "get": {
+        "description": "Закладки в порядке добавления — старые первыми.",
+        "operationId": "list_favorites_api_favorites_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "arteki-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Arteki-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FavoriteIDs"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Favorites",
+        "tags": [
+          "favorites"
+        ]
+      },
+      "post": {
+        "description": "Добавить закладки и вернуть весь набор.\n\nПовторное добавление того же стиля — не ошибка, а обычное дело: то же\nприложение может прислать свой список дважды после неудачной сети.\nПоэтому конфликт по ключу игнорируется, а не поднимает исключение.",
+        "operationId": "add_favorites_api_favorites_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "arteki-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Arteki-Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FavoriteIDs"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FavoriteIDs"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Favorites",
+        "tags": [
+          "favorites"
+        ]
+      }
+    },
+    "/api/favorites/{style_id}": {
+      "delete": {
+        "description": "Убрать закладку. Отсутствие такой закладки — тоже успех: результат тот,\nкоторого просили.",
+        "operationId": "remove_favorite_api_favorites__style_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "style_id",
+            "required": true,
+            "schema": {
+              "title": "Style Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "arteki-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Arteki-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FavoriteIDs"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Favorite",
+        "tags": [
+          "favorites"
+        ]
+      }
+    },
     "/api/generate": {
       "post": {
         "description": "Two-phase generation:\n\n1. reserve TOONTOON (create payment)\n2. run the generation\n3. confirm on success / cancel (refund) on failure",
@@ -2640,6 +3084,81 @@
         ]
       }
     },
+    "/api/generations/{gen_id}/ideas": {
+      "get": {
+        "description": "Четыре правки к этому кадру, каждая — готовая фраза.\n\nПустой список — законный ответ: модель недоступна или кадр ещё не готов.\nПриложение тогда показывает обычные кнопки уточнений, а не пустое место.",
+        "operationId": "ideas_api_generations__gen_id__ideas_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "gen_id",
+            "required": true,
+            "schema": {
+              "title": "Gen Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "arteki-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Arteki-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdeasResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ideas",
+        "tags": [
+          "ideas"
+        ]
+      }
+    },
     "/api/generations/{gen_id}/share": {
       "post": {
         "operationId": "share_generation_api_generations__gen_id__share_post",
@@ -2712,6 +3231,148 @@
         "summary": "Share Generation",
         "tags": [
           "generations"
+        ]
+      }
+    },
+    "/api/guided/parse": {
+      "post": {
+        "description": "Что из незаполненного человек уже сказал.\n\nПустой ответ — законный и частый. Если модель недоступна, он же: разговор\nзадаст свои вопросы, как задавал бы без разбора, и человек не увидит\nполомки — только лишний вопрос.",
+        "operationId": "parse_api_guided_parse_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "arteki-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Arteki-Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ParseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Parse",
+        "tags": [
+          "guided"
+        ]
+      }
+    },
+    "/api/guided/plan": {
+      "get": {
+        "description": "Порядок вопросов и веса — по одному на каждое назначение.\n\nРаньше это жило в приложении и на сервере двумя копиями: свободный чат\nспрашивал по своему порядку, ведомый разговор по своему, и разъехаться они\nмогли молча — оба считали бы себя правыми. Теперь копия одна, а приложение\nеё спрашивает.\n\nОтвет не зависит от человека и меняется вместе с сервером, поэтому его\nможно взять один раз за запуск и запомнить. Приложение обязано пережить и\nответ, которого не понимает: поле, которого оно ещё не знает, оно\nпропустит, а не покажет пустым вопросом.",
+        "operationId": "plan_api_guided_plan_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "arteki-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Arteki-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Plan",
+        "tags": [
+          "guided"
         ]
       }
     },

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
@@ -27,7 +28,12 @@ from app.models.generation import (
     GenerationType,
 )
 from app.db.repositories import chat as chat_repo
-from app.services import content_gen, generations_service, tiles_data, video_gen, wallet
+from app.services import content_gen, conversation, generations_service, prompt_style, tiles_data, video_gen, wallet
+from app.services import gpt as gpt_service
+
+# Пропорции, которые принимают все подключённые исполнители. Вертикаль первой:
+# продукт мобильный, и она же остаётся значением по умолчанию.
+ASPECTS = {"9:16", "4:5", "1:1", "16:9"}
 from app.services import generation as generation_core
 from app.services.generation import registry as _registry
 generation_core.registry = _registry
@@ -128,6 +134,70 @@ async def generate(
         gen_type = body.type
         cost = settings.video_toontoon_cost if gen_type == GenerationType.VIDEO else settings.image_toontoon_cost
 
+    # Просьба из чата — это весь разговор, а не последняя реплика.
+    #
+    # Приложение слало то, что человек напечатал последним, и всё остальное
+    # пропадало: имя, цвета, слова для постера, ссылка на баскетбол — каждый
+    # ответ на вопрос перезаписывал предыдущий. На «постер в стиле аниме,
+    # бело-сине-красный, как для NBA» после пяти уточнений в модель уезжало
+    # «на фоне хочу интересные шрифты, а не места» — и приходил кадр, к
+    # которому весь разговор отношения не имел.
+    #
+    # Собирается это здесь, потому что разговор лежит здесь. Приложение помнит
+    # только свой экран, а сервер — всё, что человек сказал с последней
+    # «Очистки».
+    #
+    # Пустой `prompt` из чата и означает «собери сам». Ведомый разговор,
+    # наоборот, присылает собранное — там просьба сложена из ответов по полям, и
+    # подмешивать к ней сырой тред значило бы сказать всё дважды.
+    free_text = body.prompt
+    if body.from_chat and not (body.prompt or "").strip():
+        history = await chat_repo.context_messages(
+            db, user, limit=settings.chat_context_messages
+        )
+        said = " ".join(
+            msg["content"] for msg in history
+            if msg.get("role") == "user" and msg.get("content")
+        )
+        free_text = " ".join(p for p in (said, body.prompt) if p and p.strip()).strip() or None
+
+    # Что человек сказал словами, тем и делаем.
+    #
+    # Раньше назначение, стиль и пропорции доезжали только если приложение
+    # положило их в поля — то есть если человек прошёл разговор с кнопками. Но
+    # он их не выбирает, он описывает: пишет «постер в стилистике этого», жмёт
+    # отправить, и всё сказанное пропадает. В запросе тогда пусто, и сервер
+    # честно делает умолчание — фотографический якорь вместо постера.
+    #
+    # Поэтому слова разбираются здесь, всегда, каким бы путём запрос ни пришёл.
+    # Явно присланное сильнее: оно уже результат выбора человека, а не догадки
+    # о его фразе.
+    intent = body.intent or (conversation.detect_intent(free_text) if free_text else None)
+    style, aspect = body.style, body.aspect
+    unknown = [
+        slot for slot, value in (("technique", style), ("format", aspect))
+        if value is None
+    ]
+    if free_text and unknown:
+        said = await gpt_service.extract_slots(free_text, unknown)
+        style = style or said.get("technique")
+        aspect = aspect or said.get("format")
+
+    # Запрос без темы — не запрос, а осечка приложения. Проверяем ДО
+    # резервирования, как и всё остальное: за такую генерацию нельзя брать
+    # деньги, потому что нарисовать по ней нечего.
+    #
+    # Так однажды и вышло: провайдер отказал по сети, приложение стёрло
+    # собранное человеком и следующим нажатием отправило пустоту. Сборщик
+    # промптов честно придумал за него «тёплую дружелюбную картинку», дешёвый
+    # запасной исполнитель это нарисовал, и человек получил фотографию двух
+    # деревянных яиц вместо постера — за свой TOONTOON.
+    if not _has_subject(body, free_text):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="Tell us what to draw first — a few words are enough.",
+        )
+
     # Видео вне скоупа первой версии. Проверяем ДО резервирования, чтобы отказ
     # не проходил через кошелёк вообще.
     if gen_type == GenerationType.VIDEO and not settings.video_enabled:
@@ -181,7 +251,7 @@ async def generate(
             tile=tile,
             answers=body.answers,
             free_text=body.prompt,
-            style=body.style,
+            style=style,
             photo_url=body.photo_url,
         )
 
@@ -198,7 +268,68 @@ async def generate(
     # The reference photo lives in private storage and is handed over as bytes,
     # not as a URL a provider could fetch: nothing about someone's face should
     # be reachable by a link.
-    photo = await _load_photo(db, user.id, body.photo_url)
+    photo_url = body.photo_url
+    used_saved_photo = False
+    # Человек в кадре нужен, а снимка нет — берём тот, что он уже использовал.
+    #
+    # Вопрос «приложите фотографию» и три касания выбора стоят дороже всего в
+    # этом пути, а ответ мы знаем: тот же снимок, что и в прошлый раз. Молча
+    # так делать нельзя — своё лицо там, где его не ждали, чувствительнее любой
+    # другой ошибки, — поэтому ответ говорит приложению, что снимок подставлен,
+    # и оно скажет об этом человеку.
+    if photo_url is None and (intent in conversation.NEEDS_PHOTO or _asks_for_self(free_text)):
+        saved = await media_repo.last_person_photo(db, user.id)
+        if saved is not None:
+            photo_url = f"/api/media/{saved.id}"
+            used_saved_photo = True
+
+    photo = await _load_photo(db, user.id, photo_url)
+    redraw = await _is_own_work(db, photo_url)
+    # Остальные снимки — тем же путём. Порядок сохраняем: модели связывают
+    # референсы с упоминаниями в промпте по очереди, и перестановка меняет, кто
+    # в кадре кем окажется.
+    extra_photos = []
+    for url in body.extra_photo_urls:
+        loaded = await _load_photo(db, user.id, url)
+        if loaded is not None:
+            extra_photos.append(loaded)
+
+    # Образцы стиля идут последними и после всех людей.
+    #
+    # Порядок здесь не оформление: модели связывают референсы с упоминаниями в
+    # промпте по очереди, а требование «последняя картинка — это образец, а не
+    # человек» стоит в промпте буквально. Поставить образец первым значит
+    # сказать модели, что человек в кадре — тот, кто нарисован на постере.
+    style_refs = []
+    for url in body.style_ref_urls:
+        loaded = await _load_photo(db, user.id, url)
+        if loaded is not None:
+            style_refs.append(loaded)
+
+    # Роли не назначены — разбираем сами, по картинкам и по словам.
+    #
+    # Человек прикладывает своё фото и постер и пишет «сделай меня в стилистике
+    # этого». По его словам роли ясны, по порядку файлов — нет, а требовать
+    # расставить их переключателями значит требовать понимать нашу механику.
+    # Он описывает, что хочет получить, и это правильно: разбираться, где чьё
+    # лицо, — наша работа, а не его.
+    #
+    # Ошибка тут дороже всех: постер, принятый за человека, — это чужое лицо в
+    # кадре вместо своего. Ровно так и вышло на первом же таком запросе.
+    #
+    # Но если человек роли расставил сам — не лезем. «Оба снимка люди» это
+    # законная просьба (двое в кадре), и отличить её от «ничего не выбирал»
+    # можно только по этому флагу: роль человека стоит умолчанием.
+    if photo is not None and not style_refs and extra_photos and not body.roles_chosen:
+        roles = await gpt_service.reference_roles([photo, *extra_photos], free_text or "")
+        if roles:
+            everything = [photo, *extra_photos]
+            people = [img for img, role in zip(everything, roles) if role == "person"]
+            style_refs = [img for img, role in zip(everything, roles) if role == "style"]
+            photo, extra_photos = people[0], people[1:]
+            logger.info("Роли приложенных снимков: %s", ", ".join(roles))
+
+    extra_photos.extend(style_refs)
 
     # Операция решается ДО сборки промпта, а не после: редактированию нужен
     # текст другого жанра — инструкция «сохрани человека, помести в такую-то
@@ -221,8 +352,9 @@ async def generate(
             prompt, negative = content_gen.build_style_prompt(style_row, editing=editing)
         else:
             prompt, negative = await content_gen.build_prompt_for(
-                tile=tile, answers=body.answers, free_text=body.prompt, style=body.style,
-                editing=editing,
+                tile=tile, answers=body.answers, free_text=free_text, style=style,
+                editing=editing, intent=intent,
+                style_ref=bool(style_refs), redraw=redraw,
             )
     except content_gen.PromptUnavailable:
         # Переводить запрос нечем. Отказ с возвратом — единственный честный
@@ -234,6 +366,17 @@ async def generate(
             detail="We couldn't process your request right now, your TOONTOON was refunded — please try again in a minute.",
         )
 
+
+    # Уточнение к предыдущему кадру дописывается последним — после того, как
+    # промпт стиля собран целиком. Поставить его раньше значило бы дать модели
+    # прочитать «сделай рисованнее» до того, как она узнала, что рисовать.
+    prefer_refine = None
+    if body.refine is not None or body.refine_note:
+        prompt, prefer_refine = prompt_style.refine(
+            prompt,
+            body.refine.value if body.refine else None,
+            body.refine_note,
+        )
 
     # The attempt is recorded before the provider is called, so a failure leaves
     # a trace instead of nothing at all.
@@ -247,11 +390,17 @@ async def generate(
             "tile_id": body.tile_id,
             "style_id": body.style_id,
             "answers": body.answers,
-            "style": body.style,
-            "photo_media_id": _media_id(body.photo_url),
+            "aspect": aspect,
+            "style": style,
+            "intent": intent,
+            "style_refs": len(body.style_ref_urls),
+            "photo_media_id": _media_id(photo_url),
+            "used_saved_photo": used_saved_photo,
+            "redraw": redraw,
             "type": gen_type.value,
+            "refine": body.refine.value if body.refine else None,
         },
-        source_media_id=_media_id(body.photo_url),
+        source_media_id=_media_id(photo_url),
         cost=cost,
     )
 
@@ -261,12 +410,29 @@ async def generate(
         negative_prompt=negative,
         image=photo[0] if photo else None,
         image_mime=photo[1] if photo else None,
+        extra_images=extra_photos,
+        # Пропорции сверяем со списком, а не пропускаем как есть: значение
+        # уезжает вендору, и произвольная строка оттуда вернётся отказом,
+        # который человек увидит как нашу поломку.
+        params={"aspect": aspect} if aspect in ASPECTS else {},
     )
 
     try:
         result = await generation_core.run(
             db, request,
-            prefer=(style_row.prompt_template or {}).get("provider") if style_row else None,
+            # Уточнение перебивает предпочтение стиля: человек только что
+            # посмотрел на кадр и сказал, что не так, — это более свежий довод,
+            # чем выбор, записанный в каталоге месяц назад.
+            # Порядок доводов: свежее — сильнее. Уточнение человек дал только
+            # что, глядя на кадр; назначение он выбрал в начале разговора;
+            # предпочтение стиля записано в каталоге месяц назад.
+            prefer=prefer_refine
+            # Назначение и стиль смотрятся оба: новые сборки шлют «poster» в
+            # `intent`, старые — в `style`, а маршрут к тому, кто умеет буквы,
+            # нужен и тем и другим.
+            or prompt_style.preferred_provider(intent)
+            or prompt_style.preferred_provider(style)
+            or ((style_row.prompt_template or {}).get("provider") if style_row else None),
         )
     except generation_core.GenerationUnavailable as exc:
         await _record_failure(record, str(exc))
@@ -290,13 +456,18 @@ async def generate(
     generation_id = record.id
     result_url = f"/api/media/{asset.id}"
 
-    # The result belongs in the thread: there is only one, so nothing to choose.
-    await chat_repo.add_message(
-        db, user_id=user.id, role="assistant", generation_id=generation_id
-    )
+    # В переписку попадает только то, что из неё и вышло. Кадр, запущенный с
+    # карточки на главной, там был бы репликой без вопроса — картинкой посреди
+    # разговора, которого не было. Он и так лежит в истории работ, где его и
+    # ищут.
+    if body.from_chat:
+        await chat_repo.add_message(
+            db, user_id=user.id, role="assistant", generation_id=generation_id
+        )
 
     balance = await wallet.get_balance(db, user.id)
     return GenerateResponse(
+        used_saved_photo=used_saved_photo,
         id=generation_id,
         url=result_url,
         type=gen_type,
@@ -306,6 +477,35 @@ async def generate(
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
+
+
+# Слова, которыми просят себя в кадре. Список короткий и намеренно грубый:
+# ошибка здесь стоит одной лишней подстановки снимка, который и так лежит.
+_SELF_WORDS = re.compile(
+    r"\b(me|myself|my (photo|face|picture))\b|меня|себя|мо[её] (фото|лицо)",
+    re.IGNORECASE,
+)
+
+
+def _asks_for_self(text: str | None) -> bool:
+    return bool(text and _SELF_WORDS.search(text))
+
+
+def _has_subject(body: GenerateRequest, free_text: str | None = None) -> bool:
+    """Есть ли в запросе то, что вообще нужно нарисовать.
+
+    Три законных источника темы: плитка, стиль из каталога и слова человека.
+    Слова — это либо `prompt`, либо собранный разговор: из чата приложение
+    присылает пустой промпт, а сказанное лежит в треде.
+
+    Одной фотографии мало — по ней непонятно, что с ней делать; путь «улучшить
+    снимок как есть» это отдельная операция со своим текстом.
+    """
+    words = free_text if free_text is not None else body.prompt
+    # Образец стиля — тоже тема: «сделай как здесь» можно сказать картинкой, и
+    # слов при этом не требуется вовсе.
+    return bool(body.tile_id or body.style_id or body.style_ref_urls
+                or (words or "").strip())
 
 
 def _media_id(photo_url: str | None) -> str | None:
@@ -332,6 +532,21 @@ async def _load_photo(
     if data is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Photo not found")
     return data, asset.mime or "image/jpeg"
+
+
+async def _is_own_work(db: AsyncSession, photo_url: str | None) -> bool:
+    """Это наша же прошлая работа, а не снимок человека.
+
+    Знание бесплатное — оно записано в самом файле, — и меняет всё: к рисунку
+    нельзя применять требование «сохрани лицо с фотографии», а выбросить его
+    как чужой образец тем более нельзя. Человек сказал «вот этот кадр, но
+    поменяй фон» — значит правим этот кадр.
+    """
+    media_id = _media_id(photo_url)
+    if media_id is None:
+        return False
+    asset = await db.get(MediaAsset, media_id)
+    return asset is not None and asset.kind == "generation"
 
 
 async def _record_failure(record, error: str) -> None:

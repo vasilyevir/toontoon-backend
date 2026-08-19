@@ -41,6 +41,21 @@ def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def preview(data: bytes, *, side: int = 384) -> bytes:
+    """Мелкая копия для разбора моделью.
+
+    Понять, портрет это или постер, можно и по картинке в триста пикселей, а
+    платим мы за каждый. Снимок с телефона на четыре мегапикселя стоил бы здесь
+    в разы дороже ответа, который он даёт.
+    """
+    with Image.open(io.BytesIO(data)) as img:
+        img = _apply_orientation(img).convert("RGB")
+        img.thumbnail((side, side))
+        out = io.BytesIO()
+        img.save(out, format="JPEG", quality=70)
+        return out.getvalue()
+
+
 def process(data: bytes, *, make_thumbnail: bool = True) -> ProcessedImage:
     """Normalise an uploaded or generated image.
 

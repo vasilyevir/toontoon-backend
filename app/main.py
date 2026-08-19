@@ -13,6 +13,9 @@ from app.config import settings
 from app.middleware.app_key import AppKeyMiddleware
 from app.redis_client import connect, disconnect
 from app.routers import (
+    favorites,
+    guided,
+    ideas,
     app_meta,
     auth,
     billing,
@@ -95,6 +98,9 @@ app.include_router(media.router)
 app.include_router(billing.router)
 app.include_router(onboarding.router)
 app.include_router(styles.router)
+app.include_router(favorites.router)
+app.include_router(guided.router)
+app.include_router(ideas.router)
 app.include_router(profile.router)
 app.include_router(chat.router)
 app.include_router(generate.router)

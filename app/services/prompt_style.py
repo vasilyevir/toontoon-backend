@@ -158,8 +158,23 @@ NEGATIVE_DRAWN = (
 )
 
 
-def negative_for(style_key: str) -> str:
-    return NEGATIVE_DRAWN if is_drawn(style_key) else NEGATIVE_PROMPT
+# Запрет на буквы — половина этих списков, и постеру он противопоказан.
+#
+# Оба набора кончаются на «text, letters, words, captions». Для портрета это
+# правильно: подпись в углу кадра там всегда мусор. Для постера это отмена
+# самого постера — человек просил слова, а мы их запрещаем, и ни одна модель
+# после такого их не нарисует. Вырезаем запрет ровно там, где буквы и заказаны.
+_LETTER_BANS = ("text, letters, words, captions, ", "small unreadable text, ")
+
+
+def negative_for(style_key: str, *, lettering: bool = False) -> str:
+    """Что запрещаем. `lettering` — надпись заказана и запрещать её нельзя."""
+    negative = NEGATIVE_DRAWN if is_drawn(style_key) else NEGATIVE_PROMPT
+    if not lettering:
+        return negative
+    for ban in _LETTER_BANS:
+        negative = negative.replace(ban, "")
+    return negative
 
 
 # Categories whose tiles place a text/greeting on the image.
@@ -202,32 +217,98 @@ _STYLE_MAP = {
 
 
 def map_style(style: str | None) -> str:
-    """Resolve a free-text style label to a preset key (defaults to 3d_cartoon)."""
+    """Resolve a free-text style label to a preset key (defaults to 3d_cartoon).
+
+    Ключ пресета принимается как есть. Таблица ниже собрана из слов, которыми
+    стиль называют люди («pixar», «акварель»), и ключей в ней не было: приложение
+    когда-то слало подписи с кнопок. Теперь оно шлёт `scene_cozy` и
+    `semi_real_3d` — то, что вернул разбор фразы, — и всё это не находилось в
+    таблице и уходило в умолчание. Выглядело это как «выбор стиля ни на что не
+    влияет»: молча, на каждом кадре, кроме `anime` и `realistic`, которые
+    случайно совпали с подписями.
+    """
     if not style:
         return DEFAULT_STYLE
-    return _STYLE_MAP.get(style.strip().lower(), DEFAULT_STYLE)
+    key = style.strip().lower()
+    if key in PRESETS:
+        return key
+    return _STYLE_MAP.get(key, DEFAULT_STYLE)
 
 
 def is_text_tile(category: str | None) -> bool:
     return category in _TEXT_CATEGORIES if category else False
 
 
+# Композиция постера — вместо пейзажа, который просит якорь.
+POSTER_LAYOUT = (
+    "flat graphic poster composition: the subject cut out against solid blocks "
+    "of colour, no scenery and no landscape behind the lettering, "
+    "generous margins, the type is the loudest element in the frame"
+)
+
+# Куски якорей и технических хвостов, которые заказывают фон.
+#
+# Якорь аниме просит «warm hand-painted backgrounds with nostalgic pastoral
+# mood» — и получает пасторальный пейзаж даже там, где заказан постер: на
+# готовом кадре вокруг вертикального постера оказался нарисованный лес. Стиль
+# должен решать, чем нарисовано, а не что нарисовано вокруг.
+_SCENIC_CLAUSES = (
+    "warm hand-painted backgrounds with nostalgic pastoral mood",
+    "lush detailed environment",
+    "warm hand-painted backgrounds",
+    "detailed background",
+)
+
+
+def _without_scenery(text: str) -> str:
+    for clause in _SCENIC_CLAUSES:
+        text = text.replace(clause, "")
+    # После вырезания остаются двойные запятые и хвостовая пунктуация.
+    while ", ," in text:
+        text = text.replace(", ,", ",")
+    return text.strip().strip(",").strip()
+
+
 def assemble(scene: str, *, style_key: str, is_text: bool, editing: bool = False,
-             subject: str = "person") -> str:
+             subject: str = "person", lettering: bool = False,
+             style_ref: bool = False, redraw: bool = False) -> str:
     """Wrap a scene description with the style anchor (first) and technical (last).
 
     На редактировании снимка порядок другой: первым идёт требование сохранить
     человека, и только потом стиль. Модель читает промпт слева направо, а
     сходство лица — то единственное, ради чего фотографию вообще прислали;
     начинать с описания стиля значит предлагать нарисовать заново.
+
+    ``lettering`` — собирается постер. Тогда из якоря и технического хвоста
+    вырезаются просьбы про фон и добавляется композиция постера: иначе стиль
+    заказывает пейзаж поверх того, что человек просил заполнить буквами.
+
+    ``style_ref`` — приложен образец стиля. Про него надо сказать отдельно, и
+    сказать рано: иначе модель перенесёт из образца людей и предметы вместо
+    палитры и набора.
     """
     preset = PRESETS.get(style_key, PRESETS[DEFAULT_STYLE])
     scene = scene.strip().strip(".").strip()
-    parts = [identity_clause(subject=subject, drawn=is_drawn(style_key))] if editing else []
-    parts += [preset["anchor"], scene]
+    anchor = preset["anchor"]
+    technical = preset["technical"]
+    if lettering:
+        anchor, technical = _without_scenery(anchor), _without_scenery(technical)
+    if not editing:
+        parts = []
+    elif redraw:
+        # Своя прошлая работа правится, а не пересоздаётся.
+        parts = [REDRAW_CLAUSE]
+    else:
+        parts = [identity_clause(subject=subject, drawn=is_drawn(style_key),
+                                 cutout=lettering)]
+    if style_ref:
+        parts.append(STYLE_REF_CLAUSE)
+    parts += [anchor, scene]
+    if lettering:
+        parts.append(POSTER_LAYOUT)
     if is_text:
         parts.append(LAYOUT_BLOCK)
-    parts.append(preset["technical"])
+    parts.append(technical)
     return strip_brands(", ".join(p for p in parts if p))
 
 
@@ -264,23 +345,79 @@ PET_IDENTITY_CLAUSE = (
 )
 
 
-# То же требование для рисованных стилей.
+# То же требование для рисованных стилей — но это не сохранение, а перерисовка.
 #
 # Полного совпадения черт у нарисованного лица не бывает, и требовать «то же
-# лицо, тот же тон кожи» — значит тянуть модель обратно в фотографию. Здесь
-# перечислено то, по чему человек узнаёт себя на рисунке: причёска, форма лица,
-# телосложение, одежда.
+# лицо, тот же тон кожи» — значит тянуть модель обратно в фотографию. Человек
+# просил аниме: он должен узнать себя, а не увидеть свой снимок, обведённый по
+# контуру.
+#
+# «Same clothing» отсюда убрано намеренно. Одежда — это часть сцены, а не часть
+# того, кто человек: на постере NBA он оказывался в той же серой футболке, в
+# которой сфотографировался дома, потому что мы сами это и просили. Что надето,
+# решает текст сцены; если сцена молчит, редактор и так оставит как было.
 DRAWN_IDENTITY_CLAUSE = (
-    "keep the same person from the reference photo recognisable as a drawn character: "
-    "same hairstyle and hair colour, same face shape, same build, same clothing, "
-    "do not replace them with a different character"
+    "the person from the reference photo, redrawn as a character in this style: "
+    "recognisably them by face shape, hairstyle and hair colour and build, "
+    "not somebody else. This is a drawing, not a traced photograph — stylise "
+    "them fully, the linework, shading and proportions belong to the style and "
+    "not to the photograph. Their clothes are part of the scene, not part of "
+    "who they are"
 )
 
 
-def identity_clause(*, subject: str, drawn: bool = False) -> str:
+# Что дописывается к требованию сохранить человека, когда собирается постер.
+#
+# Редактор по умолчанию бережёт кадр целиком — в этом смысл правки снимка. На
+# постере это оборачивается тем, что комната человека остаётся на месте, а при
+# переходе в 16:9 её просто дорисовывают вширь: получается та же комната,
+# только шире. Про фон в требовании не было ни слова, вот его и сохраняли.
+CUTOUT_CLAUSE = (
+    "take ONLY the person from the reference photo: cut them out and discard "
+    "the room, the walls, the furniture and everything else that was around "
+    "them. The background is built from scratch out of flat colour and type. "
+    "Never extend, outpaint or widen the original photograph"
+)
+
+
+# Что сказать про приложенный образец стиля.
+#
+# Без этой строки модель делает единственное, что умеет с лишней картинкой:
+# переносит из неё людей и предметы. Человек прикладывал постер ради палитры и
+# набора, а получал чужого баскетболиста в своём кадре.
+STYLE_REF_CLAUSE = (
+    "the last reference image is a STYLE SAMPLE, not a person: copy its palette, "
+    "its drawing technique, its lighting and the way its layout is composed. "
+    "Never copy the people, faces, objects, logos or lettering that appear in it"
+)
+
+
+# Когда исходник — наша же прошлая работа.
+#
+# Требование «сохрани лицо с фотографии» здесь неуместно вдвойне: лица на
+# рисунке нет — есть его изображение, и тянуть модель к фотографической
+# точности значит уводить кадр обратно в фотографию. А просить «нарисуй заново»
+# значит потерять всё, что человеку в этом кадре понравилось. Он сказал
+# «вот этот, но поменяй фон» — значит меняем фон.
+REDRAW_CLAUSE = (
+    "this picture is the person's own earlier result, not a photograph: keep "
+    "its subject, its likeness and its composition exactly as they are, and "
+    "change only what is asked for. Do not redraw it from scratch and do not "
+    "make it more photographic"
+)
+
+
+def identity_clause(*, subject: str, drawn: bool = False, cutout: bool = False) -> str:
+    """Требование сохранить того, кто на снимке.
+
+    ``cutout`` — из снимка берётся только человек, а его окружение
+    выбрасывается: на постере оно не фон, а помеха.
+    """
     if subject == "pet":
-        return PET_IDENTITY_CLAUSE
-    return DRAWN_IDENTITY_CLAUSE if drawn else IDENTITY_CLAUSE
+        base = PET_IDENTITY_CLAUSE
+    else:
+        base = DRAWN_IDENTITY_CLAUSE if drawn else IDENTITY_CLAUSE
+    return f"{base}. {CUTOUT_CLAUSE}" if cutout else base
 
 
 # Стили, которые рисуют, а не снимают. Всё, кроме фотореалистичного якоря.
@@ -549,3 +686,98 @@ def neutralize_ip(text: str | None) -> str | None:
     if not text:
         return text
     return _NAMED_IP_RE.sub(lambda m: _NAMED_IP_MAP[m.group(0).lower()], text)
+
+
+# ─── Уточнения к готовому кадру ──────────────────────────────────────────────
+# Человек посмотрел на результат и говорит, что поправить. Каждое уточнение —
+# фраза в конец промпта и, где нужно, предпочтительный исполнитель.
+#
+# Список закрытый и составлен из отказов, замеренных на ста одиннадцати кадрах:
+# часть моделей молча возвращает фотографию вместо рисунка, часть под сильной
+# переделкой идеализирует лицо. Это разные болезни, и лечатся они по-разному —
+# первая сменой исполнителя, вторая усилением требования к сходству.
+REFINEMENTS: dict[str, dict[str, str]] = {
+    "more_drawn": {
+        "clause": ("clearly illustrated and stylised, not photographic: visible "
+                   "drawn linework and flat shaped shading"),
+        # GPT Image 2 на рисованном якоре молча возвращает фотографию; Gemini
+        # стилизует честно. Замерено.
+        "prefer": "openrouter_gemini",
+    },
+    "closer_to_photo": {
+        "clause": ("keep the face, hairstyle length and body shape exactly as in "
+                   "the source photo, do not idealise or slim the features"),
+        "prefer": "openrouter_gpt",
+    },
+    "wider_frame": {
+        "clause": "wider framing, more space around the subject, nothing cropped at the edges",
+        "prefer": "",
+    },
+    "different_light": {
+        "clause": "a different lighting scheme from a single clearly motivated source",
+        "prefer": "",
+    },
+}
+
+
+# Сколько слов человека пускаем в промпт. Двести символов — это фраза-другая,
+# больше для уточнения и не нужно, а без потолка сюда уедет всё что угодно.
+NOTE_LIMIT = 200
+
+
+def refine(prompt: str, key: str | None, note: str | None = None) -> tuple[str, str | None]:
+    """Дописать уточнение и подсказать исполнителя.
+
+    `key` говорит, что не так, `note` — как именно надо. Кнопка без пояснения
+    остаётся угадыванием: «другой свет» не значит «какой», и модель выберет
+    сама, чаще всего не то.
+
+    Пояснение пишет человек, поэтому оно проходит те же чистки, что и любой
+    пользовательский текст: чужие персонажи заменяются описанием, названия
+    студий вырезаются. Без этого свободное поле стало бы дырой в обход всех
+    защит, которые стоят на обычном пути.
+
+    Возвращает промпт как есть, если уточнение неизвестно: неизвестное имя —
+    повод ничего не менять, а не повод отказать человеку в генерации.
+    """
+    entry = REFINEMENTS.get(key or "")
+    parts = [prompt]
+    if entry is not None:
+        parts.append(entry["clause"])
+    if note and note.strip():
+        cleaned = strip_brands(neutralize_ip(note.strip()[:NOTE_LIMIT]) or "")
+        if cleaned:
+            parts.append(cleaned)
+    return ", ".join(p for p in parts if p), (entry["prefer"] or None) if entry else None
+
+
+# ─── Реставрация ─────────────────────────────────────────────────────────────
+# Единственный текст на всю операцию. Стиля здесь нет и быть не может: человек
+# принёс единственную карточку молодой бабушки, и «улучшить» её значит вернуть
+# ему похожую женщину. Поэтому промпт не собирается из полей и не переписывается
+# GPT — он один и тот же всегда.
+RESTORE_PROMPT = (
+    "restore this damaged photograph: remove scratches, dust, creases and noise, "
+    "recover natural colour where it has faded, sharpen detail that is present. "
+    "Do not change faces, expressions, clothing, background or composition. "
+    "Do not add anything that is not already in the frame, do not beautify, "
+    "do not smooth skin, do not modernise"
+)
+
+
+# ─── Куда уводит назначение ──────────────────────────────────────────────────
+# Постер и открытка живут надписью, а буквы умеет не всякий: 17 августа на одном
+# лице с одним словом Gemini 3 Pro набрал текст верно, а GPT Image 2 —
+# основной исполнитель фотопути — проигнорировал его целиком и молча, нарисовав
+# вместо надписи мазки в заданной палитре.
+#
+# Поэтому это не подсказка, а маршрут: без него человек получит красивый кадр
+# без единственного, ради чего он и пришёл.
+PREFERRED_PROVIDER: dict[str, str] = {
+    "poster": "openrouter_gemini_pro",
+    "card": "openrouter_gemini_pro",
+}
+
+
+def preferred_provider(style: str | None) -> str | None:
+    return PREFERRED_PROVIDER.get((style or "").strip().lower())
