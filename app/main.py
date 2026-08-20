@@ -16,6 +16,7 @@ from app.routers import (
     favorites,
     guided,
     ideas,
+    profiles,
     app_meta,
     auth,
     billing,
@@ -101,6 +102,7 @@ app.include_router(styles.router)
 app.include_router(favorites.router)
 app.include_router(guided.router)
 app.include_router(ideas.router)
+app.include_router(profiles.router)
 app.include_router(profile.router)
 app.include_router(chat.router)
 app.include_router(generate.router)

@@ -398,6 +398,8 @@ async def build_prompt(
     intent: Optional[str] = None,
     style_ref: bool = False,
     redraw: bool = False,
+    subject: str = "person",
+    cast: list[str] | None = None,
 ) -> tuple[str, str]:
     """Return ``(prompt, negative_prompt)`` for the image generator.
 
@@ -513,6 +515,7 @@ async def build_prompt(
     prompt = prompt_style.assemble(
         scene, style_key=style_key, is_text=is_text, editing=editing,
         lettering=lettering, style_ref=style_ref, redraw=redraw,
+        subject=subject, cast=cast,
     )
     log.info("[build_prompt] style=%s → key=%s editing=%s | scene: %s",
              style, style_key, editing, scene[:120])
@@ -913,7 +916,12 @@ _ROLES_SYSTEM = (
 )
 
 
-async def reference_roles(images: list[tuple[bytes, str]], message: str) -> list[str]:
+async def reference_roles(
+    images: list[tuple[bytes, str]],
+    message: str,
+    *,
+    person_known: bool = False,
+) -> list[str]:
     """Что из приложенного — человек, а что образец стиля.
 
     Спрашивается у модели, а не у человека. Он прикладывает снимок и постер и
@@ -926,12 +934,20 @@ async def reference_roles(images: list[tuple[bytes, str]], message: str) -> list
     Пустой список — «не знаю»: тогда всё остаётся как прислали. Ошибиться
     молчанием безопаснее, чем догадкой.
     """
-    if not settings.openai_enabled or len(images) < 2:
+    # Одну картинку разбираем только тогда, когда человек нам уже известен: без
+    # профиля единственный приложенный снимок — это он сам, и спрашивать не о
+    # чем. С профилем всё наоборот: лицо у нас есть, и приложенное чаще всего
+    # образец — «сделай меня в стилистике вот этого».
+    least = 1 if person_known else 2
+    if not settings.openai_enabled or len(images) < least:
         return []
 
+    known = ("We already know what this person looks like, so a picture they "
+             "attach is often a sample rather than themselves.\n" if person_known else "")
     parts: list[dict] = [{
         "type": "text",
         "text": f"The person wrote: {message.strip() or '(nothing)'}\n"
+                f"{known}"
                 f"There are {len(images)} pictures, in order.",
     }]
     for data, mime in images:
@@ -953,7 +969,12 @@ async def reference_roles(images: list[tuple[bytes, str]], message: str) -> list
         return []
 
     roles = [r if r in ("person", "style") else "person" for r in roles]
-    if len(roles) != len(images) or "person" not in roles:
+    if len(roles) != len(images):
+        return []
+    # Без профиля кто-то обязан быть субъектом: ответ «всё образцы» означал бы
+    # кадр без единого человека, чего никто не просил. С профилем это законно —
+    # субъект уже есть, он просто не на приложенных картинках.
+    if "person" not in roles and not person_known:
         return []
     return roles
 
@@ -1070,3 +1091,108 @@ async def starter_ideas() -> list[str]:
     except Exception:  # noqa: BLE001 — без идей экран живёт
         return []
     return _clean_idea_lines(raw)
+
+# ─── Разбор набора снимков для профиля ───────────────────────────────────────
+
+# Сколько снимков имеет смысл отобрать в опорный набор.
+#
+# Шесть — не предел вендора (там четырнадцать-шестнадцать), а предел смысла:
+# дальше идут повторы того, что уже покрыто, а каждый лишний референс это ещё
+# один вход в запросе и ещё один шанс, что модель усреднит черты.
+MAX_REFERENCE_PHOTOS = 6
+
+_PROFILE_REVIEW_SYSTEM = (
+    "You are shown the photographs a person picked for their profile — the set "
+    "we will use to put them into every picture they ask for. Judge the set "
+    "the way a photographer would before a shoot: what is usable, what is not, "
+    "and what is missing.\n"
+    "What a good photo here is:\n"
+    "- exactly one person in the frame;\n"
+    "- the face turned enough to be read, not lost in shadow, not covered by "
+    "sunglasses, a hand or a mask;\n"
+    "- the face large enough to see the features, and in focus;\n"
+    "- a photograph of a real person — not a drawing, not a screenshot, not a "
+    "poster.\n"
+    "What a good SET has, beyond good photos: a face-on shot and a "
+    "three-quarter one, a smile and a calm face, more than one kind of light, "
+    "and not the same clothes and wall in every frame — otherwise the sweater "
+    "and the wall get learned as part of the person.\n"
+    "Answer with JSON only:\n"
+    '{"photos": [{"index": 1, "ok": true, "reason": ""}, ...], '
+    '"missing": ["...", "..."], "chosen": [3, 1, 7]}\n'
+    "Rules:\n"
+    "- One entry per photograph, in the order given, numbering from 1.\n"
+    "- `reason` only when `ok` is false: one short phrase saying what is wrong, "
+    "addressed to the person — «two people in the frame», «face is too small», "
+    "«sunglasses hide the eyes». Empty when the photo is fine.\n"
+    "- `missing` — at most three lines, each naming one photograph worth "
+    "adding: «one where you are smiling», «one in daylight». Empty when the set "
+    "is good enough.\n"
+    "- `chosen` — the photographs we should actually work from, best first, at "
+    "most six. Pick the SMALLEST set that covers the person: one face-on, one "
+    "three-quarter, one with a different expression, one in different light, "
+    "one further away for the build. Prefer sharp photos with a large readable "
+    "face. Never pick two that show the same thing — a second copy of a shot we "
+    "already have adds nothing and crowds out what is missing. Skip anything "
+    "you marked as not ok.\n"
+    "- Be strict about faces and generous about everything else: a plain photo "
+    "with a readable face is fine even if it is dull.\n"
+)
+
+
+async def review_profile_photos(images: list[bytes]) -> dict:
+    """Что из набора годится и какого снимка не хватает.
+
+    Разбор до сборки профиля, а не после: набор решает всё, что будет дальше.
+    Двадцать кадров в одном свитере у одной стены дают профиль, который считает
+    свитер и стену частью человека, и заметно это станет на десятой генерации,
+    когда менять будет поздно.
+
+    Пустой ответ законен: зрение недоступно. Тогда профиль собирается как есть —
+    отказывать человеку в профиле из-за того, что мы не смогли посмотреть,
+    было бы наказанием за нашу же неисправность.
+    """
+    if not settings.openai_enabled or not images:
+        return {"photos": [], "missing": [], "chosen": []}
+
+    parts: list[dict] = [{"type": "text",
+                          "text": f"{len(images)} photographs, in order."}]
+    for data in images:
+        small = base64.b64encode(storage_images.preview(data, side=512)).decode()
+        parts.append({"type": "image_url",
+                      "image_url": {"url": f"data:image/jpeg;base64,{small}"}})
+
+    try:
+        raw = await _call(
+            [{"role": "system", "content": _PROFILE_REVIEW_SYSTEM},
+             {"role": "user", "content": parts}],
+            max_tokens=600,
+            temperature=0,
+            model=settings.slot_extraction_model or None,
+        )
+        start, end = raw.index("{"), raw.rindex("}") + 1
+        parsed = json.loads(raw[start:end])
+    except Exception:  # noqa: BLE001 — не посмотрели, значит не мешаем
+        return {"photos": [], "missing": [], "chosen": []}
+
+    photos = []
+    for item in parsed.get("photos", [])[:len(images)]:
+        photos.append({
+            "index": int(item.get("index") or len(photos) + 1),
+            "ok": bool(item.get("ok")),
+            "reason": str(item.get("reason") or "").strip(),
+        })
+    missing = [str(m).strip() for m in parsed.get("missing", [])[:3] if str(m).strip()]
+
+    # Отобранные — по порядку полезности и без повторов. Номера приходят от
+    # модели, поэтому проверяем каждый: чужой индекс означал бы, что мы
+    # подставим человеку не его фотографию.
+    chosen: list[int] = []
+    for value in parsed.get("chosen", [])[:MAX_REFERENCE_PHOTOS]:
+        try:
+            index = int(value)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= index <= len(images) and index not in chosen:
+            chosen.append(index)
+    return {"photos": photos, "missing": missing, "chosen": chosen}

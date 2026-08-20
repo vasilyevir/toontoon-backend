@@ -260,6 +260,23 @@ _SCENIC_CLAUSES = (
 )
 
 
+# Запрет на людей внутри «пейзажных» якорей.
+#
+# `scene_cozy` и `scene_epic` писались под кадры без людей — уютную комнату,
+# горы, — и содержат «no people, no characters». Но в них же упирается слово
+# «кинематографично» из речи человека, и якорь оказывается в промпте, весь смысл
+# которого — человек в кадре. Промпт начинает спорить сам с собой: сверху
+# «сохрани этого человека», ниже «людей не рисовать». Кто победит, решает модель,
+# и решает по-разному.
+_NO_PEOPLE_CLAUSES = ("no people, no characters, ", "no people, no characters")
+
+
+def _with_people(text: str) -> str:
+    for clause in _NO_PEOPLE_CLAUSES:
+        text = text.replace(clause, "")
+    return text.strip().strip(",").strip()
+
+
 def _without_scenery(text: str) -> str:
     for clause in _SCENIC_CLAUSES:
         text = text.replace(clause, "")
@@ -271,7 +288,8 @@ def _without_scenery(text: str) -> str:
 
 def assemble(scene: str, *, style_key: str, is_text: bool, editing: bool = False,
              subject: str = "person", lettering: bool = False,
-             style_ref: bool = False, redraw: bool = False) -> str:
+             style_ref: bool = False, redraw: bool = False,
+             cast: list[str] | None = None) -> str:
     """Wrap a scene description with the style anchor (first) and technical (last).
 
     На редактировании снимка порядок другой: первым идёт требование сохранить
@@ -283,6 +301,11 @@ def assemble(scene: str, *, style_key: str, is_text: bool, editing: bool = False
     вырезаются просьбы про фон и добавляется композиция постера: иначе стиль
     заказывает пейзаж поверх того, что человек просил заполнить буквами.
 
+    ``cast`` — имена людей в кадре по порядку их референсов. Со списком из
+    двоих и больше требование сохранить внешность заменяется на «кто есть кто»:
+    сохранить нужно каждого, и главная ошибка здесь другая — не потеря
+    сходства, а слипание двух лиц в одно.
+
     ``style_ref`` — приложен образец стиля. Про него надо сказать отдельно, и
     сказать рано: иначе модель перенесёт из образца людей и предметы вместо
     палитры и набора.
@@ -291,6 +314,11 @@ def assemble(scene: str, *, style_key: str, is_text: bool, editing: bool = False
     scene = scene.strip().strip(".").strip()
     anchor = preset["anchor"]
     technical = preset["technical"]
+    # Человек в кадре есть — значит запрет на людей из якоря вон. Признак тот
+    # же, что и у требования сохранить внешность: если мы правим снимок, на нём
+    # кто-то есть.
+    if editing:
+        anchor = _with_people(anchor)
     if lettering:
         anchor, technical = _without_scenery(anchor), _without_scenery(technical)
     if not editing:
@@ -298,6 +326,10 @@ def assemble(scene: str, *, style_key: str, is_text: bool, editing: bool = False
     elif redraw:
         # Своя прошлая работа правится, а не пересоздаётся.
         parts = [REDRAW_CLAUSE]
+    elif cast and len(cast) > 1:
+        parts = [cast_clause(cast, drawn=is_drawn(style_key))]
+        if lettering:
+            parts.append(CUTOUT_CLAUSE)
     else:
         parts = [identity_clause(subject=subject, drawn=is_drawn(style_key),
                                  cutout=lettering)]
@@ -405,6 +437,33 @@ REDRAW_CLAUSE = (
     "change only what is asked for. Do not redraw it from scratch and do not "
     "make it more photographic"
 )
+
+
+ORDINALS = ("the first reference photo", "the second reference photo",
+            "the third reference photo", "the fourth reference photo")
+
+
+def cast_clause(names: list[str], *, drawn: bool = False) -> str:
+    """Кто есть кто, когда в кадре не один человек.
+
+    Модель связывает референсы с людьми по порядку, поэтому «первый снимок —
+    Никита, второй — Аня» здесь не оформление, а единственный способ не
+    перепутать. Без этого получается усреднённое лицо, показанное дважды, —
+    самая обидная ошибка совместного кадра: человек ждал себя с близким, а
+    видит двух незнакомцев.
+    """
+    who = ", ".join(
+        f"{ORDINALS[i] if i < len(ORDINALS) else f'reference photo {i + 1}'} is {name}"
+        for i, name in enumerate(names)
+    )
+    look = ("redrawn in this style but recognisably themselves"
+            if drawn else "photographically themselves")
+    return (
+        f"{len(names)} different people must all appear together in one picture, "
+        f"each {look}: {who}. Keep every one of them their own person: never "
+        "merge their faces, never draw the same person twice, never leave "
+        "anyone out"
+    )
 
 
 def identity_clause(*, subject: str, drawn: bool = False, cutout: bool = False) -> str:

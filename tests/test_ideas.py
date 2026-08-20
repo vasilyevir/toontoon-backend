@@ -144,3 +144,81 @@ def test_the_photo_instruction_demands_this_picture():
     assert "must fit this one" in gpt._PHOTO_IDEAS_SYSTEM
     assert "never invent a person" in gpt._PHOTO_IDEAS_SYSTEM
     assert "Four different directions" in gpt._PHOTO_IDEAS_SYSTEM
+
+
+# ─── Разбор набора для профиля ───────────────────────────────────────────────
+
+async def test_the_set_is_judged_photo_by_photo(answered):
+    """Набор решает всё, что будет дальше, поэтому смотрим до сборки.
+
+    Двадцать кадров в одном свитере у одной стены дают профиль, который считает
+    свитер и стену частью человека, и заметно это станет на десятой генерации.
+    """
+    answered('{"photos": [{"index": 1, "ok": true, "reason": ""},'
+             ' {"index": 2, "ok": false, "reason": "two people in the frame"}],'
+             ' "missing": ["one where you are smiling", "one in daylight"]}')
+    out = await gpt.review_profile_photos([_jpeg(), _jpeg()])
+    assert out["photos"][0] == {"index": 1, "ok": True, "reason": ""}
+    assert out["photos"][1]["reason"] == "two people in the frame"
+    assert out["missing"] == ["one where you are smiling", "one in daylight"]
+
+
+async def test_no_photos_no_verdict(answered):
+    answered('{"photos": [], "missing": []}')
+    assert await gpt.review_profile_photos([]) == {"photos": [], "missing": [], "chosen": []}
+
+
+async def test_a_blind_reviewer_does_not_block_the_profile(monkeypatch):
+    """Не посмотрели — не мешаем.
+
+    Отказать человеку в профиле из-за того, что зрение недоступно, значит
+    наказать его за нашу неисправность.
+    """
+    async def _boom(messages, **kwargs):
+        raise RuntimeError("vision down")
+    monkeypatch.setattr(gpt, "_call", _boom)
+    assert await gpt.review_profile_photos([_jpeg()]) == {"photos": [], "missing": [], "chosen": []}
+
+
+async def test_more_verdicts_than_photos_are_cut(answered):
+    """Модель иногда придумывает лишние строки. Их не должно быть больше, чем
+    снимков: человек ищет глазами свою фотографию, а не строку в списке."""
+    answered('{"photos": [{"index": 1, "ok": true}, {"index": 2, "ok": true},'
+             ' {"index": 3, "ok": false, "reason": "blurry"}], "missing": []}')
+    out = await gpt.review_profile_photos([_jpeg()])
+    assert len(out["photos"]) == 1
+
+
+def test_the_review_knows_what_a_good_set_is():
+    assert "exactly one person in the frame" in gpt._PROFILE_REVIEW_SYSTEM
+    assert "not the same clothes and wall in every frame" in gpt._PROFILE_REVIEW_SYSTEM
+    assert "three-quarter" in gpt._PROFILE_REVIEW_SYSTEM
+
+
+async def test_the_working_set_is_picked_from_the_whole_pile(answered):
+    """Хранить пятнадцать и отдавать пятнадцать — разные решения.
+
+    В кадр уезжает отобранное: набор, покрывающий человека без повторов. Лучший
+    снимок идёт первым — он же уедет один, если отдавать решено один.
+    """
+    answered('{"photos": [{"index": 1, "ok": true}, {"index": 2, "ok": true},'
+             ' {"index": 3, "ok": true}], "missing": [], "chosen": [3, 1]}')
+    out = await gpt.review_profile_photos([_jpeg(), _jpeg(), _jpeg()])
+    assert out["chosen"] == [3, 1]
+
+
+async def test_a_made_up_number_is_dropped(answered):
+    """Номера приходят от модели, и чужой индекс означал бы чужую фотографию
+    в кадре у человека."""
+    answered('{"photos": [{"index": 1, "ok": true}], "missing": [],'
+             ' "chosen": [1, 9, "два", 1]}')
+    out = await gpt.review_profile_photos([_jpeg()])
+    assert out["chosen"] == [1]
+
+
+async def test_the_working_set_has_a_ceiling(answered):
+    """Шесть — предел смысла, а не вендора: дальше идут повторы того, что уже
+    покрыто, и каждый лишний референс это ещё один шанс усреднить черты."""
+    answered('{"photos": [], "missing": [], "chosen": [1,2,3,4,5,6,7,8]}')
+    out = await gpt.review_profile_photos([_jpeg()] * 8)
+    assert len(out["chosen"]) == gpt.MAX_REFERENCE_PHOTOS

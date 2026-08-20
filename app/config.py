@@ -186,6 +186,15 @@ class Settings(BaseSettings):
     # Идентификатор витрины. Без её ключа настройка молча не действует — разбор
     # уйдёт на общую модель.
     slot_extraction_model: str = "google/gemini-2.5-flash"
+    # Сколько снимков профиля отдавать модели как референсы.
+    #
+    # Один — намеренно. Больше снимков не всегда лучше: часть моделей на
+    # нескольких лицах начинает усреднять черты, и три референса дают результат
+    # хуже одного. Пока это не замерено на живых лицах, поднимать нельзя —
+    # цена ошибки здесь сходство, то единственное, ради чего профиль и заведён.
+    #
+    # Профиль при этом хранит все снимки: замер меняет одну цифру, а не сборку.
+    profile_reference_count: int = 1
     openrouter_request_timeout: float = 180.0
     # Optional Pollinations API token (register at https://auth.pollinations.ai).
     # Without it the anonymous tier frequently returns 402 under load.

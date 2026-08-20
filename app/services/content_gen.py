@@ -135,6 +135,8 @@ async def build_prompt_for(
     intent: str | None = None,
     style_ref: bool = False,
     redraw: bool = False,
+    subject: str = "person",
+    cast: list[str] | None = None,
 ) -> tuple[str, str]:
     """Собрать промпт, ничего не генерируя.
 
@@ -157,6 +159,8 @@ async def build_prompt_for(
         intent=intent,
         style_ref=style_ref,
         redraw=redraw,
+        subject=subject,
+        cast=cast,
     )
     if not prompt:
         user_text = " ".join(filter(None, [free_text, *answers.values()]))

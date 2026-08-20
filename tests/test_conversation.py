@@ -298,3 +298,16 @@ def test_heavy_fields_can_replace_each_other():
     """
     assert c.is_ready({"technique": "anime", "text": "NIKITA"},
                       intent="poster", has_photo=True)
+
+
+def test_a_profile_weighs_as_much_as_an_attached_photo():
+    """Профиль обеспечивает человека в кадре так же, как приложенный снимок.
+
+    Значит и просьба считается описанной на те же тридцать процентов, и
+    вопросов задаётся меньше — а вопрос про фотографию не задаётся вовсе.
+    """
+    said = {"technique": "anime", "palette": "white and blue"}
+    assert c.is_ready(said, intent="poster", has_photo=True)
+    assert not c.is_ready(said, intent="poster", has_photo=False)
+    assert c.next_gap({}, intent="portrait",
+                      photo_attached=False, photo_on_file=True) != "photo"

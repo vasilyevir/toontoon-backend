@@ -251,3 +251,32 @@ async def test_a_dead_network_is_an_empty_answer(monkeypatch):
 
     monkeypatch.setattr(gpt, "_call", _dead)
     assert await gpt.extract_slots("постер в стиле аниме", ALL_SLOTS) == {}
+
+
+async def test_a_known_face_makes_a_single_attachment_a_sample(sees):
+    """«Сделай меня в стилистике вот этого» — самая частая просьба.
+
+    Без профиля единственный приложенный снимок это человек, и разбирать
+    нечего. С профилем наоборот: лицо у нас уже есть, а приложенное чаще всего
+    образец — и раньше человеку приходилось объяснять это самому.
+    """
+    sees('["style"]')
+    roles = await gpt.reference_roles([(_png(), "image/png")], "как здесь",
+                                      person_known=True)
+    assert roles == ["style"]
+
+
+async def test_without_a_profile_a_single_picture_is_still_the_person(sees):
+    sees('["style"]')
+    assert await gpt.reference_roles([(_png(), "image/png")], "как здесь") == []
+
+
+async def test_all_samples_are_legal_when_the_person_is_known(sees):
+    """Кадр без единого человека никто не просил — если человека взять неоткуда.
+
+    Профиль это меняет: субъект есть, он просто не на приложенных картинках.
+    """
+    sees('["style", "style"]')
+    both = [(_png(), "image/png"), (_png(), "image/png")]
+    assert await gpt.reference_roles(both, "как здесь") == []
+    assert await gpt.reference_roles(both, "как здесь", person_known=True) == ["style", "style"]

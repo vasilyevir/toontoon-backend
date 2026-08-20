@@ -16,6 +16,7 @@ from app.db.session import get_session as get_db_session
 from app.db.repositories import generations as generations_repo
 from app.db.repositories import styles as styles_repo
 from app.db.repositories import media as media_repo
+from app.db.repositories import profiles as profiles_repo
 from app.db import models as m
 from app.db.models import MediaAsset
 from app.storage import get_storage
@@ -34,6 +35,14 @@ from app.services import gpt as gpt_service
 # Пропорции, которые принимают все подключённые исполнители. Вертикаль первой:
 # продукт мобильный, и она же остаётся значением по умолчанию.
 ASPECTS = {"9:16", "4:5", "1:1", "16:9"}
+
+# Сколько человек за раз можно привести в один кадр.
+#
+# Четверо — не ограничение реестра (референсов там берут по четырнадцать), а
+# граница, за которой модели перестают держать лица врозь: чем больше людей,
+# тем охотнее из них лепится общий усреднённый человек. Лучше честно не пустить
+# пятого, чем показать компанию незнакомцев.
+MAX_JOINT_PEOPLE = 4
 from app.services import generation as generation_core
 from app.services.generation import registry as _registry
 generation_core.registry = _registry
@@ -277,11 +286,36 @@ async def generate(
     # так делать нельзя — своё лицо там, где его не ждали, чувствительнее любой
     # другой ошибки, — поэтому ответ говорит приложению, что снимок подставлен,
     # и оно скажет об этом человеку.
-    if photo_url is None and (intent in conversation.NEEDS_PHOTO or _asks_for_self(free_text)):
-        saved = await media_repo.last_person_photo(db, user.id)
-        if saved is not None:
-            photo_url = f"/api/media/{saved.id}"
+    profile_extras: list[str] = []
+    profile = None
+    # Кого рисуем. Выбор человека сильнее основного профиля: он только что
+    # сказал, про кого речь, — и сказал, возможно, про нескольких.
+    picked = await _picked_profiles(db, user.id, body)
+    # Имена людей в кадре по порядку их снимков. Пусто, пока человек один:
+    # одному имя не нужно, ему нужно сходство.
+    cast: list[str] = []
+    # Выбранные вдвоём и больше — сами по себе повод подставить снимки: нажать
+    # на двух человек и есть просьба нарисовать их вместе, других слов для этого
+    # не нужно. Ждать вдобавок слова «меня» значило бы не замечать выбор.
+    wants_people = len(picked) > 1 or intent in conversation.NEEDS_PHOTO or _asks_for_self(free_text)
+    if photo_url is None and wants_people:
+        # Сначала профиль: он собран из снимков, которые человек использовал как
+        # себя, и знает про него больше, чем последняя загрузка.
+        profile = picked[0] if picked else await profiles_repo.ensure_silent_profile(db, user.id)
+        if len(picked) > 1:
+            media_ids, cast = _joint_references(picked)
+        else:
+            take = max(1, settings.profile_reference_count)
+            media_ids = profiles_repo.references(profile, limit=take) if profile else []
+        if media_ids:
+            photo_url = f"/api/media/{media_ids[0]}"
+            profile_extras = [f"/api/media/{mid}" for mid in media_ids[1:]]
             used_saved_photo = True
+        else:
+            saved = await media_repo.last_person_photo(db, user.id)
+            if saved is not None:
+                photo_url = f"/api/media/{saved.id}"
+                used_saved_photo = True
 
     photo = await _load_photo(db, user.id, photo_url)
     redraw = await _is_own_work(db, photo_url)
@@ -289,7 +323,7 @@ async def generate(
     # референсы с упоминаниями в промпте по очереди, и перестановка меняет, кто
     # в кадре кем окажется.
     extra_photos = []
-    for url in body.extra_photo_urls:
+    for url in list(body.extra_photo_urls) + profile_extras:
         loaded = await _load_photo(db, user.id, url)
         if loaded is not None:
             extra_photos.append(loaded)
@@ -320,14 +354,41 @@ async def generate(
     # Но если человек роли расставил сам — не лезем. «Оба снимка люди» это
     # законная просьба (двое в кадре), и отличить её от «ничего не выбирал»
     # можно только по этому флагу: роль человека стоит умолчанием.
-    if photo is not None and not style_refs and extra_photos and not body.roles_chosen:
-        roles = await gpt_service.reference_roles([photo, *extra_photos], free_text or "")
-        if roles:
-            everything = [photo, *extra_photos]
-            people = [img for img, role in zip(everything, roles) if role == "person"]
-            style_refs = [img for img, role in zip(everything, roles) if role == "style"]
-            photo, extra_photos = people[0], people[1:]
-            logger.info("Роли приложенных снимков: %s", ", ".join(roles))
+    if photo is not None and not style_refs and not body.roles_chosen:
+        # Профиль меняет саму постановку вопроса. Без него единственный
+        # приложенный снимок — это человек, и разбирать нечего. С ним лицо у нас
+        # уже есть, и приложенное чаще оказывается образцом: «сделай меня в
+        # стилистике вот этого» — самая частая просьба, и раньше она требовала
+        # от человека объяснять, где кто.
+        known = picked[0] if picked else await profiles_repo.get_default(db, user.id)
+        person_known = known is not None and bool(known.media_ids)
+        if extra_photos or person_known:
+            roles = await gpt_service.reference_roles(
+                [photo, *extra_photos], free_text or "", person_known=person_known)
+            if roles:
+                everything = [photo, *extra_photos]
+                people = [img for img, role in zip(everything, roles) if role == "person"]
+                style_refs = [img for img, role in zip(everything, roles) if role == "style"]
+                logger.info("Роли приложенных снимков: %s", ", ".join(roles))
+                if people:
+                    photo, extra_photos = people[0], people[1:]
+                elif known is not None:
+                    # Приложены одни образцы — людей берём из профилей. Это и
+                    # есть «сделай нас с Аней в стилистике вот этого»: лица уже
+                    # сохранены, приложить человек хотел только образец.
+                    if len(picked) > 1:
+                        from_profile, names = _joint_references(picked)
+                    else:
+                        take = max(1, settings.profile_reference_count)
+                        from_profile = profiles_repo.references(known, limit=take)
+                        names = []
+                    loaded = [await _load_photo(db, user.id, f"/api/media/{mid}")
+                              for mid in from_profile]
+                    loaded = [img for img in loaded if img is not None]
+                    if loaded:
+                        photo, extra_photos = loaded[0], loaded[1:]
+                        used_saved_photo = True
+                        cast = names if len(loaded) == len(names) else []
 
     extra_photos.extend(style_refs)
 
@@ -355,6 +416,8 @@ async def generate(
                 tile=tile, answers=body.answers, free_text=free_text, style=style,
                 editing=editing, intent=intent,
                 style_ref=bool(style_refs), redraw=redraw,
+                subject=profile.kind if profile is not None else "person",
+                cast=cast,
             )
     except content_gen.PromptUnavailable:
         # Переводить запрос нечем. Отказ с возвратом — единственный честный
@@ -488,7 +551,8 @@ async def generate(
 # Слова, которыми просят себя в кадре. Список короткий и намеренно грубый:
 # ошибка здесь стоит одной лишней подстановки снимка, который и так лежит.
 _SELF_WORDS = re.compile(
-    r"\b(me|myself|my (photo|face|picture))\b|меня|себя|мо[её] (фото|лицо)",
+    r"\b(me|myself|us|my (photo|face|picture))\b|меня|себя|нас\b|вдво[её]м"
+    r"|мо[её] (фото|лицо)",
     re.IGNORECASE,
 )
 
@@ -512,6 +576,41 @@ def _has_subject(body: GenerateRequest, free_text: str | None = None) -> bool:
     # слов при этом не требуется вовсе.
     return bool(body.tile_id or body.style_id or body.style_ref_urls
                 or (words or "").strip())
+
+
+async def _picked_profiles(
+    db: AsyncSession, user_id: str, body: GenerateRequest
+) -> list[m.PersonProfile]:
+    """Профили, которые человек выбрал сам, в том порядке, в каком выбрал.
+
+    Порядок — не мелочь: он станет порядком референсов, а по нему модель и
+    поймёт, кто из них кто. Старое одиночное поле остаётся рабочим: сборки, не
+    знающие про совместные кадры, продолжают присылать одного человека.
+    """
+    ids = list(body.profile_ids)
+    if body.profile_id and body.profile_id not in ids:
+        ids.append(body.profile_id)
+
+    found: list[m.PersonProfile] = []
+    for profile_id in ids[:MAX_JOINT_PEOPLE]:
+        profile = await profiles_repo.get(db, profile_id, user_id=user_id)
+        if profile is not None:
+            found.append(profile)
+    return found
+
+
+def _joint_references(picked: list[m.PersonProfile]) -> tuple[list[str], list[str]]:
+    """Снимки и имена для совместного кадра — по одному снимку на человека.
+
+    По одному, а не по три: промпт говорит «первый снимок — Никита, второй —
+    Аня», и это правда ровно до тех пор, пока у каждого по кадру. Дать по три
+    значит сломать нумерацию, а вместе с ней и единственное, что удерживает
+    модель от общего усреднённого лица на двоих.
+    """
+    pairs = [(p.name, profiles_repo.references(p, limit=1)) for p in picked]
+    media_ids = [ids[0] for _, ids in pairs if ids]
+    names = [name for name, ids in pairs if ids]
+    return media_ids, (names if len(names) > 1 else [])
 
 
 def _media_id(photo_url: str | None) -> str | None:

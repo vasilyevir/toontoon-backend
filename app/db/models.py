@@ -353,6 +353,42 @@ class GenerationProvider(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=_now, nullable=False)
 
 
+class PersonProfile(Base):
+    """Набор снимков, по которым человек появляется в кадре.
+
+    Чтобы не прикладывать своё лицо каждый раз. Профилей несколько — себя,
+    партнёра, ребёнка, питомца, — и в разговоре достаточно сказать, про кого
+    речь.
+
+    Снимки лежат списком идентификаторов, а не отдельной таблицей связи:
+    порядок значим (модели связывают референсы с упоминаниями по очереди), а
+    список короткий и всегда читается целиком.
+    """
+
+    __tablename__ = "person_profiles"
+
+    id: Mapped[str] = _id("prf_")
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(String(60), nullable=False)
+    # person | pet — от этого зависит требование сохранить внешность: «тот же
+    # возраст и пол» на кошке инструкция ни о чём.
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="person")
+    media_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    # Что из набора реально уезжает в кадр, по порядку полезности.
+    #
+    # Отдельно от `media_ids`, потому что хранить и отдавать — разные решения:
+    # все снимки нужны, чтобы было из чего выбирать, а в запрос идёт то, что
+    # покрывает человека без повторов. Пусто — берём начало общего списка.
+    reference_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    # Кого подставлять, когда человек не сказал, про кого речь.
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=_now, nullable=False)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (Index("ix_person_profiles_user", "user_id"),)
+
+
 # ─── Media and generations ───────────────────────────────────────────────────
 
 

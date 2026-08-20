@@ -213,3 +213,22 @@ def test_your_own_work_is_edited_not_redrawn():
     assert "change only what is asked for" in again
     assert "keep the same person from the reference photo" not in again
     assert "redrawn as a character" not in again
+
+
+def test_a_scene_anchor_stops_forbidding_people_when_someone_is_in_the_frame():
+    """Промпт не должен спорить сам с собой.
+
+    Якоря `scene_cozy` и `scene_epic` писались под кадры без людей и несут «no
+    people, no characters». Но в них упирается слово «кинематографично» из речи,
+    и якорь оказывается в промпте, весь смысл которого — человек в кадре: сверху
+    «сохрани этого человека», ниже «людей не рисовать».
+    """
+    for key in ("scene_epic", "scene_cozy"):
+        with_person = prompt_style.assemble("a poster of Nikita", style_key=key,
+                                            is_text=False, editing=True)
+        assert "no people" not in with_person
+        assert "keep the same person" in with_person or "redrawn as a character" in with_person
+
+        # Кадр без человека — запрет на месте: он там не случайно.
+        without = prompt_style.assemble("mountains at dawn", style_key=key, is_text=False)
+        assert "no people, no characters" in without

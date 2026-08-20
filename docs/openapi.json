@@ -301,6 +301,14 @@
             "title": "Asked",
             "type": "array"
           },
+          "attachment_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 8,
+            "title": "Attachment Ids",
+            "type": "array"
+          },
           "history": {
             "items": {
               "$ref": "#/components/schemas/ChatMessage"
@@ -348,6 +356,14 @@
             ],
             "title": "Ask About"
           },
+          "options": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Option"
+            },
+            "title": "Options",
+            "type": "array"
+          },
           "ready": {
             "default": false,
             "title": "Ready",
@@ -356,12 +372,51 @@
           "reply": {
             "title": "Reply",
             "type": "string"
+          },
+          "roles": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Roles",
+            "type": "array"
           }
         },
         "required": [
           "reply"
         ],
         "title": "ChatResponse",
+        "type": "object"
+      },
+      "CreateRequest": {
+        "properties": {
+          "kind": {
+            "default": "person",
+            "pattern": "^(person|pet)$",
+            "title": "Kind",
+            "type": "string"
+          },
+          "media_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 15,
+            "minItems": 1,
+            "title": "Media Ids",
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 60,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "media_ids"
+        ],
+        "title": "CreateRequest",
         "type": "object"
       },
       "EventBatch": {
@@ -518,6 +573,24 @@
             "default": false,
             "title": "Post Prompt",
             "type": "boolean"
+          },
+          "profile_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Id"
+          },
+          "profile_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Profile Ids",
+            "type": "array"
           },
           "prompt": {
             "anyOf": [
@@ -852,6 +925,25 @@
         "title": "OnboardingState",
         "type": "object"
       },
+      "Option": {
+        "description": "Готовый ответ на заданный вопрос: подпись человеку, значение нам.",
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "value"
+        ],
+        "title": "Option",
+        "type": "object"
+      },
       "ParseRequest": {
         "properties": {
           "slots": {
@@ -885,6 +977,29 @@
           }
         },
         "title": "ParseResponse",
+        "type": "object"
+      },
+      "PhotoVerdict": {
+        "properties": {
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "reason": {
+            "default": "",
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "index",
+          "ok"
+        ],
+        "title": "PhotoVerdict",
         "type": "object"
       },
       "Plan": {
@@ -977,6 +1092,50 @@
           }
         },
         "title": "ProfileUpdate",
+        "type": "object"
+      },
+      "ProfileView": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "is_default": {
+            "title": "Is Default",
+            "type": "boolean"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "photo_urls": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Photo Urls",
+            "type": "array"
+          },
+          "reference_urls": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Reference Urls",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "is_default"
+        ],
+        "title": "ProfileView",
         "type": "object"
       },
       "PublicUser": {
@@ -1095,6 +1254,54 @@
           "new_password"
         ],
         "title": "ResetPasswordRequest",
+        "type": "object"
+      },
+      "ReviewRequest": {
+        "properties": {
+          "media_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 15,
+            "minItems": 1,
+            "title": "Media Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "media_ids"
+        ],
+        "title": "ReviewRequest",
+        "type": "object"
+      },
+      "ReviewResponse": {
+        "properties": {
+          "chosen": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "title": "Chosen",
+            "type": "array"
+          },
+          "missing": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing",
+            "type": "array"
+          },
+          "photos": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/PhotoVerdict"
+            },
+            "title": "Photos",
+            "type": "array"
+          }
+        },
+        "title": "ReviewResponse",
         "type": "object"
       },
       "RewardResult": {
@@ -3520,7 +3727,7 @@
     },
     "/api/ideas/starters": {
       "get": {
-        "description": "С чего начать, когда ещё ничего нет.\n\nПустой экран и мигающая строка ввода — это чистый лист, а лист и есть самая\nдорогая часть работы. Эти четыре фразы отвечают на единственный вопрос,\nкоторый у человека сейчас есть: «а что тут вообще можно?»",
+        "description": "С чего начать, когда ещё ничего нет.\n\nПустой экран и мигающая строка ввода — это чистый лист, а лист и есть самая\nдорогая часть работы. Эти четыре фразы отвечают на единственный вопрос,\nкоторый у человека сейчас есть: «а что тут вообще можно?»\n\nЕсли профиль собран, идеи пишутся по его лицу: «сделаю тебя в стилистике\nкомикса» цепляется за человека сильнее, чем общий список услуг, — а лицо у\nнас уже есть, и второй раз просить его незачем.",
         "operationId": "starters_api_ideas_starters_get",
         "parameters": [
           {
@@ -3904,6 +4111,376 @@
         "summary": "List Plans",
         "tags": [
           "billing"
+        ]
+      }
+    },
+    "/api/profiles": {
+      "get": {
+        "description": "Все профили человека, основной первым.\n\nЗаодно собирает профиль «Вы», если его ещё нет: отдельного экрана «загрузите\nпять фотографий» быть не должно — человек уже присылал свои снимки, по ним и\nсоберём.",
+        "operationId": "list_profiles_api_profiles_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "arteki-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Arteki-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProfileView"
+                  },
+                  "title": "Response List Profiles Api Profiles Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Profiles",
+        "tags": [
+          "profiles"
+        ]
+      },
+      "post": {
+        "description": "Завести профиль: себя, партнёра, ребёнка, питомца.",
+        "operationId": "create_profile_api_profiles_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "arteki-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Arteki-Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Profile",
+        "tags": [
+          "profiles"
+        ]
+      }
+    },
+    "/api/profiles/review": {
+      "post": {
+        "description": "Что из набора годится и какого снимка не хватает.\n\nПустой ответ законен: зрение недоступно. Профиль тогда собирается как есть —\nотказывать человеку из-за того, что мы не смогли посмотреть, значило бы\nнаказывать его за нашу неисправность.",
+        "operationId": "review_api_profiles_review_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "arteki-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Arteki-Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Review",
+        "tags": [
+          "profiles"
+        ]
+      }
+    },
+    "/api/profiles/{profile_id}": {
+      "delete": {
+        "description": "Убрать профиль. Снимки остаются: они живут в библиотеке сами по себе.",
+        "operationId": "delete_profile_api_profiles__profile_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "profile_id",
+            "required": true,
+            "schema": {
+              "title": "Profile Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "arteki-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Arteki-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Delete Profile Api Profiles  Profile Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Profile",
+        "tags": [
+          "profiles"
+        ]
+      }
+    },
+    "/api/profiles/{profile_id}/default": {
+      "post": {
+        "operationId": "set_default_api_profiles__profile_id__default_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "profile_id",
+            "required": true,
+            "schema": {
+              "title": "Profile Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "arteki-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Arteki-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Default",
+        "tags": [
+          "profiles"
         ]
       }
     },

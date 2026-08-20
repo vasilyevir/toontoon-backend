@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import MediaAsset
 from app.db.repositories import chat as chat_repo
 from app.db.repositories import generations as generations_repo
+from app.db.repositories import profiles as profiles_repo
 from app.storage import get_storage
 from app.db.session import get_session as get_db_session
 from app.deps import Context, required_context
@@ -38,13 +39,31 @@ class IdeasResponse(BaseModel):
 
 
 @router.get("/ideas/starters", response_model=IdeasResponse)
-async def starters(_: Context = Depends(required_context)) -> IdeasResponse:
+async def starters(
+    ctx: Context = Depends(required_context),
+    db: AsyncSession = Depends(get_db_session),
+) -> IdeasResponse:
     """С чего начать, когда ещё ничего нет.
 
     Пустой экран и мигающая строка ввода — это чистый лист, а лист и есть самая
     дорогая часть работы. Эти четыре фразы отвечают на единственный вопрос,
     который у человека сейчас есть: «а что тут вообще можно?»
+
+    Если профиль собран, идеи пишутся по его лицу: «сделаю тебя в стилистике
+    комикса» цепляется за человека сильнее, чем общий список услуг, — а лицо у
+    нас уже есть, и второй раз просить его незачем.
     """
+    user, _ = ctx
+    profile = await profiles_repo.get_default(db, user.id)
+    faces = profiles_repo.references(profile, limit=1) if profile else []
+    if faces:
+        asset = await db.get(MediaAsset, faces[0])
+        data = await get_storage().get(asset.storage_key) if asset else None
+        if data:
+            _, ideas = await gpt_service.photo_remark_and_ideas(data)
+            if ideas:
+                return IdeasResponse(ideas=ideas)
+
     return IdeasResponse(ideas=await gpt_service.starter_ideas())
 
 

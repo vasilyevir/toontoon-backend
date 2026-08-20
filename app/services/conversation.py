@@ -191,3 +191,22 @@ def is_ready(
     if asked:
         return True
     return covered_weight(known, intent=intent, has_photo=has_photo) >= READY_WEIGHT
+
+
+# На что отвечает приложенный образец стиля.
+#
+# «Сделай в такой же стилистике» — это уже ответ про технику, палитру и
+# референс, показанный картинкой вместо слов. Спрашивать после этого «как это
+# должно выглядеть: фото, мультик, аниме?» значит не смотреть туда, куда человек
+# показывает пальцем.
+SAMPLE_ANSWERS = ("technique", "palette", "reference")
+
+
+def with_sample(known: dict[str, str], *, intent: str) -> dict[str, str]:
+    """Считать закрытым то, на что ответил образец."""
+    fields = set(slots_for(intent))
+    answered = dict(known)
+    for field in SAMPLE_ANSWERS:
+        if field in fields and not answered.get(field):
+            answered[field] = "from the attached sample"
+    return answered
