@@ -263,6 +263,9 @@ _REDRAW_NOTE = (
     "are doing — as if it is being drawn from scratch. Do not write «change», "
     "«update» or «keep»: nothing from the photograph survives except who they "
     "are.\n"
+    "- Call them «the character», never «the person in the photo»: that phrase "
+    "points the editor back at the photograph, and it obeys — the face comes "
+    "out photographic on a drawn background.\n"
 )
 
 
@@ -1090,6 +1093,43 @@ async def style_of_sample(image: tuple[bytes, str]) -> str | None:
 
     key = (raw or "").strip().strip(".").lower().split()[0] if raw and raw.strip() else ""
     return key if key in prompt_style.PRESETS else None
+
+
+_IS_DRAWING_SYSTEM = (
+    "You are shown one finished picture. Answer with one word and nothing "
+    "else: PHOTOGRAPH if it is a photograph (or a photographic face pasted "
+    "onto a drawn background), DRAWING if it is drawn or rendered — anime, "
+    "comic, 3D cartoon, painting. Judge how it is made, not what it shows."
+)
+
+
+async def looks_photographic(data: bytes) -> bool:
+    """Вернулась ли фотография там, где просили рисунок.
+
+    Проверка нужна, потому что редактор срывается молча: промпт верный, стиль
+    назван трижды, а на выходе снимок человека на рисованном фоне. Для него это
+    не ошибка, для человека — брак, за который он заплатил.
+
+    Сомнение трактуем в пользу картинки: «не разобрали» значит «отдаём как
+    есть». Лишний повтор стоит денег, а лишняя задержка — доверия.
+    """
+    if not settings.openai_enabled:
+        return False
+
+    small = base64.b64encode(storage_images.preview(data)).decode()
+    try:
+        raw = await _call(
+            [{"role": "system", "content": _IS_DRAWING_SYSTEM},
+             {"role": "user", "content": [
+                 {"type": "image_url",
+                  "image_url": {"url": f"data:image/jpeg;base64,{small}"}}]}],
+            max_tokens=8,
+            temperature=0,
+            model=settings.slot_extraction_model or None,
+        )
+    except Exception:  # noqa: BLE001
+        return False
+    return "photograph" in (raw or "").strip().lower()
 
 
 # ─── Что можно сделать с приложенным снимком ─────────────────────────────────

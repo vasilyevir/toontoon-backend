@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import replace
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
@@ -324,7 +325,12 @@ async def generate(
     # переставал подставляться вовсе. Приходил постер без человека — а на месте
     # человека модель придумывала кого-то своего.
     wants_people = (
-        len(picked) > 1
+        # Выбранный профиль — это и есть ответ на вопрос «кто в кадре»: так
+        # подписан сам список. Раньше одного выбранного не хватало, и «постер:
+        # я в форме Lakers» уходил без единого снимка — модель придумывала на
+        # его месте незнакомого человека. Хуже этого в продукте про своё лицо
+        # ничего нет.
+        bool(picked)
         or intent in conversation.NEEDS_PHOTO
         or _asks_for_self(free_text)
         or (bool(restated) and await _last_frame_had_person(db, user.id))
@@ -336,7 +342,7 @@ async def generate(
         if len(picked) > 1:
             media_ids, cast = _joint_references(picked)
         else:
-            take = max(1, settings.profile_reference_count)
+            take = _reference_take(style)
             media_ids = profiles_repo.references(profile, limit=take) if profile else []
         if media_ids:
             photo_url = f"/api/media/{media_ids[0]}"
@@ -410,8 +416,8 @@ async def generate(
                     if len(picked) > 1:
                         from_profile, names = _joint_references(picked)
                     else:
-                        take = max(1, settings.profile_reference_count)
-                        from_profile = profiles_repo.references(known, limit=take)
+                        from_profile = profiles_repo.references(
+                            known, limit=_reference_take(style))
                         names = []
                     loaded = [await _load_photo(db, user.id, f"/api/media/{mid}")
                               for mid in from_profile]
@@ -544,6 +550,14 @@ async def generate(
         params={"aspect": aspect} if aspect in ASPECTS else {},
     )
 
+    prefer_used = (
+        prefer_refine
+        or (prompt_style.LETTERING_PROVIDER if lettering else None)
+        or prompt_style.preferred_provider(intent)
+        or prompt_style.preferred_provider(style)
+        or ((style_row.prompt_template or {}).get("provider") if style_row else None)
+    )
+
     try:
         result = await generation_core.run(
             db, request,
@@ -553,16 +567,12 @@ async def generate(
             # Порядок доводов: свежее — сильнее. Уточнение человек дал только
             # что, глядя на кадр; назначение он выбрал в начале разговора;
             # предпочтение стиля записано в каталоге месяц назад.
-            prefer=prefer_refine
             # Назначение и стиль смотрятся оба: новые сборки шлют «poster» в
             # `intent`, старые — в `style`, а маршрут к тому, кто умеет буквы,
             # нужен и тем и другим. Как и просьбе про буквы, сказанной словами:
             # исполнитель выбирается под то, что в кадре должно появиться, а не
             # под то, как человек это назвал.
-            or (prompt_style.LETTERING_PROVIDER if lettering else None)
-            or prompt_style.preferred_provider(intent)
-            or prompt_style.preferred_provider(style)
-            or ((style_row.prompt_template or {}).get("provider") if style_row else None),
+            prefer=prefer_used,
         )
     except generation_core.GenerationUnavailable as exc:
         await _record_failure(record, str(exc))
@@ -576,6 +586,17 @@ async def generate(
         await _record_failure(record, repr(exc))
         await wallet.cancel(db, user.id, payment)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="Generation failed")
+
+    # Рисунок, вернувшийся фотографией, — брак, и человек за него уже заплатил.
+    #
+    # Редактор срывается молча и не каждый раз: на одной и той же просьбе два
+    # кадра из трёх приходят аниме-постером, третий — снимком человека на
+    # рисованном фоне. Промпт при этом верный, стиль назван и в начале, и в
+    # конце. Поэтому смотрим на результат и переделываем один раз — за свой
+    # счёт, а не за его.
+    if editing and photo is not None and (style or "") != "realistic":
+        result, prompt = await _redraw_if_photographic(db, request, result, prompt,
+                                                       prefer=prefer_used)
 
     await wallet.confirm(db, payment)
 
@@ -617,9 +638,14 @@ async def generate(
 
 # Слова, которыми просят себя в кадре. Список короткий и намеренно грубый:
 # ошибка здесь стоит одной лишней подстановки снимка, который и так лежит.
+# «Я» отдельным словом — такая же просьба про лицо, как «меня».
+#
+# «Постер: я в форме Lakers» не совпадало ни с одним словом из списка, и снимок
+# не подставлялся вовсе. Границы слова здесь обязательны: «я» встречается
+# внутри доброй половины русских слов.
 _SELF_WORDS = re.compile(
     r"\b(me|myself|us|my (photo|face|picture))\b|меня|себя|нас\b|вдво[её]м"
-    r"|мо[её] (фото|лицо)",
+    r"|\bя\b|\bмне\b|\bмо[йяё]\b|мо[её] (фото|лицо)",
     re.IGNORECASE,
 )
 
@@ -716,6 +742,55 @@ async def _last_frame_had_person(db: AsyncSession, user_id: str) -> bool:
         .limit(1)
     )
     return bool(await db.scalar(stmt))
+
+
+async def _redraw_if_photographic(
+    db: AsyncSession,
+    request: "generation_core.GenerationRequest",
+    result,
+    prompt: str,
+    *,
+    prefer: str | None,
+):
+    """Посмотреть на готовый кадр и, если это фотография, нарисовать заново.
+
+    Один повтор, не больше: если и он вернулся снимком, отдаём что есть —
+    бесконечно платить за упрямство модели нельзя, а человек ждёт картинку.
+
+    Возвращает кадр и промпт, которым он в итоге сделан: в историю должно лечь
+    то, что действительно уехало исполнителю.
+    """
+    if not await gpt_service.looks_photographic(result.data):
+        return result, prompt
+
+    logger.info("Кадр приехал фотографией там, где просили рисунок — переделываем")
+    harder = f"{prompt}, {prompt_style.REDRAW_HARDER}"
+    second = replace(request, prompt=harder)
+    try:
+        return await generation_core.run(db, second, prefer=prefer), harder
+    except Exception:  # noqa: BLE001 — повтор не удался, отдаём первый кадр
+        logger.warning("Повтор не удался, отдаём первый кадр")
+        return result, prompt
+
+
+def _reference_take(style: str | None) -> int:
+    """Сколько снимков человека отдавать модели.
+
+    Один — когда картинку рисуют. Замер 21 августа: тот же постер с профилем из
+    трёх снимков дважды пришёл фотографией (во втором кадре вернулся даже фон
+    из референса — парк с деревьями), с профилем из одного снимка дважды пришёл
+    аниме-постером. Чем больше фотографий в запросе, тем увереннее редактор
+    считает задачу правкой фотографии, а не рисованием заново.
+
+    Три — когда картинку снимают: там тяга к фотографии и нужна, а лишние
+    ракурсы помогают сходству.
+
+    Стиль неизвестен — считаем, что рисуют: без явного слова про фотографию
+    сборщик почти всегда выбирает рисованный якорь.
+    """
+    if (style or "") == "realistic":
+        return max(1, settings.profile_reference_count)
+    return 1
 
 
 async def _picked_profiles(

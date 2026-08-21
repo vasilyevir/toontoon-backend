@@ -342,6 +342,13 @@ def assemble(scene: str, *, style_key: str, is_text: bool, editing: bool = False
     if is_text:
         parts.append(LAYOUT_BLOCK)
     parts.append(technical)
+    if editing and is_drawn(style_key):
+        # Последнее слово — о том, что это рисунок целиком.
+        #
+        # Хвост промпта модель взвешивает сильнее середины, а сорваться она
+        # может именно здесь: фон рисуется, лицо остаётся фотографией, и
+        # получается человек, вырезанный из снимка и вклеенный в рисунок.
+        parts.append(WHOLLY_DRAWN)
     return strip_brands(", ".join(p for p in parts if p))
 
 
@@ -525,6 +532,28 @@ def identity_clause(*, subject: str, drawn: bool = False, cutout: bool = False,
     else:
         base = IDENTITY_CLAUSE
     return f"{base}. {CUTOUT_CLAUSE}" if cutout else base
+
+
+# Последняя строка промпта для рисованных стилей.
+WHOLLY_DRAWN = (
+    "every part of this picture is drawn, the face and the skin included: no "
+    "photographic face, no photographed skin texture, no cut-out photograph "
+    "pasted into the artwork"
+)
+
+
+# Что дописывается на второй заход, когда первый вернулся фотографией.
+#
+# Тон другой намеренно: обычные формулировки редактор уже прочитал и не
+# послушался, поэтому здесь прямая констатация ошибки. На повторе это работает
+# лучше, чем ещё одно вежливое описание стиля.
+REDRAW_HARDER = (
+    "IMPORTANT: the previous attempt came back as a photograph and was "
+    "rejected. Do not reuse or retouch the reference photograph. Draw the "
+    "whole picture from scratch: hand-drawn outlines, flat shading, drawn "
+    "skin and drawn hair. The only thing taken from the photograph is who "
+    "this person is"
+)
 
 
 # Стили, которые рисуют, а не снимают. Всё, кроме фотореалистичного якоря.

@@ -128,3 +128,85 @@ def test_expression_comes_from_the_scene(clause):
     # Набор снимков почти всегда начинается с улыбки — так люди фотографируются.
     # Без этой оговорки человек улыбался и под дождём, и на драматичном постере.
     assert "do not copy the smile" in clause
+
+
+# ─── Рисунок, вернувшийся фотографией ────────────────────────────────────────
+
+
+class FakeResult:
+    def __init__(self, data: bytes):
+        self.data = data
+        self.provider_id = "p"
+        self.model = "m"
+
+
+@pytest.fixture
+def guard(monkeypatch):
+    """Подмена зрения и исполнителя: проверяем решение, а не сеть."""
+    from app.routers import generate as router
+    from app.services.generation import operations
+
+    calls: dict = {"runs": []}
+
+    def vision(verdicts):
+        answers = list(verdicts)
+
+        async def _look(data):
+            return answers.pop(0) if answers else False
+
+        monkeypatch.setattr(router.gpt_service, "looks_photographic", _look)
+
+    async def _run(db, request, prefer=None):
+        calls["runs"].append(request.prompt)
+        return FakeResult(b"second")
+
+    monkeypatch.setattr(router.generation_core, "run", _run)
+    request = operations.GenerationRequest(
+        operation=operations.Operation.IMAGE_TO_IMAGE, prompt="anime poster",
+    )
+    return vision, calls, request
+
+
+async def test_a_photograph_is_drawn_again(guard):
+    from app.routers.generate import _redraw_if_photographic
+
+    vision, calls, request = guard
+    vision([True])
+    result, prompt = await _redraw_if_photographic(
+        None, request, FakeResult(b"first"), "anime poster", prefer=None)
+    # Переделали, и на повтор ушло прямое «прошлый кадр вернулся фотографией»:
+    # вежливое описание стиля модель уже прочитала и не послушалась.
+    assert calls["runs"] and "previous attempt came back as a photograph" in calls["runs"][0]
+    assert result.data == b"second"
+    assert prompt.endswith(prompt_style.REDRAW_HARDER)
+
+
+async def test_a_drawing_is_left_alone(guard):
+    from app.routers.generate import _redraw_if_photographic
+
+    vision, calls, request = guard
+    vision([False])
+    result, prompt = await _redraw_if_photographic(
+        None, request, FakeResult(b"first"), "anime poster", prefer=None)
+    # Лишний повтор — это наши деньги и чужое ожидание.
+    assert calls["runs"] == []
+    assert result.data == b"first"
+    assert prompt == "anime poster"
+
+
+async def test_a_failed_retry_still_returns_a_picture(monkeypatch, guard):
+    from app.routers import generate as router
+    from app.routers.generate import _redraw_if_photographic
+
+    vision, _, request = guard
+    vision([True])
+
+    async def _boom(db, request, prefer=None):
+        raise RuntimeError("провайдер лёг")
+
+    monkeypatch.setattr(router.generation_core, "run", _boom)
+    result, prompt = await _redraw_if_photographic(
+        None, request, FakeResult(b"first"), "anime poster", prefer=None)
+    # Человек заплатил и ждёт картинку: неудачный повтор не повод отдать ничего.
+    assert result.data == b"first"
+    assert prompt == "anime poster"
