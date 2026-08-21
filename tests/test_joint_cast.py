@@ -52,9 +52,12 @@ def test_cast_clause_survives_more_names_than_ordinals():
 
 
 def test_drawn_cast_is_redrawn_not_photographed():
-    drawn = prompt_style.cast_clause(["Igor", "Anya"], drawn=True)
+    drawn = prompt_style.cast_clause(["Igor", "Anya"], drawn=True,
+                                     medium="an anime illustration")
     photo = prompt_style.cast_clause(["Igor", "Anya"], drawn=False)
-    assert "redrawn in this style" in drawn
+    # Носитель назван первым словом: «перерисуй это аниме-иллюстрацией».
+    # Иначе модель к моменту, когда узнаёт про технику, уже правит фотографию.
+    assert drawn.startswith("redraw this as an anime illustration, never a photograph")
     assert "photographically themselves" in photo
 
 
@@ -66,10 +69,11 @@ def test_assemble_puts_the_cast_first():
         "on a beach at sunset", style_key="anime", is_text=False,
         editing=True, cast=["Igor", "Anya"],
     )
-    # Модель читает слева направо, и «нас двое» должно стоять раньше стиля:
+    # Модель читает слева направо, и «нас двое» должно стоять раньше якоря:
     # иначе сначала заказан аниме-кадр, а люди в нём — уточнение.
-    assert prompt.startswith("2 different people")
-    assert prompt.index("Igor") < prompt.index("anime")
+    assert prompt.startswith("redraw this as an anime illustration")
+    assert "2 different people" in prompt
+    assert prompt.index("Igor") < prompt.index("anime illustration style")
 
 
 def test_single_name_keeps_the_old_identity_clause():
@@ -79,7 +83,7 @@ def test_single_name_keeps_the_old_identity_clause():
     # Одному человеку имя не нужно — ему нужно сходство, и требование про него
     # написано отдельно и подробнее.
     assert "different people" not in prompt
-    assert prompt.startswith(prompt_style.DRAWN_IDENTITY_CLAUSE[:40])
+    assert prompt_style.DRAWN_IDENTITY_CLAUSE[:40] in prompt
 
 
 def test_cast_is_ignored_when_nothing_is_edited():
@@ -94,7 +98,7 @@ def test_cast_is_ignored_when_nothing_is_edited():
 def test_poster_with_two_people_still_cuts_them_out_of_their_rooms():
     prompt = prompt_style.assemble(
         "birthday poster", style_key="anime", is_text=False, editing=True,
-        lettering=True, cast=["Igor", "Anya"],
+        poster=True, cast=["Igor", "Anya"],
     )
     assert "different people" in prompt
     assert prompt_style.CUTOUT_CLAUSE in prompt

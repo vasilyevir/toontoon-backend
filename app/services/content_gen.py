@@ -137,6 +137,9 @@ async def build_prompt_for(
     redraw: bool = False,
     subject: str = "person",
     cast: list[str] | None = None,
+    lettering: bool | None = None,
+    poster: bool | None = None,
+    lettering_text: str | None = None,
 ) -> tuple[str, str]:
     """Собрать промпт, ничего не генерируя.
 
@@ -161,6 +164,9 @@ async def build_prompt_for(
         redraw=redraw,
         subject=subject,
         cast=cast,
+        lettering=lettering,
+        poster=poster,
+        lettering_text=lettering_text,
     )
     if not prompt:
         user_text = " ".join(filter(None, [free_text, *answers.values()]))

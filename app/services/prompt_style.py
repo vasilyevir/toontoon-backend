@@ -287,7 +287,7 @@ def _without_scenery(text: str) -> str:
 
 
 def assemble(scene: str, *, style_key: str, is_text: bool, editing: bool = False,
-             subject: str = "person", lettering: bool = False,
+             subject: str = "person", poster: bool = False,
              style_ref: bool = False, redraw: bool = False,
              cast: list[str] | None = None) -> str:
     """Wrap a scene description with the style anchor (first) and technical (last).
@@ -297,7 +297,7 @@ def assemble(scene: str, *, style_key: str, is_text: bool, editing: bool = False
     сходство лица — то единственное, ради чего фотографию вообще прислали;
     начинать с описания стиля значит предлагать нарисовать заново.
 
-    ``lettering`` — собирается постер. Тогда из якоря и технического хвоста
+    ``poster`` — собирается постер. Тогда из якоря и технического хвоста
     вырезаются просьбы про фон и добавляется композиция постера: иначе стиль
     заказывает пейзаж поверх того, что человек просил заполнить буквами.
 
@@ -319,7 +319,7 @@ def assemble(scene: str, *, style_key: str, is_text: bool, editing: bool = False
     # кто-то есть.
     if editing:
         anchor = _with_people(anchor)
-    if lettering:
+    if poster:
         anchor, technical = _without_scenery(anchor), _without_scenery(technical)
     if not editing:
         parts = []
@@ -327,16 +327,17 @@ def assemble(scene: str, *, style_key: str, is_text: bool, editing: bool = False
         # Своя прошлая работа правится, а не пересоздаётся.
         parts = [REDRAW_CLAUSE]
     elif cast and len(cast) > 1:
-        parts = [cast_clause(cast, drawn=is_drawn(style_key))]
-        if lettering:
+        parts = [cast_clause(cast, drawn=is_drawn(style_key),
+                             medium=medium_of(style_key))]
+        if poster:
             parts.append(CUTOUT_CLAUSE)
     else:
         parts = [identity_clause(subject=subject, drawn=is_drawn(style_key),
-                                 cutout=lettering)]
+                                 cutout=poster, medium=medium_of(style_key))]
     if style_ref:
         parts.append(STYLE_REF_CLAUSE)
     parts += [anchor, scene]
-    if lettering:
+    if poster:
         parts.append(POSTER_LAYOUT)
     if is_text:
         parts.append(LAYOUT_BLOCK)
@@ -361,10 +362,24 @@ QUALITY_BLOCK = (
 # Первое, что читает модель на редактировании снимка. Формулировка нарочно
 # избыточна: у третьего поколения Kling нет ручки на лицо, и сходство держится
 # только текстом, поэтому перечислено по пунктам, что именно менять нельзя.
+# Что берётся с референса, а что нет.
+#
+# Сходство — это черты, а не мина. Референс почти всегда снят улыбающимся: люди
+# так фотографируются. Модель копирует с него всё подряд, и человек получает
+# одну и ту же улыбку в любой сцене — в драматичном кадре, на постере, ночью
+# под дождём. Поэтому выражение и поза названы отдельно и отданы сцене: они
+# часть того, что происходит в кадре, а не часть того, кто этот человек.
+_EXPRESSION_CLAUSE = (
+    "their expression, gaze and pose come from the scene being described, not "
+    "from the reference photo — do not copy the smile or the head angle of the "
+    "reference unless the scene asks for them"
+)
+
 IDENTITY_CLAUSE = (
     "keep the same person from the reference photo: same face and facial features, "
     "same hairstyle and hair colour, same skin tone, same body type, same age and gender, "
-    "clearly recognisable as the same individual, do not replace them with another person"
+    "clearly recognisable as the same individual, do not replace them with another person. "
+    f"{_EXPRESSION_CLAUSE}"
 )
 
 # То же для питомца. Отдельный текст, а не правка общего: «same age and gender,
@@ -394,7 +409,8 @@ DRAWN_IDENTITY_CLAUSE = (
     "not somebody else. This is a drawing, not a traced photograph — stylise "
     "them fully, the linework, shading and proportions belong to the style and "
     "not to the photograph. Their clothes are part of the scene, not part of "
-    "who they are"
+    "who they are. "
+    f"{_EXPRESSION_CLAUSE}"
 )
 
 
@@ -443,7 +459,8 @@ ORDINALS = ("the first reference photo", "the second reference photo",
             "the third reference photo", "the fourth reference photo")
 
 
-def cast_clause(names: list[str], *, drawn: bool = False) -> str:
+def cast_clause(names: list[str], *, drawn: bool = False,
+                medium: str | None = None) -> str:
     """Кто есть кто, когда в кадре не один человек.
 
     Модель связывает референсы с людьми по порядку, поэтому «первый снимок —
@@ -456,17 +473,42 @@ def cast_clause(names: list[str], *, drawn: bool = False) -> str:
         f"{ORDINALS[i] if i < len(ORDINALS) else f'reference photo {i + 1}'} is {name}"
         for i, name in enumerate(names)
     )
-    look = ("redrawn in this style but recognisably themselves"
+    look = ("redrawn but recognisably themselves"
             if drawn else "photographically themselves")
+    # Та же оговорка про выражение, что и для одного человека: в совместном
+    # кадре одинаковая улыбка с двух разных снимков читается ещё хуже.
+    opening = (f"redraw this as {medium or 'an illustration'}, never a photograph. "
+               if drawn else "")
     return (
-        f"{len(names)} different people must all appear together in one picture, "
+        f"{opening}{len(names)} different people must all appear together in one picture, "
         f"each {look}: {who}. Keep every one of them their own person: never "
         "merge their faces, never draw the same person twice, never leave "
-        "anyone out"
+        f"anyone out. {_EXPRESSION_CLAUSE}"
     )
 
 
-def identity_clause(*, subject: str, drawn: bool = False, cutout: bool = False) -> str:
+# Носитель, названный коротко: «аниме-иллюстрация», «3D-мультфильм».
+#
+# Нужен для первой строки промпта. Требование сохранить человека начиналось
+# словами «redrawn as a character in this style», где «этот стиль» ещё не
+# назван — якорь стоит ниже. Модель читает слева направо и к моменту, когда
+# узнаёт про аниме, уже решила, что правит фотографию: результат — тот же
+# снимок с подкрашенным фоном.
+MEDIUM: dict[str, str] = {
+    "anime": "an anime illustration",
+    "3d_cartoon": "a 3D cartoon render",
+    "semi_real_3d": "a stylised 3D render",
+    "scene_cozy": "a cosy stylised 3D illustration",
+    "scene_epic": "an epic stylised 3D illustration",
+}
+
+
+def medium_of(style_key: str) -> str:
+    return MEDIUM.get(style_key, "an illustration")
+
+
+def identity_clause(*, subject: str, drawn: bool = False, cutout: bool = False,
+                    medium: str | None = None) -> str:
     """Требование сохранить того, кто на снимке.
 
     ``cutout`` — из снимка берётся только человек, а его окружение
@@ -474,8 +516,14 @@ def identity_clause(*, subject: str, drawn: bool = False, cutout: bool = False) 
     """
     if subject == "pet":
         base = PET_IDENTITY_CLAUSE
+    elif drawn:
+        # Носитель — первым словом. «Нарисуй это аниме-иллюстрацией» модель
+        # понимает сразу; «сохрани человека в этом стиле» она понимает как
+        # правку фотографии, которой стиль потом припишут.
+        base = (f"redraw this as {medium or 'an illustration'}, "
+                f"never a photograph: {DRAWN_IDENTITY_CLAUSE}")
     else:
-        base = DRAWN_IDENTITY_CLAUSE if drawn else IDENTITY_CLAUSE
+        base = IDENTITY_CLAUSE
     return f"{base}. {CUTOUT_CLAUSE}" if cutout else base
 
 
@@ -832,9 +880,11 @@ RESTORE_PROMPT = (
 #
 # Поэтому это не подсказка, а маршрут: без него человек получит красивый кадр
 # без единственного, ради чего он и пришёл.
+LETTERING_PROVIDER = "openrouter_gemini_pro"
+
 PREFERRED_PROVIDER: dict[str, str] = {
-    "poster": "openrouter_gemini_pro",
-    "card": "openrouter_gemini_pro",
+    "poster": LETTERING_PROVIDER,
+    "card": LETTERING_PROVIDER,
 }
 
 

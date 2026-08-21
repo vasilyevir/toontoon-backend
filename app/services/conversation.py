@@ -66,13 +66,24 @@ ASK_ABOUT: dict[str, str] = {
 }
 
 
-def detect_intent(text: str) -> str:
-    """Что человек делает, по его же словам."""
+def explicit_intent(text: str) -> str | None:
+    """Назначение, названное словами. `None` — не названо ни одним.
+
+    Отдельно от `detect_intent`, потому что «не названо» и «портрет» — разные
+    ответы. Портрет это умолчание, а умолчание не должно перебивать то, что
+    человек сказал минуту назад: «хочу постер» после портрета — новая просьба,
+    и отличить её от молчания можно только так.
+    """
     low = text.lower()
     for intent, marks in INTENT_MARKS.items():
         if any(mark in low for mark in marks):
             return intent
-    return DEFAULT_INTENT
+    return None
+
+
+def detect_intent(text: str) -> str:
+    """Что человек делает, по его же словам."""
+    return explicit_intent(text) or DEFAULT_INTENT
 
 
 def slots_for(intent: str) -> list[str]:

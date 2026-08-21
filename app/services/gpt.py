@@ -216,6 +216,25 @@ _NO_LETTERS = (
     "clean empty space instead.\n"
 )
 
+# Просьба про буквы вне постера: надпись нужна, а плакатная вёрстка — нет.
+#
+# «Вместо akai напиши моё имя» — это заказ надписи в той же картинке, а не
+# заказ плаката: композицию человек уже показал образцом, и переверстывать её
+# по нашим правилам значит не сделать то, о чём просили.
+_LETTERING_PLAIN = (
+    "- The words the person gave MUST appear in the image, spelled exactly as "
+    "they wrote them, set as real lettering large enough to read at a glance.\n"
+    "- Do not invent extra words, captions or slogans they did not ask for.\n"
+)
+
+_POSTER_NO_WORDS = (
+    "- This is a POSTER, but no words were given. Compose it with clean empty "
+    "space where a headline would go, and do NOT invent any lettering: no "
+    "words, no captions, no slogans, no signage.\n"
+    "- Compose a poster, not a photograph of a scene: flat graphic shapes and "
+    "blocks of colour, generous margins, the subject against those shapes.\n"
+)
+
 _LETTERING = (
     "- This is a POSTER, and a poster lives by its lettering. The words the "
     "person gave MUST appear in the image, spelled exactly as they wrote them, "
@@ -231,10 +250,40 @@ _LETTERING = (
 )
 
 
-def _system_for(*, editing: bool, lettering: bool) -> str:
-    """Инструкция сборщику: что писать и можно ли писать буквы."""
+# Когда кадр не правят, а перерисовывают.
+#
+# Инструкция редактору написана про правку: «опиши только то, что меняется».
+# Для фотографии это верно. Для аниме — нет: меняется всё, кроме того, кто этот
+# человек. Со словами «change the setting, update the outfit» модель послушно
+# возвращала ту же фотографию с другим фоном — человек прикладывал аниме-постер
+# и получал себя же на закатной улице.
+_REDRAW_NOTE = (
+    "- The output is a NEW drawing of this person, not a retouched photograph. "
+    "Describe the finished picture — where they are, what they wear, what they "
+    "are doing — as if it is being drawn from scratch. Do not write «change», "
+    "«update» or «keep»: nothing from the photograph survives except who they "
+    "are.\n"
+)
+
+
+def _system_for(*, editing: bool, lettering: bool, poster: bool = False,
+                drawn: bool = False) -> str:
+    """Инструкция сборщику: что писать и можно ли писать буквы.
+
+    Буквы и постер — разные вещи. Постер живёт вёрсткой: плоские формы, поля,
+    иерархия. Просьба «напиши здесь моё имя» — это только надпись, и навязывать
+    ей плакатную вёрстку значит переделать картинку, которую человек уже
+    показал образцом.
+    """
     base = _EDIT_SYSTEM if editing else _SCENE_SYSTEM
-    return base + (_LETTERING if lettering else _NO_LETTERS)
+    if drawn and editing:
+        base += _REDRAW_NOTE
+    if poster:
+        # Слов нет — постер собирается с чистым местом под заголовок. Требовать
+        # надпись, не сказав какую, значит просить модель придумать слова, и она
+        # придумывает: набирает то, что видит, вплоть до самой просьбы.
+        return base + (_LETTERING if lettering else _POSTER_NO_WORDS)
+    return base + (_LETTERING_PLAIN if lettering else _NO_LETTERS)
 
 _CHAT_SYSTEM = """You are Toontoon, a warm, friendly AI assistant that helps people create
 beautiful images, postcards and videos.
@@ -400,6 +449,9 @@ async def build_prompt(
     redraw: bool = False,
     subject: str = "person",
     cast: list[str] | None = None,
+    lettering: bool | None = None,
+    poster: bool | None = None,
+    lettering_text: str | None = None,
 ) -> tuple[str, str]:
     """Return ``(prompt, negative_prompt)`` for the image generator.
 
@@ -487,11 +539,23 @@ async def build_prompt(
                 parts.append(f"{q.text} {val}")
     if free_text:
         parts.append(f"User idea: {free_text}")
+    if lettering_text:
+        # Дословно и отдельной строкой: в общей просьбе слова для надписи
+        # теряются среди всего остального, а набрать их надо ровно так, как
+        # человек написал.
+        parts.append(f'The exact words to set in the picture: "{lettering_text}". '
+                     "No other words.")
 
     user_msg = "\n".join(parts) or "A warm, friendly greeting image"
 
-    lettering = (intent or "").strip().lower() in LETTERING_INTENTS
-    system = _system_for(editing=editing, lettering=lettering)
+    # Буквы решает вызывающий: он видит и слова человека, и назначение. Здесь
+    # остаётся умолчание для старых путей, которые про надпись ничего не знают.
+    if poster is None:
+        poster = (intent or "").strip().lower() in LETTERING_INTENTS
+    if lettering is None:
+        lettering = poster and bool(lettering_text)
+    system = _system_for(editing=editing, lettering=lettering, poster=poster,
+                         drawn=prompt_style.is_drawn(style_key))
     if style_ref:
         # Иначе сборщик пересказывает стиль словами — «в стиле как на образце»,
         # — и модель получает описание вместо самого образца, который у неё уже
@@ -514,7 +578,7 @@ async def build_prompt(
         return "", ""
     prompt = prompt_style.assemble(
         scene, style_key=style_key, is_text=is_text, editing=editing,
-        lettering=lettering, style_ref=style_ref, redraw=redraw,
+        poster=poster, style_ref=style_ref, redraw=redraw,
         subject=subject, cast=cast,
     )
     log.info("[build_prompt] style=%s → key=%s editing=%s | scene: %s",
@@ -977,6 +1041,56 @@ async def reference_roles(
     if "person" not in roles and not person_known:
         return []
     return roles
+
+_SAMPLE_STYLE_SYSTEM = (
+    "You are shown one picture a person attached as a STYLE SAMPLE — they want "
+    "their own picture made to look like it. Name the closest technique from "
+    "this list and answer with that word alone, nothing else:\n"
+    "- realistic — a photograph\n"
+    "- scene_epic — cinematic, dramatic, epic scale\n"
+    "- scene_cozy — cosy, warm, homely illustration\n"
+    "- 3d_cartoon — 3D cartoon, animated feature film look\n"
+    "- semi_real_3d — stylised 3D with lifelike proportions\n"
+    "- anime — anime, manga, cel-shaded illustration\n"
+    "Judge how it is DRAWN, not what it shows: a drawing of a real place is "
+    "still a drawing."
+)
+
+
+async def style_of_sample(image: tuple[bytes, str]) -> str | None:
+    """Какой техникой сделан образец. `None` — не разобрали.
+
+    Образец показан картинкой, и прочитать его можно только глазами. Ждать,
+    что человек назовёт технику словами, бессмысленно: он затем и приложил
+    картинку, чтобы не описывать её, — «сделай в такой же стилистике» это
+    полный ответ, просто данный не текстом.
+
+    Без этого техника оставалась неназванной, а неназванная означала
+    фотографию: в промпт уходил фотореалистичный якорь и следом просьба
+    скопировать рисунок с образца. Якорь стоит первым и выигрывает — человек
+    прикладывал аниме-постер и получал свою фотографию.
+    """
+    if not settings.openai_enabled:
+        return None
+
+    data, _ = image
+    small = base64.b64encode(storage_images.preview(data)).decode()
+    try:
+        raw = await _call(
+            [{"role": "system", "content": _SAMPLE_STYLE_SYSTEM},
+             {"role": "user", "content": [
+                 {"type": "image_url",
+                  "image_url": {"url": f"data:image/jpeg;base64,{small}"}}]}],
+            max_tokens=12,
+            temperature=0,
+            model=settings.slot_extraction_model or None,
+        )
+    except Exception:  # noqa: BLE001 — не разобрали, значит не называем
+        return None
+
+    key = (raw or "").strip().strip(".").lower().split()[0] if raw and raw.strip() else ""
+    return key if key in prompt_style.PRESETS else None
+
 
 # ─── Что можно сделать с приложенным снимком ─────────────────────────────────
 

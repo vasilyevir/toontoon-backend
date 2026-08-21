@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from app.config import settings
 from app.core import rate_limit
 from app.core.security import new_id
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session as get_db_session
@@ -181,8 +182,27 @@ async def generate(
     # Поэтому слова разбираются здесь, всегда, каким бы путём запрос ни пришёл.
     # Явно присланное сильнее: оно уже результат выбора человека, а не догадки
     # о его фразе.
-    intent = body.intent or (conversation.detect_intent(free_text) if free_text else None)
-    style, aspect = body.style, body.aspect
+    # Правка кадра или новая просьба — решают слова, а не то, что кадр уже есть.
+    #
+    # Приложение считает правкой любое следующее сообщение: «сделай фон ночным»
+    # после готового постера — это правка, и так чаще всего и есть. Но «хочу
+    # постер 16:9 в этой стилистике» — не правка: назван другой вид картинки,
+    # другие пропорции. Прошлый запрос при этом уезжал целиком, вместе со своим
+    # портретным назначением и фотографическим стилем, а новые слова
+    # дописывались к нему хвостом — человек получал прежний кадр с припиской.
+    refine_key = body.refine.value if body.refine else None
+    refine_note = (body.refine_note or "").strip() or None
+    restated = _restates_the_picture(refine_note) if refine_note else {}
+    if restated:
+        # Слова сказаны только что и глядя на кадр — они сильнее полей,
+        # приехавших из прошлого запроса.
+        free_text = " ".join(p for p in (free_text, refine_note) if p) or refine_note
+        refine_key, refine_note = None, None
+
+    intent = (restated.get("intent") or body.intent
+              or (conversation.detect_intent(free_text) if free_text else None))
+    style = restated.get("technique") or (None if restated else body.style)
+    aspect = restated.get("format") or (None if restated else body.aspect)
     unknown = [
         slot for slot, value in (("technique", style), ("format", aspect))
         if value is None
@@ -297,7 +317,18 @@ async def generate(
     # Выбранные вдвоём и больше — сами по себе повод подставить снимки: нажать
     # на двух человек и есть просьба нарисовать их вместе, других слов для этого
     # не нужно. Ждать вдобавок слова «меня» значило бы не замечать выбор.
-    wants_people = len(picked) > 1 or intent in conversation.NEEDS_PHOTO or _asks_for_self(free_text)
+    #
+    # И человек не выпадает из кадра, когда просьба меняет его вид. «Хочу
+    # постер 16:9 в этой стилистике» — про тот же кадр, в котором он только что
+    # стоял; слова «меня» там нет, назначение сменилось на постер, и снимок
+    # переставал подставляться вовсе. Приходил постер без человека — а на месте
+    # человека модель придумывала кого-то своего.
+    wants_people = (
+        len(picked) > 1
+        or intent in conversation.NEEDS_PHOTO
+        or _asks_for_self(free_text)
+        or (bool(restated) and await _last_frame_had_person(db, user.id))
+    )
     if photo_url is None and wants_people:
         # Сначала профиль: он собран из снимков, которые человек использовал как
         # себя, и знает про него больше, чем последняя загрузка.
@@ -390,6 +421,40 @@ async def generate(
                         used_saved_photo = True
                         cast = names if len(loaded) == len(names) else []
 
+    # Образец называет стиль сам.
+    #
+    # Без этого «сделай в такой же стилистике» уходило с фотографическим
+    # якорем: техника не названа словами, значит по умолчанию фотография — и в
+    # промпте оказывались рядом «hyperrealistic photographic render» и «скопируй
+    # технику рисунка с образца». Якорь стоит первым и выигрывает; человек
+    # прикладывает аниме-постер, а получает свою фотографию. Смотрим на образец
+    # тем же зрением, каким разбираем роли: он показан картинкой, значит и
+    # прочитать его надо глазами, а не ждать, что его перескажут словами.
+    if style_refs and style is None:
+        style = await gpt_service.style_of_sample(style_refs[0])
+        if style:
+            logger.info("Стиль образца: %s", style)
+
+    # Буквы заказывают словами, а не назначением.
+    #
+    # Раньше надпись включало только «постер» или «открытка». «А вместо akai
+    # напиши моё имя» на портрете значило: в системный промпт уходит «никаких
+    # букв в кадре» — ровно наоборот сказанному.
+    poster = (intent or "") in gpt_service.LETTERING_INTENTS
+
+    # Какие именно слова набрать.
+    #
+    # Без этого «постер» включал надпись, а слов для неё не было — и модель
+    # набирала первое, что видела: собственную просьбу человека. На кадре
+    # оказывалось «I WANT TO SEE POSTER 16:9 IN THIS STYLES» плакатным
+    # шрифтом. Буквы включаем только когда есть что набрать; иначе постер
+    # остаётся постером, но с чистым местом под заголовок.
+    lettering_text = (body.answers or {}).get("text")
+    if not lettering_text and free_text and (poster or _wants_lettering(free_text)):
+        said = await gpt_service.extract_slots(free_text, ["text"])
+        lettering_text = said.get("text")
+    lettering = bool(lettering_text)
+
     extra_photos.extend(style_refs)
 
     # Операция решается ДО сборки промпта, а не после: редактированию нужен
@@ -417,7 +482,8 @@ async def generate(
                 editing=editing, intent=intent,
                 style_ref=bool(style_refs), redraw=redraw,
                 subject=profile.kind if profile is not None else "person",
-                cast=cast,
+                cast=cast, lettering=lettering, poster=poster,
+                lettering_text=lettering_text,
             )
     except content_gen.PromptUnavailable:
         # Переводить запрос нечем. Отказ с возвратом — единственный честный
@@ -434,12 +500,8 @@ async def generate(
     # промпт стиля собран целиком. Поставить его раньше значило бы дать модели
     # прочитать «сделай рисованнее» до того, как она узнала, что рисовать.
     prefer_refine = None
-    if body.refine is not None or body.refine_note:
-        prompt, prefer_refine = prompt_style.refine(
-            prompt,
-            body.refine.value if body.refine else None,
-            body.refine_note,
-        )
+    if refine_key is not None or refine_note:
+        prompt, prefer_refine = prompt_style.refine(prompt, refine_key, refine_note)
 
     # The attempt is recorded before the provider is called, so a failure leaves
     # a trace instead of nothing at all.
@@ -461,7 +523,9 @@ async def generate(
             "used_saved_photo": used_saved_photo,
             "redraw": redraw,
             "type": gen_type.value,
-            "refine": body.refine.value if body.refine else None,
+            "refine": refine_key,
+            "lettering": lettering,
+            "lettering_text": lettering_text,
         },
         source_media_id=_media_id(photo_url),
         cost=cost,
@@ -492,7 +556,10 @@ async def generate(
             prefer=prefer_refine
             # Назначение и стиль смотрятся оба: новые сборки шлют «poster» в
             # `intent`, старые — в `style`, а маршрут к тому, кто умеет буквы,
-            # нужен и тем и другим.
+            # нужен и тем и другим. Как и просьбе про буквы, сказанной словами:
+            # исполнитель выбирается под то, что в кадре должно появиться, а не
+            # под то, как человек это назвал.
+            or (prompt_style.LETTERING_PROVIDER if lettering else None)
             or prompt_style.preferred_provider(intent)
             or prompt_style.preferred_provider(style)
             or ((style_row.prompt_template or {}).get("provider") if style_row else None),
@@ -576,6 +643,79 @@ def _has_subject(body: GenerateRequest, free_text: str | None = None) -> bool:
     # слов при этом не требуется вовсе.
     return bool(body.tile_id or body.style_id or body.style_ref_urls
                 or (words or "").strip())
+
+
+# Пропорции, названные словами. Цифрами человек пишет чаще, чем словами, но
+# пишет и так: «горизонтальный», «квадрат».
+_ASPECT_WORDS: tuple[tuple[str, str], ...] = (
+    (r"16\s*[:xх]\s*9|landscape|horizontal|широк|горизонтал", "16:9"),
+    (r"9\s*[:xх]\s*16|vertical|сторис|вертикал", "9:16"),
+    (r"4\s*[:xх]\s*5|portrait format|книжн", "4:5"),
+    (r"1\s*[:xх]\s*1|square|квадрат", "1:1"),
+)
+
+# Техника, названная словами. Список короткий намеренно: это не разбор просьбы,
+# а признак того, что человек передумал про сам вид картинки.
+_TECHNIQUE_WORDS: tuple[tuple[str, str], ...] = (
+    (r"anime|аниме|манг", "anime"),
+    (r"3d cartoon|3д мультф|мультфильм|cartoon", "3d_cartoon"),
+    (r"photo|фото|реалист|realistic", "realistic"),
+)
+
+# Просьба про буквы. «Напиши моё имя вместо akai» — это заказ надписи, и без
+# него в промпт уходит прямо противоположное: «никаких букв в кадре».
+#
+# Ошибка здесь тихая и полная: человек получает красивую картинку без
+# единственного, ради чего он её и заказывал.
+_LETTERING_RE = re.compile(
+    r"напиш|надпис|подпис|\bтекст|буквам|заголов|"
+    r"\b(write|text|caption|title|lettering|headline|says?)\b",
+    re.IGNORECASE,
+)
+
+
+def _wants_lettering(text: str | None) -> bool:
+    return bool(text and _LETTERING_RE.search(text))
+
+
+def _restates_the_picture(text: str) -> dict[str, str]:
+    """Названо ли в словах другое: вид картинки, пропорции, техника.
+
+    Отличает новую просьбу от правки кадра. «Сделай фон ночным» — правка: тот
+    же кадр, другая деталь. «Хочу постер 16:9 в этой стилистике» — не правка:
+    человек назвал другой вид картинки, и достраивать его к прошлому промпту
+    значит выдать ему прошлый кадр с припиской.
+    """
+    low = text.lower()
+    found: dict[str, str] = {}
+    intent = conversation.explicit_intent(low)
+    if intent:
+        found["intent"] = intent
+    for pattern, value in _ASPECT_WORDS:
+        if re.search(pattern, low, re.IGNORECASE):
+            found["format"] = value
+            break
+    for pattern, value in _TECHNIQUE_WORDS:
+        if re.search(pattern, low, re.IGNORECASE):
+            found["technique"] = value
+            break
+    return found
+
+
+async def _last_frame_had_person(db: AsyncSession, user_id: str) -> bool:
+    """Стоял ли человек в кадре, который сейчас переделывают.
+
+    Спрашиваем базу, а не догадываемся по словам: «хочу это постером» ничего не
+    говорит о людях, но говорит «это» — а в том кадре человек был, и выкинуть
+    его из следующего значит не понять просьбу целиком.
+    """
+    stmt = (
+        select(m.Generation.source_media_id)
+        .where(m.Generation.user_id == user_id)
+        .order_by(m.Generation.created_at.desc())
+        .limit(1)
+    )
+    return bool(await db.scalar(stmt))
 
 
 async def _picked_profiles(

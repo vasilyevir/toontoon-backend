@@ -103,7 +103,7 @@ def test_lettering_removes_the_ban_on_letters():
 def test_poster_instruction_asks_for_type_and_forbids_a_scene():
     from app.services import gpt
 
-    poster = gpt._system_for(editing=True, lettering=True)
+    poster = gpt._system_for(editing=True, lettering=True, poster=True)
     assert "MUST appear in the image" in poster
     assert "Do not invent a location" in poster
     assert "No letters or text in the image" not in poster
@@ -127,7 +127,7 @@ def test_a_poster_does_not_get_a_landscape_from_its_style():
     никто не заказывал.
     """
     poster = prompt_style.assemble("Nikita, NBA champion", style_key="anime",
-                                   is_text=False, lettering=True)
+                                   is_text=False, poster=True)
     assert "pastoral" not in poster
     assert "detailed background" not in poster
     assert "no scenery and no landscape behind the lettering" in poster
@@ -147,7 +147,7 @@ def test_a_poster_takes_only_the_person_from_the_photo():
     человека не было ни слова.
     """
     poster = prompt_style.assemble("Nikita, NBA champion", style_key="anime",
-                                   is_text=False, editing=True, lettering=True)
+                                   is_text=False, editing=True, poster=True)
     assert "cut them out and discard" in poster
     assert "Never extend, outpaint or widen" in poster
     # Сам человек по-прежнему обязан остаться узнаваемым.
