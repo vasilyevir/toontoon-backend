@@ -1,0 +1,16 @@
+{"run": "2026-08-24-1454", "case": "photo-street", "medium": "photo", "likeness": 9, "quality": 8, "note": "Ночная улица, лицо и борода его, кадр резкий."}
+{"run": "2026-08-24-1454", "case": "style-catalog-noir", "medium": "photo", "likeness": 9, "quality": 8, "note": "Чистая чёрно-белая, деталь на месте."}
+{"run": "2026-08-24-1454", "case": "drawn-anime", "medium": "drawn", "likeness": 8, "quality": 8, "note": "Аниме, узнаётся по бороде и стрижке."}
+{"run": "2026-08-24-1454", "case": "poster-name", "medium": "drawn", "likeness": 7, "quality": 8, "note": "Постер, надпись ILYA набрана чисто, лицо мелкое но его."}
+{"run": "2026-08-24-1454", "case": "style-catalog-drawn", "medium": "photo", "likeness": 9, "quality": 7, "note": "Обещали мультфильм, пришла фотография. Сам по себе кадр приличный: техника мимо, качество нет."}
+{"run": "2026-08-24-1454", "case": "landscape-16-9", "medium": "photo", "likeness": 9, "quality": 7, "note": "Горы, лёгкий ореол вокруг головы — видно, что человек вклеен."}
+{"run": "2026-08-24-1454", "case": "no-smile", "medium": "photo", "likeness": 9, "quality": 9, "note": "Дождь ночью, атмосферно и резко."}
+{"run": "2026-08-24-1454", "case": "style-catalog-photo", "medium": "photo", "likeness": 9, "quality": 8, "note": "Тёплый свет, кожа живая."}
+{"run": "2026-08-24-1528", "case": "photo-street", "medium": "photo", "likeness": 9, "quality": 7, "note": "Та же улица на низкой ступени: чуть мягче, но прилично."}
+{"run": "2026-08-24-1528", "case": "drawn-cartoon", "medium": "drawn", "likeness": 7, "quality": 6, "note": "Мультфильм, поза неловкая, лицо упрощено."}
+{"run": "2026-08-24-1528", "case": "poster-name", "medium": "drawn", "likeness": 6, "quality": 7, "note": "Постер проще прежнего, но чистый: ни размытия, ни каши."}
+{"run": "2026-08-24-1528", "case": "style-catalog-noir", "medium": "photo", "likeness": 9, "quality": 7, "note": "Мягче оригинала, детали лица теряются."}
+{"run": "2026-08-24-1528", "case": "landscape-16-9", "medium": "photo", "likeness": 8, "quality": 6, "note": "Лицо мельче и восковое."}
+{"run": "2026-08-24-1528", "case": "drawn-anime", "medium": "drawn", "likeness": 8, "quality": 7, "note": "Аниме чистое, рука вытянута по-селфи — придраться можно."}
+{"run": "2026-08-24-1644", "case": "style-catalog-ink", "medium": "drawn", "likeness": 9, "quality": 8, "note": "Тушь: штриховка уверенная, лицо его. Скупо — не значит плохо."}
+{"run": "2026-08-24-1644", "case": "style-catalog-painted", "medium": "drawn", "likeness": 9, "quality": 8, "note": "Акварель с зерном бумаги, лицо узнаётся."}
