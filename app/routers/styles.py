@@ -30,6 +30,9 @@ router = APIRouter(prefix="/api", tags=["catalog"])
 # Titles are English: the interface ships in English (CH-12).
 CATEGORY_TITLES = {
     "ai_photo_studio": "AI Photo Studio",
+    "glow_up": "Editorial Glow-Up",
+    "paparazzi_flash": "Paparazzi Flash",
+    "polaroid_reunion": "Polaroid Reunion",
     "artistic_touch": "Artistic Touch",
     "cartoon_me": "Cartoon Me",
     "lifestyle_travel": "Lifestyle & Travel",

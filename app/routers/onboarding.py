@@ -30,6 +30,9 @@ router = APIRouter(prefix="/api/onboarding", tags=["onboarding"])
 # значит рассказывать не с того места.
 CATEGORIES = (
     "ai_photo_studio",
+    "glow_up",
+    "paparazzi_flash",
+    "polaroid_reunion",
     "artistic_touch",
     "cartoon_me",
     "lifestyle_travel",

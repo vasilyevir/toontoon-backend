@@ -112,6 +112,11 @@ app/
 5. **Confirm** on success / **cancel** (refund) on failure.
 6. Store generation in the user's library; return result + new balance.
 
+**Перед правкой промптов читать `docs/PROMPTING.md`.** Там свод того, что
+проверено живыми кадрами: порядок блоков, число референсов, почему текст стиля
+не должен описывать человека, и открытые вопросы. Правила стоили генераций —
+дешевле сослаться, чем выяснять заново.
+
 ---
 
 ## Connecting the frontend

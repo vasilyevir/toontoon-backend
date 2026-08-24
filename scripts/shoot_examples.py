@@ -38,6 +38,12 @@ RAILS = {
     "artistic_touch": ["sunset_shore", "croissant_morning", "neon_street", "park_bench",
                        "seaside_lounge", "gallery_room", "rainy_window", "golden_park",
                        "paris_trench", "night_market"],
+    "paparazzi_flash": ["restaurant_exit", "back_seat", "red_carpet", "party_2000s",
+                        "hotel_elevator", "night_street", "candid_moment"],
+    "glow_up": ["cafe_fashion", "old_money_hotel", "luxury_rooftop", "beauty_closeup",
+                "magazine_portrait"],
+    "polaroid_reunion": ["hug_younger_self", "then_and_now", "imagined_childhood",
+                         "future_me"],
 }
 
 
