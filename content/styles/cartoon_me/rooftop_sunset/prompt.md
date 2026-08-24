@@ -19,4 +19,4 @@
 
 ---
 
-the person in the photo on a city rooftop at sunset, wearing a white cropped top under an open light jacket and soft joggers, hands in pockets, body turned slightly away with the head towards the camera, warm easy smile, hair lifted by the wind and lit from behind, pink and orange sky with the sun low between skyscrapers, city lights coming on far below, strong golden rim light along the hair and shoulders, no other people in the frame, no text or logos anywhere
+the person in the photo on a city rooftop at sunset, wearing a light top under an open jacket and soft joggers, hands in pockets, body turned slightly away with the head towards the camera, warm easy smile, their own hair as it is, lit from behind, pink and orange sky with the sun low between skyscrapers, city lights coming on far below, strong golden rim light along the hair and shoulders, no other people in the frame, no text or logos anywhere

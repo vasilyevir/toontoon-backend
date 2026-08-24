@@ -1,0 +1,10 @@
+{
+  "title": "Park Bench",
+  "description": "Green shade and soft brush.",
+  "cost": 1,
+  "is_home": false,
+  "is_shot": true,
+  "sort_order": 23,
+  "sample_source": "an ordinary casual smartphone snapshot of a person indoors, flat overhead light, plain clothes, amateur framing",
+  "anchor": "painted"
+}

@@ -11,4 +11,4 @@
 
 ---
 
-the person in the photo as a character from a stylised animated feature, standing on a beach at sunset with the low sun behind them, long hair lifted and lit by the wind, wearing an open light linen shirt over simple beachwear, one hand in a pocket, body turned slightly away with the head towards the camera, warm easy smile, palm trees and calm sea blurred behind, golden light across the skin and hair, soft glow on the horizon
+the person in the photo as a character from a stylised animated feature, standing on a beach at sunset with the low sun behind them, their own hair as it is, lit by the low sun, wearing an open light linen shirt over simple beachwear, one hand in a pocket, body turned slightly away with the head towards the camera, warm easy smile, palm trees and calm sea blurred behind, golden light across the skin and hair, soft glow on the horizon

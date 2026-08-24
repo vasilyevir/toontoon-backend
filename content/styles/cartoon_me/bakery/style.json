@@ -1,0 +1,10 @@
+{
+  "title": "Bakery",
+  "description": "Warm light and a tray of pastries.",
+  "cost": 1,
+  "is_home": false,
+  "is_shot": true,
+  "sort_order": 26,
+  "sample_source": "an ordinary casual smartphone snapshot of a person indoors, flat overhead light, plain clothes, amateur framing",
+  "anchor": "3d_cartoon"
+}
