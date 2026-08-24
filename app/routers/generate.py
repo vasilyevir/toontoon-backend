@@ -112,8 +112,14 @@ async def generate(
     if body.style_id and style_row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Unknown style")
     # Стиль из витрины обещает конкретный результат, и обещание держится
-    # фотографией: без неё это будет другая картинка, а человек уже заплатил.
-    if style_row is not None and (style_row.input_spec or {}).get("needs_photo") and not body.photo_url:
+    # лицом: без него это будет другая картинка, а человек уже заплатил.
+    #
+    # Лицо не обязано быть приложено сейчас. Человек мог отдать снимки один раз
+    # в профиль — просить их снова на каждой карточке значит не помнить, что он
+    # сделал. Поэтому проверяем не вложение, а наличие лица вообще.
+    style_needs_photo = bool(style_row is not None
+                             and (style_row.input_spec or {}).get("needs_photo"))
+    if style_needs_photo and not body.photo_url and not await _has_face_on_file(db, user.id, body):
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             detail="This style needs your photo.",
@@ -331,6 +337,9 @@ async def generate(
         # его месте незнакомого человека. Хуже этого в продукте про своё лицо
         # ничего нет.
         bool(picked)
+        # Стиль из витрины, который обещает человека в кадре, — тоже просьба
+        # про лицо, даже когда человек не сказал ни слова.
+        or style_needs_photo
         or intent in conversation.NEEDS_PHOTO
         or _asks_for_self(free_text)
         or (bool(restated) and await _last_frame_had_person(db, user.id))
@@ -342,7 +351,7 @@ async def generate(
         if len(picked) > 1:
             media_ids, cast = _joint_references(picked)
         else:
-            take = _reference_take(style)
+            take = _reference_take(style, style_row)
             media_ids = profiles_repo.references(profile, limit=take) if profile else []
         if media_ids:
             photo_url = f"/api/media/{media_ids[0]}"
@@ -417,7 +426,7 @@ async def generate(
                         from_profile, names = _joint_references(picked)
                     else:
                         from_profile = profiles_repo.references(
-                            known, limit=_reference_take(style))
+                            known, limit=_reference_take(style, style_row))
                         names = []
                     loaded = [await _load_photo(db, user.id, f"/api/media/{mid}")
                               for mid in from_profile]
@@ -550,10 +559,22 @@ async def generate(
         params={"aspect": aspect} if aspect in ASPECTS else {},
     )
 
+    # К тому, кто умеет буквы, уходит просьба с буквами — а не всякая, которую
+    # назвали постером.
+    #
+    # Замер 24 августа: «сделай мне постер в аниме» без единого названного слова
+    # вернулся с надписью «CITY HORIZON SUNSET PROTOCOL». Мы сами отправили
+    # пустой постер к лучшему в наборе типографу и попросили не набирать букв —
+    # он набрал. Маршрут теперь решают слова; назначение остаётся доводом лишь
+    # у старых сборок, которые шлют его в поле стиля и про надпись не знают.
     prefer_used = (
         prefer_refine
         or (prompt_style.LETTERING_PROVIDER if lettering else None)
-        or prompt_style.preferred_provider(intent)
+        # Рисованный кадр — тому, кто умеет рисовать. Это правило, а не
+        # настройка каждого стиля: беда общая для всех рисованных путей, и
+        # чинить её по одному стилю значит ждать жалобы на каждый.
+        or (prompt_style.DRAWN_PROVIDER
+            if _wants_drawing(style, style_row, editing) else None)
         or prompt_style.preferred_provider(style)
         or ((style_row.prompt_template or {}).get("provider") if style_row else None)
     )
@@ -594,7 +615,11 @@ async def generate(
     # рисованном фоне. Промпт при этом верный, стиль назван и в начале, и в
     # конце. Поэтому смотрим на результат и переделываем один раз — за свой
     # счёт, а не за его.
-    if editing and photo is not None and (style or "") != "realistic":
+    #
+    # Проверяем только там, где ждали рисунок. Стили каталога фотографические, и
+    # у них поле `style` пустое: пока «пусто» значило «рисунок», каждый кадр с
+    # витрины делался дважды — вдвое дольше и вдвое дороже, без единой причины.
+    if editing and photo is not None and _wants_drawing(style, style_row, editing):
         result, prompt = await _redraw_if_photographic(db, request, result, prompt,
                                                        prefer=prefer_used)
 
@@ -773,7 +798,7 @@ async def _redraw_if_photographic(
         return result, prompt
 
 
-def _reference_take(style: str | None) -> int:
+def _reference_take(style: str | None, style_row=None) -> int:
     """Сколько снимков человека отдавать модели.
 
     Один — когда картинку рисуют. Замер 21 августа: тот же постер с профилем из
@@ -785,12 +810,43 @@ def _reference_take(style: str | None) -> int:
     Три — когда картинку снимают: там тяга к фотографии и нужна, а лишние
     ракурсы помогают сходству.
 
-    Стиль неизвестен — считаем, что рисуют: без явного слова про фотографию
-    сборщик почти всегда выбирает рисованный якорь.
+    Стиль каталога спрашиваем у него самого: у него поле `style` пустое, а
+    техника лежит в шаблоне. Пока «пусто» значило «рисунок», фотографические
+    стили витрины уезжали с одним референсом — то есть с худшим сходством, чем
+    та же просьба, набранная словами.
     """
-    if (style or "") == "realistic":
-        return max(1, settings.profile_reference_count)
-    return 1
+    if _wants_drawing(style, style_row, editing=True):
+        return 1
+    return max(1, settings.profile_reference_count)
+
+
+def _wants_drawing(style: str | None, style_row, editing: bool) -> bool:
+    """Ждём ли мы рисунок, а не фотографию.
+
+    У стиля из каталога техника записана в его же шаблоне; у свободной просьбы —
+    в поле `style`, а пустое поле там почти всегда означает рисованный якорь,
+    который выберет сборщик по словам сцены.
+    """
+    if style_row is not None:
+        template = style_row.prompt_template or {}
+        key = template.get("anchor") or ("realistic" if editing else prompt_style.DEFAULT_STYLE)
+        return prompt_style.is_drawn(key)
+    return (style or "") != "realistic"
+
+
+async def _has_face_on_file(db: AsyncSession, user_id: str, body: GenerateRequest) -> bool:
+    """Есть ли чьё лицо взять, когда снимок не приложен.
+
+    Порядок тот же, что и у подстановки: выбранный профиль, основной, последняя
+    своя фотография. Проверка идёт до списания — отказать надо раньше, чем
+    возьмутся деньги, а не после.
+    """
+    if await _picked_profiles(db, user_id, body):
+        return True
+    known = await profiles_repo.get_default(db, user_id)
+    if known is not None and (known.reference_ids or known.media_ids):
+        return True
+    return await media_repo.last_person_photo(db, user_id) is not None
 
 
 async def _picked_profiles(

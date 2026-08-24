@@ -10,6 +10,9 @@
 """
 from __future__ import annotations
 
+import pathlib
+import re
+
 import pytest
 
 from app.routers.generate import _restates_the_picture, _wants_lettering
@@ -210,3 +213,134 @@ async def test_a_failed_retry_still_returns_a_picture(monkeypatch, guard):
     # Человек заплатил и ждёт картинку: неудачный повтор не повод отдать ничего.
     assert result.data == b"first"
     assert prompt == "anime poster"
+
+
+# ─── Кого рисуем, когда сцена описывает другого ──────────────────────────────
+
+
+@pytest.mark.parametrize("clause", [
+    prompt_style.IDENTITY_CLAUSE,
+    prompt_style.DRAWN_IDENTITY_CLAUSE,
+])
+def test_scene_does_not_restyle_the_person(clause):
+    # Тексты стилей писались по примерам, и в них попали юбка, укладка и
+    # макияж. Человек получал своё лицо на чужом теле — с длинными волосами и
+    # в платье. Личность старше сцены.
+    assert "gender presentation, body proportions, height, build and hair length" in clause
+    # Длину волос однажды уже теряли: её убрали заодно с шапками, и «Cartoon
+    # Me» стал отращивать человеку кудри до плеч. Шапку надевает сцена, а длина
+    # волос принадлежит человеку.
+    assert "short hair stays short" in clause
+    assert "never restyle the person to fit the description" in clause
+
+
+@pytest.mark.parametrize("clause", [
+    prompt_style.IDENTITY_CLAUSE,
+    prompt_style.DRAWN_IDENTITY_CLAUSE,
+])
+def test_accessories_come_from_the_scene(clause):
+    # Половина набора может быть в одной шапке — люди так и снимают себя зимой.
+    # Модель читает повторяющуюся вещь как часть внешности и надевает её всюду,
+    # вплоть до студийного портрета.
+    assert "hats, caps, beanies, glasses, headphones, scarves" in clause
+    assert "leave the head uncovered" in clause
+
+
+def test_catalog_styles_do_not_dictate_gender():
+    """Гардероб в витрине не решает, кто человек."""
+    import pathlib
+
+    # Список растёт по мере находок: каждая строка здесь однажды поменяла
+    # человеку пол, длину волос или фигуру.
+    banned = ("skirt", "dress", "makeup", "finger waves", "winged eyeliner",
+              "matte lip", "cropped top", "crop top", "heels", "long hair",
+              "ponytail", "slender")
+    # Границы слова обязательны: «dressed head to toe in matte black» — это про
+    # одежду вообще, а не про платье, и запрещать его не за что.
+    pattern = re.compile(r"\b(" + "|".join(banned) + r")\b")
+    for path in pathlib.Path("content/styles").glob("*/*/prompt.md"):
+        # Питомцам всё это не грозит: у них другой промпт и другой предмет.
+        if "pet_" in str(path):
+            continue
+        text = path.read_text().split("---", 1)[-1].lower()
+        found = sorted({m.group(0) for m in pattern.finditer(text)})
+        assert not found, f"{path.name}: {found}"
+
+
+# ─── Когда переделывать кадр, а когда не трогать ─────────────────────────────
+
+
+class FakeStyleRow:
+    def __init__(self, anchor=None):
+        self.prompt_template = {"anchor": anchor} if anchor else {"text": "..."}
+
+
+def test_catalog_photo_style_is_not_checked_for_drawing():
+    from app.routers.generate import _wants_drawing
+
+    # Стиль каталога без якоря — фотография. Проверять её на «не рисунок ли» и
+    # переделывать значит делать каждый кадр витрины дважды.
+    assert not _wants_drawing(None, FakeStyleRow(), editing=True)
+
+
+def test_catalog_drawn_style_is_checked():
+    from app.routers.generate import _wants_drawing
+
+    assert _wants_drawing(None, FakeStyleRow("semi_real_3d"), editing=True)
+
+
+def test_free_request_without_a_style_word_is_treated_as_drawing():
+    from app.routers.generate import _wants_drawing
+
+    assert _wants_drawing(None, None, editing=True)
+    assert not _wants_drawing("realistic", None, editing=True)
+
+
+# ─── Сколько снимков едет в кадр ─────────────────────────────────────────────
+
+
+def test_drawn_request_goes_with_one_reference():
+    from app.routers.generate import _reference_take
+
+    assert _reference_take("anime") == 1
+    assert _reference_take(None) == 1
+
+
+def test_photographic_request_goes_with_three():
+    from app.routers.generate import _reference_take
+    from app.config import settings
+
+    assert _reference_take("realistic") == settings.profile_reference_count
+
+
+def test_catalog_photo_style_also_goes_with_three():
+    from app.routers.generate import _reference_take
+    from app.config import settings
+
+    # У стиля каталога поле `style` пустое, а техника лежит в его шаблоне. Пока
+    # «пусто» значило «рисунок», витрина уезжала с одним референсом — то есть с
+    # худшим сходством, чем та же просьба словами.
+    assert _reference_take(None, FakeStyleRow()) == settings.profile_reference_count
+    assert _reference_take(None, FakeStyleRow("anime")) == 1
+
+
+# ─── Куда уходит постер ──────────────────────────────────────────────────────
+
+
+def test_lettering_routes_by_words_not_by_intent():
+    """Постер без слов не должен ехать к типографу.
+
+    Замер 24 августа: «сделай мне постер в аниме» без единого названного слова
+    вернулся с надписью «CITY HORIZON SUNSET PROTOCOL». Мы сами отправили
+    пустой постер к лучшему в наборе типографу и попросили не набирать букв.
+    """
+    from app.routers import generate as router
+
+    # Маршрут остался у слов и у старых сборок, которые шлют назначение в поле
+    # стиля. Само по себе назначение «постер» больше никого никуда не уводит:
+    # в цепочке предпочтений его нет.
+    source = pathlib.Path(router.__file__).read_text()
+    chain = source[source.index("prefer_used = ("):source.index("try:\n        result")]
+    assert "preferred_provider(style)" in chain
+    assert "preferred_provider(intent)" not in chain
+    assert prompt_style.preferred_provider("poster") == prompt_style.LETTERING_PROVIDER

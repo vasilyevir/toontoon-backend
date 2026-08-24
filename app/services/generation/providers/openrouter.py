@@ -66,6 +66,43 @@ _capabilities: dict[str, dict] = {}
 _NEXT_RESOLUTION = "2K"
 
 
+# Пропорции, которых у модели нет, и чем их заменить.
+#
+# Ближайшее по форме, а не «что-нибудь»: 4:5 — вертикальный портрет, и 3:4
+# отличается от него на пять процентов высоты, тогда как 9:16 обрежет человека
+# по-другому. Список короткий намеренно: он нужен ровно там, где витрина честно
+# говорит, что значения не знает.
+_NEAREST_ASPECT = {
+    "4:5": ("3:4", "2:3", "1:1"),
+    "5:4": ("4:3", "3:2", "1:1"),
+    "9:16": ("2:3", "3:4", "1:1"),
+    "16:9": ("3:2", "4:3", "1:1"),
+    "3:4": ("4:5", "2:3", "1:1"),
+    "4:3": ("5:4", "3:2", "1:1"),
+}
+
+
+def _fit(value: str, spec: Optional[dict]) -> str:
+    """Подогнать значение под то, что модель принимает.
+
+    Витрина отвечает не только «какие параметры», но и «какие значения». Мы
+    смотрели только на имя параметра — и `4:5` уезжал в GPT Image 2, который
+    знает 3:4, но не 4:5. Ответ приходил 400, очередь тихо отдавала кадр
+    следующему исполнителю, и человек получал другую модель, другое качество и
+    другую цену, не сделав ничего необычного — просто попросив вертикальный
+    портрет.
+    """
+    values = (spec or {}).get("values") if isinstance(spec, dict) else None
+    if not values or value in values:
+        return value
+    for candidate in _NEAREST_ASPECT.get(value, ()):
+        if candidate in values:
+            logger.info("OpenRouter: %s не принимает %s, беру %s", "модель", value, candidate)
+            return candidate
+    # Ничего похожего — отдаём то, что модель точно знает.
+    return "auto" if "auto" in values else values[0]
+
+
 def _is_too_small(message: str) -> bool:
     """Отличить «кадр слишком мал» от любого другого отказа с кодом 400."""
     lowered = message.lower()
@@ -148,7 +185,10 @@ class OpenRouterProvider(Provider):
                 "output_format": settings.openrouter_output_format,
                 "quality": settings.openrouter_quality,
             }
-            body.update({k: v for k, v in optional.items() if k in supported})
+            body.update({
+                key: _fit(value, supported.get(key))
+                for key, value in optional.items() if key in supported
+            })
 
         # Все приложенные снимки, а не только первый: на многосубъектном кадре
         # порядок значим — модель связывает референсы с упоминаниями в промпте

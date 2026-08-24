@@ -1289,6 +1289,12 @@ _PROFILE_REVIEW_SYSTEM = (
     "face. Never pick two that show the same thing — a second copy of a shot we "
     "already have adds nothing and crowds out what is missing. Skip anything "
     "you marked as not ok.\n"
+    "- Watch what repeats across the chosen ones. A hat, glasses, headphones or "
+    "the same jacket in every chosen photo get learned as part of the person, "
+    "and they will show up in pictures that never asked for them. Prefer an "
+    "uncovered head and a bare face where the set allows it, and never let the "
+    "same accessory appear in every chosen photo when a photo without it "
+    "exists.\n"
     "- Be strict about faces and generous about everything else: a plain photo "
     "with a readable face is fine even if it is dull.\n"
 )

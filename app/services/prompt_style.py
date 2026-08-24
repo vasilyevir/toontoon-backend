@@ -69,6 +69,23 @@ PRESETS: dict[str, dict[str, str]] = {
     # по-прежнему рисунок. Между "3d_cartoon" (игрушечные формы, огромные
     # глаза) и "realistic" (фотография) — и именно сюда попадает то, что люди
     # называют «как в мультфильме, только реальнее».
+    # Рисунок, сделанный руками: акварель, тушь, масло, карандаш.
+    #
+    # Якорь намеренно скупой: он говорит только «это не фотография, у картинки
+    # есть материал». Чем именно нарисовано — сказано в тексте самого стиля, и
+    # спорить с ним якорь не должен.
+    "painted": {
+        "anchor": (
+            "a hand-made artwork, not a photograph: the medium is visible in "
+            "every stroke, the surface it is made on shows through, edges are "
+            "drawn rather than photographed, no photographic rendering and no "
+            "camera look anywhere in the frame"
+        ),
+        "technical": (
+            "Technical: honest materials, visible texture of the medium, "
+            "clean composition, high resolution"
+        ),
+    },
     "semi_real_3d": {
         "anchor": (
             "stylized 3D animated feature film look with lifelike proportions, "
@@ -382,11 +399,38 @@ _EXPRESSION_CLAUSE = (
     "reference unless the scene asks for them"
 )
 
+# Что делать, когда сцена описывает человека, которым он не является.
+#
+# Тексты стилей писались по примерам: в них попадали и юбка, и укладка, и
+# макияж. Модель читает их как описание того, кого рисовать, — и человек
+# получает своё лицо на чужом теле. Личность старше сцены: одежду подгоняют под
+# человека, а не человека под одежду.
+_UNCHANGED_CLAUSE = (
+    "their gender presentation, body proportions, height, build and hair length "
+    "stay exactly as in the reference photo — short hair stays short. If the scene names clothing, hair or make-up "
+    "that does not suit this person, adapt it to them — never restyle the "
+    "person to fit the description"
+)
+
+# Что на снимке надето — это снимок, а не человек.
+#
+# В наборе половина кадров может быть в одной шапке — люди так и снимают себя
+# зимой. Модель читает повторяющуюся вещь как часть внешности и надевает её
+# всюду: человек просит студийный портрет и получает себя в шапке. Своей
+# фразой это стоит сказать прямо: аксессуары приходят из сцены, а если сцена
+# молчит — их нет.
+_WARDROBE_CLAUSE = (
+    "hats, caps, beanies, glasses, headphones, scarves and the clothes seen in "
+    "the reference photos belong to those photos, not to this person: dress "
+    "them as the scene describes, and when the scene says nothing about it, "
+    "leave the head uncovered and the face unobstructed"
+)
+
 IDENTITY_CLAUSE = (
     "keep the same person from the reference photo: same face and facial features, "
     "same hairstyle and hair colour, same skin tone, same body type, same age and gender, "
     "clearly recognisable as the same individual, do not replace them with another person. "
-    f"{_EXPRESSION_CLAUSE}"
+    f"{_UNCHANGED_CLAUSE}. {_WARDROBE_CLAUSE}. {_EXPRESSION_CLAUSE}"
 )
 
 # То же для питомца. Отдельный текст, а не правка общего: «same age and gender,
@@ -417,7 +461,7 @@ DRAWN_IDENTITY_CLAUSE = (
     "them fully, the linework, shading and proportions belong to the style and "
     "not to the photograph. Their clothes are part of the scene, not part of "
     "who they are. "
-    f"{_EXPRESSION_CLAUSE}"
+    f"{_UNCHANGED_CLAUSE}. {_WARDROBE_CLAUSE}. {_EXPRESSION_CLAUSE}"
 )
 
 
@@ -502,6 +546,7 @@ def cast_clause(names: list[str], *, drawn: bool = False,
 # узнаёт про аниме, уже решила, что правит фотографию: результат — тот же
 # снимок с подкрашенным фоном.
 MEDIUM: dict[str, str] = {
+    "painted": "a hand-made artwork",
     "anime": "an anime illustration",
     "3d_cartoon": "a 3D cartoon render",
     "semi_real_3d": "a stylised 3D render",
@@ -910,6 +955,14 @@ RESTORE_PROMPT = (
 # Поэтому это не подсказка, а маршрут: без него человек получит красивый кадр
 # без единственного, ради чего он и пришёл.
 LETTERING_PROVIDER = "openrouter_gemini_pro"
+
+# Кому отдавать рисованный кадр.
+#
+# Замер 24 августа, «Cartoon Me» три раза подряд: у GPT Image 2 — ноль
+# рисунков из трёх, по 75 секунд каждый (то есть с повтором, который тоже не
+# помог), качество 0 из 10. У Gemini 3 Pro — три из трёх, по 25 секунд,
+# качество 8. Разница не в промпте: он был один и тот же.
+DRAWN_PROVIDER = "openrouter_gemini_pro"
 
 PREFERRED_PROVIDER: dict[str, str] = {
     "poster": LETTERING_PROVIDER,

@@ -154,3 +154,33 @@ async def test_two_dropped_connections_in_a_row_give_up():
     with pytest.raises(httpx.ConnectError):
         await registry._attempt("stub", adapter, _request(), "stub-model")
     assert adapter.calls == 2
+
+
+# ─── Значения параметров, а не только их имена ───────────────────────────────
+
+
+def test_unsupported_aspect_becomes_the_nearest_one():
+    from app.services.generation.providers.openrouter import _fit
+
+    # GPT Image 2 знает 3:4, но не знает 4:5. Мы смотрели только на имя
+    # параметра — и вертикальный портрет уезжал в отказ 400, а очередь тихо
+    # отдавала кадр следующему исполнителю: другая модель, другое качество,
+    # другая цена, и всё это без единого слова человеку.
+    gpt = {"values": ["1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16", "21:9", "auto"]}
+    assert _fit("4:5", gpt) == "3:4"
+
+
+def test_supported_value_goes_through_untouched():
+    from app.services.generation.providers.openrouter import _fit
+
+    gemini = {"values": ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "9:16", "16:9"]}
+    assert _fit("4:5", gemini) == "4:5"
+
+
+def test_no_value_list_means_no_guessing():
+    from app.services.generation.providers.openrouter import _fit
+
+    # Витрина не всегда перечисляет значения. Тогда шлём как есть: подменять
+    # то, о чём ничего не известно, — это ошибка на ровном месте.
+    assert _fit("4:5", {"type": "enum"}) == "4:5"
+    assert _fit("4:5", None) == "4:5"

@@ -11,6 +11,8 @@
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +32,10 @@ class ProfileView(BaseModel):
     name: str
     kind: str
     is_default: bool
+    # Идентификаторы снимков — чтобы набор можно было править, а не только
+    # смотреть: правка присылает список целиком, и собрать его из ссылок
+    # разбором строк значило бы держать формат ссылки в двух местах.
+    media_ids: list[str] = []
     photo_urls: list[str] = []
     # Что из набора реально уезжает в кадр — по порядку полезности.
     reference_urls: list[str] = []
@@ -38,6 +44,7 @@ class ProfileView(BaseModel):
     def of(cls, row) -> "ProfileView":
         return cls(
             id=row.id, name=row.name, kind=row.kind, is_default=row.is_default,
+            media_ids=list(row.media_ids or []),
             photo_urls=[f"/api/media/{mid}" for mid in (row.media_ids or [])],
             reference_urls=[f"/api/media/{mid}" for mid in (row.reference_ids or [])],
         )
@@ -87,22 +94,81 @@ async def create_profile(
     # Отбор опорных снимков — здесь же, одним взглядом на весь набор. Отдельным
     # вызовом это стоило бы вдвое дороже и могло разойтись с разбором: человек
     # увидел бы одни вердикты, а в кадр уехало бы другое.
-    storage = get_storage()
-    images: list[bytes] = []
-    for media_id in body.media_ids:
-        asset = await db.get(MediaAsset, media_id)
-        data = await storage.get(asset.storage_key) if asset else None
-        if data:
-            images.append(data)
-
-    verdict = await gpt_service.review_profile_photos(images)
-    chosen = [body.media_ids[i - 1] for i in verdict["chosen"] if 1 <= i <= len(body.media_ids)]
+    chosen = await _chosen_references(db, body.media_ids)
 
     row = await profiles_repo.create(
         db, user_id=user.id, name=body.name, media_ids=body.media_ids, kind=body.kind,
         reference_ids=chosen,
     )
     return ProfileView.of(row)
+
+
+class UpdateRequest(BaseModel):
+    """Что можно поменять в готовом профиле.
+
+    Оба поля необязательны: имя правят чаще, набор — реже, и заставлять
+    присылать одно ради другого значит терять то, чего не прислали.
+    """
+
+    name: Optional[str] = Field(default=None, min_length=1, max_length=60)
+    media_ids: Optional[list[str]] = Field(default=None, min_length=1, max_length=15)
+
+
+@router.patch("/{profile_id}", response_model=ProfileView)
+async def update_profile(
+    profile_id: str,
+    body: UpdateRequest,
+    ctx: Context = Depends(required_context),
+    db: AsyncSession = Depends(get_db_session),
+) -> ProfileView:
+    """Переименовать профиль или поменять его набор снимков.
+
+    Имя — не украшение списка. Профилей несколько, в кадр уходит выбранный, и
+    отличить «Me» от «Me» человек не может никак; в совместном кадре это имя
+    вдобавок уезжает в промпт и говорит модели, кто из двоих кто.
+
+    Набор меняется целиком, а не по одному кадру: отбор опорных снимков смотрит
+    на весь набор сразу — какие ракурсы уже есть, каких не хватает, — и
+    пересчитывать его от добавления одной фотографии всё равно пришлось бы
+    целиком.
+    """
+    user, _ = ctx
+    row = await profiles_repo.get(db, profile_id, user_id=user.id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Unknown profile")
+
+    if body.name is not None:
+        row.name = body.name.strip()[:60] or row.name
+
+    if body.media_ids is not None:
+        for media_id in body.media_ids:
+            asset = await db.get(MediaAsset, media_id)
+            if asset is None or asset.user_id != user.id or asset.deleted_at is not None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Photo not found")
+        row.media_ids = body.media_ids
+        row.reference_ids = await _chosen_references(db, body.media_ids)
+
+    await db.flush()
+    return ProfileView.of(row)
+
+
+async def _chosen_references(db: AsyncSession, media_ids: list[str]) -> list[str]:
+    """Какие снимки набора поедут в кадр.
+
+    Смотрим на весь набор одним взглядом — тем же, что и при сборке профиля.
+    Не разобрали — оставляем список пустым: тогда в кадр пойдёт начало набора,
+    и это лучше, чем случайный отбор, выданный за осмысленный.
+    """
+    storage = get_storage()
+    images: list[bytes] = []
+    for media_id in media_ids:
+        asset = await db.get(MediaAsset, media_id)
+        data = await storage.get(asset.storage_key) if asset else None
+        if data:
+            images.append(data)
+
+    verdict = await gpt_service.review_profile_photos(images)
+    return [media_ids[i - 1] for i in verdict["chosen"] if 1 <= i <= len(media_ids)]
 
 
 @router.post("/{profile_id}/default", response_model=ProfileView)
