@@ -406,8 +406,9 @@ _EXPRESSION_CLAUSE = (
 # получает своё лицо на чужом теле. Личность старше сцены: одежду подгоняют под
 # человека, а не человека под одежду.
 _UNCHANGED_CLAUSE = (
-    "their gender presentation, body proportions, height, build and hair length "
-    "stay exactly as in the reference photo — short hair stays short. If the scene names clothing, hair or make-up "
+    "their gender presentation, body proportions, height, build, hair length and "
+    "facial hair stay exactly as in the reference photo — short hair stays short "
+    "and a full beard stays full. If the scene names clothing, hair or make-up "
     "that does not suit this person, adapt it to them — never restyle the "
     "person to fit the description"
 )

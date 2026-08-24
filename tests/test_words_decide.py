@@ -226,7 +226,10 @@ def test_scene_does_not_restyle_the_person(clause):
     # Тексты стилей писались по примерам, и в них попали юбка, укладка и
     # макияж. Человек получал своё лицо на чужом теле — с длинными волосами и
     # в платье. Личность старше сцены.
-    assert "gender presentation, body proportions, height, build and hair length" in clause
+    assert "gender presentation, body proportions, height, build, hair length and" in clause
+    # Борода — часть человека, а не деталь сцены: на первом же живом кадре
+    # «Restaurant Exit» она пришла короче, чем у него.
+    assert "a full beard stays full" in clause
     # Длину волос однажды уже теряли: её убрали заодно с шапками, и «Cartoon
     # Me» стал отращивать человеку кудри до плеч. Шапку надевает сцена, а длина
     # волос принадлежит человеку.

@@ -8,7 +8,10 @@
 the person in the photo on a red carpet in front of a press wall, a row of
 photographers with raised cameras firing at once, wearing sharp evening
 clothing, pausing to look at the lens, shot on a compact camera with a hard
-direct on-camera flash, harsh specular highlights on the skin, deep black
-shadow cast right behind the subject, slight motion in the frame, visible film
-grain, off-centre candid framing as if caught mid-moment, cool white flash
-colour, authentic paparazzi photograph, not a studio portrait
+direct on-camera flash. The flash is the only light: it throws a hard-edged
+black shadow onto the wall or surface immediately behind the person, blows out
+the nearest hand and shoulder to near white, and lets everything more than a
+couple of metres away fall into darkness. Harsh specular highlights on the
+skin, cool white flash colour, visible film grain, slight motion blur, off-
+centre candid framing as if caught mid-moment, authentic paparazzi photograph,
+never a studio portrait and never soft ambient light
