@@ -67,7 +67,7 @@
 | `OPENROUTER_QUALITY` | str | `medium` |
 | `OPENROUTER_TEXT_MODEL` | str | `openai/gpt-4o-mini` |
 | `SLOT_EXTRACTION_MODEL` | str | `google/gemini-2.5-flash` |
-| `PROFILE_REFERENCE_COUNT` | int | `3` |
+| `PROFILE_REFERENCE_COUNT` | int | `1` |
 | `OPENROUTER_REQUEST_TIMEOUT` | float | `180.0` |
 | `POLLINATIONS_TOKEN` | str | пусто |
 | `VIDEO_ENABLED` | bool | `False` |

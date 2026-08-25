@@ -44,6 +44,9 @@ CASE = {
     "aspect": "4:5",
     "roles_chosen": True,
 }
+# Что сравниваем. Пять оказалось не лучше трёх на первом же прогоне, поэтому на
+# следующих лицах вариант можно и сузить: сравнивать стоит там, где разница
+# была, а была она между одним и тремя.
 COUNTS = (1, 3, 5)
 
 
@@ -70,27 +73,37 @@ async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--faces", type=pathlib.Path, required=True)
     parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument("--counts", default=",".join(str(c) for c in COUNTS),
+                        help="сколько референсов сравнивать, через запятую")
     args = parser.parse_args()
 
+    counts = tuple(int(c) for c in args.counts.split(",") if c.strip())
     faces = sorted(p for p in args.faces.glob("*.jpg"))
-    if len(faces) < max(COUNTS) + 1:
-        raise SystemExit(f"Нужно хотя бы {max(COUNTS) + 1} снимков, нашёл {len(faces)}")
+    if len(faces) < max(counts) + 1:
+        raise SystemExit(
+            f"Нужно хотя бы {max(counts) + 1} снимков, нашёл {len(faces)}. "
+            "Последний по алфавиту уходит в опорные и в запрос не попадает.")
     # Последний — опорный для судьи, в запрос не уходит.
     reference, pool = faces[-1].read_bytes(), faces[:-1]
 
     OUT.mkdir(parents=True, exist_ok=True)
-    stamp = time.strftime("%Y-%m-%d-%H%M")
-    out = OUT / stamp
-    out.mkdir(exist_ok=True)
+    # Метка до секунд и имя набора в папке.
+    #
+    # До минут её хватало ровно до первой пары проб, запущенных разом: две
+    # параллельные записались в одну папку, имена кадров совпали, и вторая
+    # затёрла первую. Заметно это стало только по отрицательным числам —
+    # опорный кадр одного человека сравнивался с кадрами другого.
+    out = OUT / f"{time.strftime('%Y-%m-%d-%H%M%S')}-{args.faces.name}"
+    out.mkdir(parents=True, exist_ok=True)
 
     rows: list[dict] = []
     async with httpx.AsyncClient(timeout=600) as client:
         headers = await ef.guest(client)
-        urls = [await upload(client, headers, p) for p in pool[:max(COUNTS)]]
+        urls = [await upload(client, headers, p) for p in pool[:max(counts)]]
         print(f"Загружено {len(urls)} снимков, опорный для сравнения — {faces[-1].name}\n")
 
         for attempt in range(args.repeats):
-            for count in COUNTS:
+            for count in counts:
                 shot = await shoot(client, headers, urls[:count])
                 if "error" in shot:
                     print(f"  {count} реф. #{attempt + 1}: отказ {shot['error']}")
@@ -109,7 +122,7 @@ async def main() -> None:
                       f"резкость {rows[-1]['sharpness']:7.1f} | {shot['seconds']:5.1f} c | {model}")
 
     print("\nПо количеству референсов:")
-    for count in COUNTS:
+    for count in counts:
         # `if r.get(...)` здесь однажды выбрасывал из статистики нули — то есть
         # ровно те кадры, ради которых замер и делается. Ноль это оценка, а не
         # отсутствие оценки, и отличать их надо явным `is not None`.
