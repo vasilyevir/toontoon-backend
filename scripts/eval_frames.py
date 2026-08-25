@@ -104,6 +104,11 @@ _QUALITY_SYSTEM = (
     "was placed there from a reference photo. That is the job, not a defect: "
     "never lower a score for the picture «being AI» or «being a composite». "
     "Score what is visibly wrong with the craft.\n"
+    "You are looking at a downscaled copy, roughly a thousand pixels on the "
+    "long side. Resolution, pixelation and overall softness are therefore NOT "
+    "yours to judge — the copy, not the picture, is what looks soft. Sharpness "
+    "is measured separately and arithmetically. Never write «low resolution», "
+    "«blurry» or «pixelated» as a reason, and never lower a score for them.\n"
     "Sparse is not broken. An ink sketch leaves most of the paper empty, a "
     "poster is flat by design, a cartoon has simplified hands: none of that is "
     "a defect. Score only what is actually damaged — mangled anatomy, a "
@@ -150,6 +155,9 @@ class Outcome:
     size: str = ""
     aspect_ok: Optional[bool] = None
     sharpness: float = 0.0
+    # Косинус между лицами. `None` — либо кадр рисованный (там модель не
+    # работает), либо модель не поставлена, либо лица не нашлось.
+    similarity: Optional[float] = None
     naturalness: Optional[int] = None
     artifacts: Optional[int] = None
     absent_ok: Optional[bool] = None
@@ -161,9 +169,12 @@ class Outcome:
             return "—" if value is None else ("✓" if value else "✗")
 
         likeness = "—" if self.likeness is None else f"{self.likeness:2}/10"
+        # Судья и число стоят рядом намеренно: судья двоичен, число — нет, и
+        # расхождение между ними само по себе новость.
+        face = "     " if self.similarity is None else f" {self.similarity:.2f}"
         quality = "  —  " if self.naturalness is None else f"{self.naturalness}/{self.artifacts}"
         sharp = f"  рез {self.sharpness:6.0f}" if self.sharpness else ""
-        return (f"  {self.case:22} {likeness}  кач {quality:5}  техника {mark(self.medium_ok)}"
+        return (f"  {self.case:22} {likeness}{face}  кач {quality:5}  техника {mark(self.medium_ok)}"
                 f"  буквы {mark(self.letters_ok)}  лишнее {mark(self.absent_ok)}"
                 f"  кадр {mark(self.aspect_ok)} {self.size:10}"
                 f"{sharp}  {self.seconds:5.1f} c  {self.model or '—'}")
@@ -277,7 +288,13 @@ async def judge_quality(frame: bytes, kind: str = "") -> tuple[Optional[int], Op
     meant = ("This picture is meant to be an illustration." if kind == "drawn"
              else "This picture is meant to be a photograph." if kind == "photo"
              else "Judge it by the kind of picture it is.")
-    small = base64.b64encode(gpt.storage_images.preview(frame, side=512)).decode()
+    # Тысяча пикселей, а не пятьсот.
+    #
+    # На 512 судья видел собственный наш ресайз и честно ставил ноль за «very
+    # low resolution, blurry and pixelated» — двум приличным кадрам из
+    # шестнадцати. То есть половина устойчивых нулей в калибровке была нашей
+    # работой, а не браком модели.
+    small = base64.b64encode(gpt.storage_images.preview(frame, side=1024)).decode()
     # Спрашиваем трижды и берём середину.
     #
     # Калибровка показала, что средняя ошибка судьи по качеству невелика, а вот
@@ -337,6 +354,68 @@ async def rejudge(folder: pathlib.Path) -> None:
 LABELS = pathlib.Path("tests/data/frames_labels.jsonl")
 
 
+# ─── Сходство лица числом ────────────────────────────────────────────────────
+
+_FACES = None
+
+
+def _faces():
+    """Модель распознавания лиц — по требованию и только если она поставлена.
+
+    Живёт в `requirements-dev.txt`, а не в проде: веса весят сотни мегабайт, и
+    на боевом сервере не нужны ни разу. Без неё замер работает как работал,
+    просто без этой оси.
+    """
+    global _FACES
+    if _FACES is None:
+        try:
+            from insightface.app import FaceAnalysis  # noqa: PLC0415
+            app = FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
+            app.prepare(ctx_id=-1, det_size=(640, 640))
+            _FACES = app
+        except Exception:  # noqa: BLE001 — нет модели, нет оси
+            _FACES = False
+    return _FACES or None
+
+
+def face_similarity(reference: bytes, frame: bytes) -> Optional[float]:
+    """Косинус между лицами: 1 — то же лицо, 0 — никакой связи.
+
+    Нужен потому, что судья по сходству двоичен: он отвечает либо 10, либо 0, и
+    это подтвердилось на трёх независимых замерах. Кадру, который на глаз тот же
+    человек, он ставил ноль; трём кадрам подряд — десять, не различая между
+    ними ничего. Как тревога «человека потеряли» такая оценка годится, как
+    число — нет.
+
+    Порог у `buffalo_l` около 0.35: выше — тот же человек, ниже — сомнительно.
+    Но ценность здесь не в пороге, а в том, что число не упирается в потолок:
+    0.48 и 0.33 — это два разных результата, а «10 и 10» одинаковые.
+
+    ВАЖНО: работает только на фотографиях. На рисованном лице — аниме, мультик,
+    тушь — модель не находит связи с фотографией вовсе: замер дал 0.007, −0.018
+    и −0.025 на кадрах, где человек узнаётся глазами. Поэтому на рисованном
+    пути возвращается `None`, а не ноль: ноль там означал бы «человека
+    потеряли», то есть враньё.
+    """
+    app = _faces()
+    if app is None:
+        return None
+    import numpy as np  # noqa: PLC0415
+    import cv2  # noqa: PLC0415
+
+    def one(data: bytes):
+        image = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+        if image is None:
+            return None
+        found = app.get(image)
+        return found[0].normed_embedding if found else None
+
+    here, there = one(reference), one(frame)
+    if here is None or there is None:
+        return None
+    return round(float(np.dot(here, there)), 3)
+
+
 def sharpness(data: bytes) -> float:
     """Насколько кадр резкий — арифметикой, а не мнением.
 
@@ -388,7 +467,7 @@ def calibrate() -> None:
     print(f"{'случай':24} {'вид':>12} {'сходство':>16} {'качество':>16}")
     medium_hits = 0
     likeness_gap, quality_gap = [], []
-    harsh, generous = [], []
+    harsh, generous, argued = [], [], []
     for label, judged in rows:
         # Вид кадра судья определяет сам, а разметка говорит, что там на самом
         # деле: сходятся ли — и есть весь вопрос.
@@ -403,6 +482,17 @@ def calibrate() -> None:
             line += f" {judged['likeness']:>6}/{label['likeness']:<2} {gap:+d}   "
         else:
             line += " " * 16
+        # Число рядом с мнением. Расхождение здесь — не шум, а главная новость:
+        # судья ставил ноль кадрам, где косинус 0.68, то есть уверенно тот же
+        # человек. Порог у `buffalo_l` около 0.35.
+        if judged.get("similarity") is not None:
+            line += f" лицо {judged['similarity']:.2f}"
+            if judged.get("likeness") is not None:
+                disputed = (judged["likeness"] <= 3 and judged["similarity"] >= 0.4) or \
+                           (judged["likeness"] >= 8 and judged["similarity"] < 0.3)
+                if disputed:
+                    line += " ⚑"
+                    argued.append(label["case"])
         if judged.get("naturalness") is not None:
             gap = judged["naturalness"] - label["quality"]
             quality_gap.append(gap)
@@ -424,6 +514,10 @@ def calibrate() -> None:
         print("суров (−3 и хуже):", ", ".join(harsh))
     if generous:
         print("щедр (+3 и выше):", ", ".join(generous))
+    if argued:
+        print("судья и число спорят (⚑):", ", ".join(argued))
+        print("  Порог `buffalo_l` около 0.35. Число не упирается в потолок, "
+              "мнение упирается — на фотографическом пути верить надо числу.")
 
 
 def read_text(paths: list[pathlib.Path]) -> dict[str, str]:
@@ -457,11 +551,30 @@ async def provider_of(generation_id: str) -> tuple[str, str]:
         return (row.provider_id or "", row.provider_model or "") if row else ("", "")
 
 
+async def upload_sample(client: httpx.AsyncClient, headers: dict, name: str) -> str:
+    """Положить образец стиля и вернуть ссылку на него.
+
+    Образцы лежат в `tests/data/samples` и нарисованы нами: чужой постер в
+    тестовых данных — ровно тот риск с правами, о котором говорят правила.
+    """
+    path = pathlib.Path("tests/data/samples") / name
+    files = {"file": (path.name, path.read_bytes(), "image/jpeg")}
+    response = await client.post(f"{BASE}/api/uploads", headers=headers, files=files)
+    response.raise_for_status()
+    payload = response.json()
+    return payload.get("url") or f"/api/media/{payload.get('media_id') or payload.get('id')}"
+
+
 async def run_case(client: httpx.AsyncClient, headers: dict, case: Case,
                    profile: str, reference: bytes, out: pathlib.Path) -> Outcome:
     result = Outcome(case=case.id, expect=case.expect)
     body = {"type": "image", "from_chat": False, "post_prompt": False,
             "profile_id": profile, **case.body}
+    # «Сделай меня в стилистике вот этого» — самый частый способ заказать вид, и
+    # до сих пор ни один случай замера его не трогал. Имя файла в случае
+    # превращается в приложенный образец.
+    if (sample := body.pop("style_sample", None)):
+        body["style_ref_urls"] = [await upload_sample(client, headers, sample)]
 
     started = time.monotonic()
     response = await client.post(f"{BASE}/api/generate", headers=headers, json=body)
@@ -485,6 +598,11 @@ async def run_case(client: httpx.AsyncClient, headers: dict, case: Case,
         result.likeness, note = await judge_likeness(reference, frame)
         if note:
             result.notes.append(note)
+        # Число рядом с мнением — но только там, где оно означает хоть что-то.
+        # На рисованном лице модель распознавания не находит связи с
+        # фотографией вовсе, и её ноль читался бы как «человека потеряли».
+        if expect.get("medium") != "drawn":
+            result.similarity = face_similarity(reference, frame)
 
     result.sharpness = sharpness(frame)
     result.naturalness, result.artifacts, note = await judge_quality(
@@ -530,12 +648,60 @@ def check_letters(results: list[Outcome]) -> None:
         expect = result.expect
         found = text.get(result.path, "")
         result.letters = found[:40]
-        if wanted := expect.get("letters"):
+        if forbidden := expect.get("forbidden"):
+            # Слово с образца в кадре — это перенос чужого знака. Проверяется
+            # чтением, потому что глазами шеврон в сто пикселей не разглядеть.
+            result.letters_ok = forbidden.lower() not in found.lower()
+        elif wanted := expect.get("letters"):
             result.letters_ok = wanted.lower() in found.lower()
         elif expect.get("no_letters"):
             # Пустая строка — не единственный годный ответ: OCR ловит и подписи
             # на вывесках в кадре. Считаем провалом только заметный текст.
             result.letters_ok = len(found.replace(" ", "")) < 4
+
+
+def by_majority(results: list["Outcome"]) -> list[str]:
+    """Свести повторы одного случая в один ответ — по большинству.
+
+    Один прогон врёт. Тот же `poster-name` в двух заходах подряд дал разное: в
+    первом рисунок с надписью, во втором фотографию без неё. Сравнивать прогоны
+    по одному кадру после этого нельзя — сдвиг, который показывает `compare`,
+    оказывается шумом модели, а не следствием правки.
+
+    Большинство считается по тем осям, где ответ двоичный: техника, буквы,
+    отсутствие лишнего, пропорции. Оценки судьи и резкость усредняются медианой
+    там же, где и раньше, — здесь их не трогаем.
+
+    Ничья (два из четырёх) — это не «да» и не «нет», а «неустойчиво», и так и
+    печатается: случай, который выходит через раз, надо чинить, а не округлять.
+    """
+    import re as _re
+    from collections import defaultdict
+
+    groups: dict[str, list[Outcome]] = defaultdict(list)
+    for result in results:
+        groups[_re.sub(r"-\d+$", "", result.case)].append(result)
+
+    lines = []
+    for case, runs in sorted(groups.items()):
+        if len(runs) < 2:
+            continue
+        parts = []
+        for axis, label in (("medium_ok", "техника"), ("letters_ok", "буквы"),
+                            ("absent_ok", "лишнее"), ("aspect_ok", "форма")):
+            votes = [getattr(r, axis) for r in runs if getattr(r, axis) is not None]
+            if not votes:
+                continue
+            yes = sum(1 for v in votes if v)
+            if yes * 2 > len(votes):
+                mark = "+"
+            elif yes * 2 < len(votes):
+                mark = "−"
+            else:
+                mark = "?"
+            parts.append(f"{label} {mark}{yes}/{len(votes)}")
+        lines.append(f"  {case:22} {'  '.join(parts)}")
+    return lines
 
 
 def compare(now: dict, out: pathlib.Path) -> Optional[str]:
@@ -625,12 +791,19 @@ async def main() -> None:
     for result in results:
         print(result.as_row())
 
+    if (majority := by_majority(results)):
+        print("\nПо большинству (повторы сведены):")
+        for line in majority:
+            print(line)
+        print("  ? — случай выходит через раз: это не «работает», а «неустойчиво».")
+
     print("\nБуквы и оговорки:")
     for result in results:
         if result.letters or result.notes:
             print(f"  {result.case:22} {result.letters or '—':42} {'; '.join(result.notes)}")
 
-    summary = {r.case: {"likeness": r.likeness, "medium": r.medium,
+    summary = {r.case: {"likeness": r.likeness, "similarity": r.similarity,
+                        "medium": r.medium,
                         "medium_ok": r.medium_ok, "letters_ok": r.letters_ok,
                         "absent_ok": r.absent_ok, "aspect_ok": r.aspect_ok,
                         "naturalness": r.naturalness, "artifacts": r.artifacts,
