@@ -541,6 +541,20 @@
         "title": "FavoriteIDs",
         "type": "object"
       },
+      "ForgetRequest": {
+        "properties": {
+          "forget": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 16,
+            "title": "Forget",
+            "type": "array"
+          }
+        },
+        "title": "ForgetRequest",
+        "type": "object"
+      },
       "ForgotPasswordRequest": {
         "properties": {
           "email": {
@@ -2811,6 +2825,82 @@
           }
         },
         "summary": "Clear",
+        "tags": [
+          "chat"
+        ]
+      }
+    },
+    "/api/chat/forget": {
+      "post": {
+        "description": "Снять неверно понятое — молча, без реплики в переписке.\n\nОтдельной ручкой, а не полем в сообщении: человек может снять чип и не\nнаписать больше ничего. Понятое при этом живёт на сервере и вернулось бы\nпри следующей загрузке треда — то есть строка обещала бы, что мы забыли, а\nмы бы помнили.\n\nОтвет — то же состояние, что и у `GET /chat/state`: приложение и сервер\nдолжны расходиться как можно реже, и проще всего этого добиться, отдавая\nправду в ответ на каждую правку.",
+        "operationId": "forget_api_chat_forget_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "arteki-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Arteki-Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForgetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Forget",
         "tags": [
           "chat"
         ]

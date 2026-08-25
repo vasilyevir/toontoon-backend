@@ -201,6 +201,13 @@ async def chat(
     started_over = bool(said_intent and remembered_intent and said_intent != remembered_intent)
     known = await state_repo.remember(db, user, intent=said_intent, fresh=fresh,
                                       replace=started_over)
+    # О чём уже спрашивали — из записи и из присланного приложением вместе.
+    #
+    # Приложение помнит только текущий запуск: закрыл и открыл — список пуст, и
+    # разговор снова спрашивает про фотографию, о которой вчера спрашивал. Своё
+    # приложение при этом присылает не зря: в нём есть и то, что не дожило до
+    # записи из-за отказа сети.
+    asked = sorted(set(body.asked) | set(await state_repo.asked_about(db, user)))
     roles, role_options = await _resolve_roles(db, user, body, has_profile)
     if role_options:
         reply = gpt_service.said_in(body.message,
@@ -233,7 +240,7 @@ async def chat(
         known,
         intent=intent,
         has_photo=body.photo_attached or has_profile,
-        asked=body.asked,
+        asked=asked,
     )
 
     gap = conversation.next_gap(
@@ -244,7 +251,7 @@ async def chat(
         # у того, чьё лицо мы храним, — та же глухота, что и переспрашивать
         # сказанное.
         photo_on_file=has_profile,
-        asked=body.asked,
+        asked=asked,
     )
     # Готово — значит не спрашиваем. Раньше «готово» и «вопрос» приходили вместе,
     # и приложение честно останавливалось на вопросе: сказанного хватало на кадр,
@@ -275,6 +282,12 @@ async def chat(
         photo_attached=body.photo_attached,
         no_face_on_file=no_face_on_file,
     )
+
+    if gap and gap not in asked:
+        # Спросили — записали. Список хранится строкой среди полей: он живёт по
+        # тем же правилам, что и они, и гаснет вместе с ними через сутки.
+        await state_repo.remember(db, user, fresh={
+            state_repo.ASKED: ",".join(sorted(set(asked) | {gap}))})
 
     await chat_repo.add_message(db, user_id=user.id, role="user",
                                 content=body.message or None, media_id=body.media_id)
@@ -478,6 +491,34 @@ async def state(
     user, _ = ctx
     intent, known = await state_repo.load(db, user)
     return ChatState(intent=intent, known=known)
+
+
+class ForgetRequest(BaseModel):
+    forget: list[str] = Field(default_factory=list, max_length=16)
+
+
+@router.post("/chat/forget", response_model=ChatState)
+async def forget(
+    body: ForgetRequest,
+    ctx: Context = Depends(required_context),
+    db: AsyncSession = Depends(get_db_session),
+) -> ChatState:
+    """Снять неверно понятое — молча, без реплики в переписке.
+
+    Отдельной ручкой, а не полем в сообщении: человек может снять чип и не
+    написать больше ничего. Понятое при этом живёт на сервере и вернулось бы
+    при следующей загрузке треда — то есть строка обещала бы, что мы забыли, а
+    мы бы помнили.
+
+    Ответ — то же состояние, что и у `GET /chat/state`: приложение и сервер
+    должны расходиться как можно реже, и проще всего этого добиться, отдавая
+    правду в ответ на каждую правку.
+    """
+    user, _ = ctx
+    if body.forget:
+        await state_repo.drop(db, user, body.forget)
+    intent, known = await state_repo.load(db, user)
+    return ChatState(intent=intent, known=_worth_showing(known))
 
 
 @router.post("/chat/clear")

@@ -344,7 +344,7 @@ def _system_for(*, editing: bool, lettering: bool, poster: bool = False,
 # отвечал «my services are free» и «I don't have specific pricing information»
 # в трёх случаях из четырёх. Про деньги нельзя догадываться вслух.
 _CHAT_SYSTEM_TEMPLATE = """You are Toontoon, a warm, friendly AI assistant that helps people create
-beautiful images, postcards and videos.
+beautiful images and postcards.
 
 IMPORTANT: Reply in the language the person writes in. They wrote to you in their own
 words; answering in another language is answering somebody else. If their message is too
@@ -364,11 +364,22 @@ as careless, and this audience notices.
 What you can make:
 - Images ({image_cost} TOONTOON): portraits, posters, scenes — anything they describe
 - Postcards ({image_cost} TOONTOON): birthdays, holidays, anniversaries, good wishes
-- Videos ({video_cost} TOONTOON): animate a photo, animate a pet, short greetings
 
-PRICE RULE: an image or a postcard costs {image_cost} TOONTOON, a video costs
-{video_cost} TOONTOON. Never invent a price, never say the service is free, and never
-say you do not know what it costs. If asked about money, give exactly these numbers.
+PRICE RULE: an image or a postcard costs {image_cost} TOONTOON. Never invent a price,
+never say the service is free, and never say you do not know what it costs. If asked
+about money, give exactly this number.
+
+VIDEO RULE: you cannot make video yet. If they ask for one, say plainly in one
+sentence that video is coming soon and offer to make a picture meanwhile. Do not ask
+what kind of video they want, do not describe what the video would look like, and
+never name a price for it. Saying «sure, what kind of video?» and then handing them a
+still picture is worse than saying «not yet».
+A video request is not always called «video»: «animate my photo», «оживить фото»,
+«make it move», «сделай гифку» are all video. Read what they want, not the word.
+
+TOONTOON is the name of our currency and is always written exactly like that, in
+Latin letters, in every language. Never transliterate it («ТОНТОН») and never
+translate it.
 
 When the user describes an idea, suggest the most fitting content type.
 Ask 1–2 clarifying questions if needed, then confirm and offer to create it.
@@ -383,7 +394,6 @@ did not mention.
 
 _CHAT_SYSTEM = _CHAT_SYSTEM_TEMPLATE.format(
     image_cost=settings.image_toontoon_cost,
-    video_cost=settings.video_toontoon_cost,
 )
 
 
@@ -764,9 +774,9 @@ async def chat_reply(
     """
     if not settings.openai_enabled:
         return said_in(message,
-                       ru="Привет! Я Toontoon. Что сделаем — открытку, картинку или видео?",
+                       ru="Привет! Я Toontoon. Что сделаем — картинку или открытку?",
                        en="Hi! I'm Toontoon. What would you like to create — "
-                          "a postcard, an image, or a video?")
+                          "a picture or a postcard?")
 
     # Указание стоит после истории, а не до неё: модель тем сильнее слушает, чем
     # ближе к концу написано. Стоя первым, оно проигрывало разговору — человек
@@ -1044,7 +1054,8 @@ _IDEAS_SYSTEM = (
 )
 
 
-async def next_step_ideas(*, prompt: str, intent: str | None = None) -> tuple[str, list[str]]:
+async def next_step_ideas(*, prompt: str, intent: str | None = None,
+                          spoken: str = "") -> tuple[str, list[str]]:
     """Слово о готовом кадре и четыре правки к нему.
 
     Слово — с открытым вопросом: разговор не должен заканчиваться картинкой.
@@ -1054,6 +1065,11 @@ async def next_step_ideas(*, prompt: str, intent: str | None = None) -> tuple[st
 
     Пустой ответ законен: модель отказала или промпта нет. Приложение тогда
     показывает обычные кнопки уточнений, и человек не видит поломки.
+
+    ``spoken`` — чем человек писал в этом разговоре. Слово о кадре ложится в
+    переписку строкой ассистента, а происходит это после каждой генерации:
+    английская реплика посреди русского разговора здесь заметнее всего. Сам
+    промпт языка не подсказывает — он всегда английский, это машинерия.
     """
     if not settings.openai_enabled or not prompt.strip():
         return "", []
@@ -1062,7 +1078,11 @@ async def next_step_ideas(*, prompt: str, intent: str | None = None) -> tuple[st
     try:
         raw = await _call(
             [
-                {"role": "system", "content": _IDEAS_SYSTEM},
+                {"role": "system", "content": _IDEAS_SYSTEM + said_in(
+                    spoken,
+                    ru="\nWrite the remark and all four ideas in Russian, "
+                       "addressing the person as «вы».\n",
+                    en="")},
                 {"role": "user", "content": f"{what}\nThe picture was made with:\n{prompt}"},
             ],
             max_tokens=260,

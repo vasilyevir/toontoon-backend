@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import MediaAsset
+from app.config import settings
 from app.db.repositories import chat as chat_repo
 from app.db.repositories import generations as generations_repo
 from app.db.repositories import profiles as profiles_repo
@@ -106,9 +107,14 @@ async def ideas(
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Not found")
 
+    # Слово ложится в переписку — значит, и язык у него от переписки. Промпт
+    # кадра языка не подскажет: он всегда английский, это машинерия.
+    window = await chat_repo.context_messages(db, user, limit=settings.chat_context_messages)
+    spoken = " ".join(msg["content"] for msg in window if msg.get("role") == "user")
     remark, ideas = await gpt_service.next_step_ideas(
         prompt=row.prompt or "",
         intent=(row.request_params or {}).get("intent"),
+        spoken=spoken,
     )
     # Слово ложится в переписку, идеи — нет: слово это разговор, и завтра оно
     # должно быть на месте, а идеи живут до выбора.

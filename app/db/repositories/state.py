@@ -72,6 +72,16 @@ def _values(slots: dict) -> dict[str, str]:
     }
 
 
+# О чём уже спрашивали. Ключ служебный: он лежит среди слотов, но слотом не
+# является — это не то, что человек сказал, а то, что мы у него спросили.
+#
+# Живёт здесь, а не в приложении, потому что всё остальное уже здесь. Пока
+# список был только на клиенте, перезапуск приложения его стирал, и разговор
+# снова спрашивал про фотографию, о которой вчера уже спрашивал, — та самая
+# глухота, ради защиты от которой список и заводили.
+ASKED = "_asked"
+
+
 async def load(session: AsyncSession, user: m.User) -> tuple[str | None, dict[str, str]]:
     """Назначение и поля, которые человек уже назвал.
 
@@ -87,7 +97,9 @@ async def load(session: AsyncSession, user: m.User) -> tuple[str | None, dict[st
         row.started_at is None or row.started_at < user.chat_context_started_at
     ):
         return None, {}
-    return row.intent, _values(_fresh(row.slots))
+    known = _values(_fresh(row.slots))
+    known.pop(ASKED, None)
+    return row.intent, known
 
 
 async def remember(
@@ -142,6 +154,23 @@ async def remember(
         )
     )
     return _values(slots)
+
+
+async def asked_about(session: AsyncSession, user: m.User) -> list[str]:
+    """О чём в этом разговоре уже спрашивали.
+
+    Срок годности тот же, что у полей: вопрос суточной давности человек не
+    помнит, и повторить его не обидно — обидно повторять сказанное час назад.
+    """
+    row = await session.get(m.ConversationState, user.id)
+    if row is None:
+        return []
+    if user.chat_context_started_at is not None and (
+        row.started_at is None or row.started_at < user.chat_context_started_at
+    ):
+        return []
+    cell = _fresh(row.slots).get(ASKED)
+    return [f for f in str((cell or {}).get("value", "")).split(",") if f]
 
 
 async def drop(session: AsyncSession, user: m.User, fields: list[str]) -> dict[str, str]:

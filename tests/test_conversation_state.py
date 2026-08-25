@@ -222,3 +222,28 @@ async def test_what_was_said_yesterday_stops_counting(db):
     # переписываясь вместе со свежим.
     known = await state_repo.remember(session, user, fresh={"light": "sunset"})
     assert "place" not in known
+
+
+@pytest.mark.asyncio
+async def test_the_questions_asked_survive_a_restart(db):
+    """Список заданных вопросов жил только в приложении.
+
+    Закрыл и открыл — список пуст, и разговор снова спрашивает про фотографию,
+    о которой вчера уже спрашивал. Это та самая глухота, ради защиты от которой
+    список и заводили: «тебя не слушали» читается по повтору вопроса.
+    """
+    session, user = db
+    assert await state_repo.asked_about(session, user) == []
+
+    await state_repo.remember(session, user, fresh={state_repo.ASKED: "photo,format"})
+    assert await state_repo.asked_about(session, user) == ["photo", "format"]
+
+    # Служебный ключ наружу не выходит: строка понятого показывает сказанное
+    # человеком, а не наши вопросы к нему.
+    _, known = await state_repo.load(session, user)
+    assert state_repo.ASKED not in known
+
+    # «Очистка» — новый разговор, новые вопросы.
+    user.chat_context_started_at = datetime.now(timezone.utc) + timedelta(seconds=1)
+    await session.flush()
+    assert await state_repo.asked_about(session, user) == []
