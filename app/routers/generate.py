@@ -22,6 +22,7 @@ from app.db.repositories import profiles as profiles_repo
 from app.db import models as m
 from app.db.models import MediaAsset
 from app.storage import get_storage
+from app.storage import images
 from app.deps import Context, required_context
 from app.models.generation import (
     Generation,
@@ -31,6 +32,7 @@ from app.models.generation import (
     GenerationType,
 )
 from app.db.repositories import chat as chat_repo
+from app.db.repositories import state as state_repo
 from app.services import content_gen, conversation, generations_service, prompt_style, tiles_data, video_gen, wallet
 from app.services import gpt as gpt_service
 
@@ -168,6 +170,7 @@ async def generate(
     # наоборот, присылает собранное — там просьба сложена из ответов по полям, и
     # подмешивать к ней сырой тред значило бы сказать всё дважды.
     free_text = body.prompt
+    remembered_intent, remembered = None, {}
     if body.from_chat and not (body.prompt or "").strip():
         history = await chat_repo.context_messages(
             db, user, limit=settings.chat_context_messages
@@ -176,7 +179,15 @@ async def generate(
             msg["content"] for msg in history
             if msg.get("role") == "user" and msg.get("content")
         )
-        free_text = " ".join(p for p in (said, body.prompt) if p and p.strip()).strip() or None
+        # Окно кончается, а просьба — нет. Технику, палитру и назначение
+        # человек называет первой фразой; через двадцать реплик её тут уже нет,
+        # и кадр уезжал без них — по одному лишь хвосту разговора.
+        remembered_intent, remembered = await state_repo.load(db, user)
+        remembered = _for_the_frame(remembered)
+        free_text = " ".join(
+            p for p in (_carried_over(remembered, said), said, body.prompt)
+            if p and p.strip()
+        ).strip() or None
 
     # Что человек сказал словами, тем и делаем.
     #
@@ -207,9 +218,15 @@ async def generate(
         refine_key, refine_note = None, None
 
     intent = (restated.get("intent") or body.intent
+              or (conversation.explicit_intent(free_text) if free_text else None)
+              # Названное разговором, а не угаданное по хвосту: «постер» из
+              # первой фразы весит больше, чем умолчание по последней.
+              or (None if restated else remembered_intent)
               or (conversation.detect_intent(free_text) if free_text else None))
-    style = restated.get("technique") or (None if restated else body.style)
-    aspect = restated.get("format") or (None if restated else body.aspect)
+    style = (restated.get("technique") or (None if restated else body.style)
+             or (None if restated else remembered.get("technique")))
+    aspect = (restated.get("format") or (None if restated else body.aspect)
+              or (None if restated else remembered.get("format")))
     unknown = [
         slot for slot, value in (("technique", style), ("format", aspect))
         if value is None
@@ -364,6 +381,15 @@ async def generate(
                 used_saved_photo = True
 
     photo = await _load_photo(db, user.id, photo_url)
+    # Человек просил себя, а лица так и не нашлось — ни приложенного, ни в
+    # профиле. Разговор его об этом предупредил и кнопку не отнял: это его
+    # выбор. Но выбор надо считать, иначе мы не узнаем, читают ли предупреждение
+    # вообще, — а узнать это можно только по тому, сколько таких кадров человек
+    # стирает сразу.
+    made_without_face = photo_url is None and _asks_for_self(free_text)
+    if made_without_face:
+        logger.info("Кадр про человека делается без его лица")
+
     redraw = await _is_own_work(db, photo_url)
     # Остальные снимки — тем же путём. Порядок сохраняем: модели связывают
     # референсы с упоминаниями в промпте по очереди, и перестановка меняет, кто
@@ -381,6 +407,9 @@ async def generate(
     # человек» стоит в промпте буквально. Поставить образец первым значит
     # сказать модели, что человек в кадре — тот, кто нарисован на постере.
     style_refs = []
+    # Слова, написанные на образце: их нельзя переносить в кадр, и запретить их
+    # можно только назвав. Читаются тем же зрением, что и техника.
+    sample_brands: list[str] = []
     for url in body.style_ref_urls:
         loaded = await _load_photo(db, user.id, url)
         if loaded is not None:
@@ -446,9 +475,32 @@ async def generate(
     # тем же зрением, каким разбираем роли: он показан картинкой, значит и
     # прочитать его надо глазами, а не ждать, что его перескажут словами.
     if style_refs and style is None:
-        style = await gpt_service.style_of_sample(style_refs[0])
+        style, sample_brands = await gpt_service.style_of_sample(style_refs[0])
         if style:
             logger.info("Стиль образца: %s", style)
+        if sample_brands:
+            logger.info("Чужие марки на образце: %s", ", ".join(sample_brands))
+
+    # Форма кадра — тоже с образца, когда человек её не называл.
+    #
+    # Композицию мы у образца просили с самого начала, а форму брали из
+    # умолчания: горизонтальный постер AKAI приезжал вертикальным `9:16`.
+    # Разделить их нельзя — вертикальная обрезка ломает ровно ту плакатную
+    # вёрстку, за которой человек и пришёл.
+    #
+    # Названное словами сильнее: «сделай 16:9» — это выбор, а образец лишь
+    # показан.
+    if style_refs and aspect is None:
+        aspect = images.aspect_of(style_refs[0][0])
+        if aspect:
+            logger.info("Пропорции образца: %s", aspect)
+
+    # То же и для стиля витрины: у него образец — собственный пример на
+    # карточке, и форма кадра часть того же обещания, что палитра и свет.
+    # Пока форму нести было негде, четыре карточки показывали квадрат, а
+    # делали вертикаль.
+    if aspect is None and style_row is not None:
+        aspect = (style_row.prompt_template or {}).get("aspect")
 
     # Буквы заказывают словами, а не назначением.
     #
@@ -495,7 +547,7 @@ async def generate(
             prompt, negative = await content_gen.build_prompt_for(
                 tile=tile, answers=body.answers, free_text=free_text, style=style,
                 editing=editing, intent=intent,
-                style_ref=bool(style_refs), redraw=redraw,
+                style_ref=bool(style_refs), sample_brands=sample_brands, redraw=redraw,
                 subject=profile.kind if profile is not None else "person",
                 cast=cast, lettering=lettering, poster=poster,
                 lettering_text=lettering_text,
@@ -541,6 +593,9 @@ async def generate(
             "refine": refine_key,
             "lettering": lettering,
             "lettering_text": lettering_text,
+            # Только когда это правда: лишний ключ в каждой записи стоит места
+            # и читается как «мы про это думали», хотя думать было не о чем.
+            **({"made_without_face": True} if made_without_face else {}),
         },
         source_media_id=_media_id(photo_url),
         cost=cost,
@@ -619,15 +674,30 @@ async def generate(
     # Проверяем только там, где ждали рисунок. Стили каталога фотографические, и
     # у них поле `style` пустое: пока «пусто» значило «рисунок», каждый кадр с
     # витрины делался дважды — вдвое дольше и вдвое дороже, без единой причины.
+    redrawn = False
     if editing and photo is not None and _wants_drawing(style, style_row, editing):
-        result, prompt = await _redraw_if_photographic(db, request, result, prompt,
-                                                       prefer=prefer_used)
+        result, prompt, redrawn = await _redraw_if_photographic(
+            db, request, result, prompt, prefer=prefer_used)
+
+    # Чужая марка с образца — то же самое, что фотография вместо рисунка: видно
+    # только на готовом кадре, и молчать об этом нельзя.
+    result, prompt, brand_reshot = await _reshoot_if_brand_leaked(
+        db, request, result, prompt, sample_brands, prefer=prefer_used)
 
     await wallet.confirm(db, payment)
 
     asset = await media_repo.save_image(db, user_id=user.id, kind="generation", data=result.data)
     record.provider_id = result.provider_id
     record.provider_model = result.model
+    record.provider_cost_usd = result.cost_usd
+    if redrawn or brand_reshot:
+        # Повтор не создаёт отдельной работы — человек просил один кадр и
+        # получил один. Но след он оставить обязан, иначе его не сосчитать.
+        record.request_params = {
+            **(record.request_params or {}),
+            **({"redrawn": True} if redrawn else {}),
+            **({"brand_reshot": True} if brand_reshot else {}),
+        }
     await generations_repo.mark_done(db, record, result_media_id=asset.id, prompt=prompt)
     generation_id = record.id
     result_url = f"/api/media/{asset.id}"
@@ -661,22 +731,39 @@ async def generate(
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
 
-# Слова, которыми просят себя в кадре. Список короткий и намеренно грубый:
-# ошибка здесь стоит одной лишней подстановки снимка, который и так лежит.
-# «Я» отдельным словом — такая же просьба про лицо, как «меня».
+# «Я» отдельным словом — такая же просьба про лицо, как «меня». Границы слова
+# обязательны: «я» встречается внутри доброй половины русских слов, и без них
+# «Постер: я в форме Lakers» не совпадало ни с чем, а снимок не подставлялся.
 #
-# «Постер: я в форме Lakers» не совпадало ни с одним словом из списка, и снимок
-# не подставлялся вовсе. Границы слова здесь обязательны: «я» встречается
-# внутри доброй половины русских слов.
-_SELF_WORDS = re.compile(
-    r"\b(me|myself|us|my (photo|face|picture))\b|меня|себя|нас\b|вдво[её]м"
-    r"|\bя\b|\bмне\b|\bмо[йяё]\b|мо[её] (фото|лицо)",
-    re.IGNORECASE,
-)
+# Сам список живёт в `gpt`: он нужен и разговору — сказать, что лица у нас нет.
+_asks_for_self = gpt_service.asks_for_self
 
 
-def _asks_for_self(text: str | None) -> bool:
-    return bool(text and _SELF_WORDS.search(text))
+def _for_the_frame(remembered: dict[str, str]) -> dict[str, str]:
+    """Из записанного — только то, что можно сказать картинке.
+
+    «Ответил образец» — пометка для разговора: она закрывает вопрос про технику,
+    когда человек показал пальцем вместо слов. В промпте та же строка стала бы
+    требованием нарисовать приложенный файл.
+    """
+    return {
+        field: value for field, value in remembered.items()
+        if value and not value.startswith("from the attached")
+    }
+
+
+def _carried_over(remembered: dict[str, str], said: str) -> str | None:
+    """Сказанное раньше, чего в окне разговора уже не осталось.
+
+    Дописывается к просьбе, а не заменяет её: слова человека сильнее нашего
+    пересказа. И только выпавшее — повторять то, что и так в окне, значит
+    сказать одно и то же дважды и утяжелить этим сцену.
+    """
+    lost = [
+        value for field, value in remembered.items()
+        if field != "photo" and value.lower() not in said.lower()
+    ]
+    return ", ".join(lost) or None
 
 
 def _has_subject(body: GenerateRequest, free_text: str | None = None) -> bool:
@@ -782,20 +869,69 @@ async def _redraw_if_photographic(
     Один повтор, не больше: если и он вернулся снимком, отдаём что есть —
     бесконечно платить за упрямство модели нельзя, а человек ждёт картинку.
 
-    Возвращает кадр и промпт, которым он в итоге сделан: в историю должно лечь
-    то, что действительно уехало исполнителю.
+    Возвращает кадр, промпт, которым он в итоге сделан, и был ли повтор: в
+    историю должно лечь то, что действительно уехало исполнителю, а в счёт —
+    оба запроса. Человек платит один раз, мы платим дважды, и пока это нигде не
+    записывалось, вопрос «сколько стоит упрямство модели» нельзя было задать.
     """
     if not await gpt_service.looks_photographic(result.data):
-        return result, prompt
+        return result, prompt, False
 
     logger.info("Кадр приехал фотографией там, где просили рисунок — переделываем")
     harder = f"{prompt}, {prompt_style.REDRAW_HARDER}"
     second = replace(request, prompt=harder)
     try:
-        return await generation_core.run(db, second, prefer=prefer), harder
+        again = await generation_core.run(db, second, prefer=prefer)
     except Exception:  # noqa: BLE001 — повтор не удался, отдаём первый кадр
         logger.warning("Повтор не удался, отдаём первый кадр")
-        return result, prompt
+        return result, prompt, True
+    # Первый кадр выброшен, но оплачен: складываем оба.
+    if again.cost_usd is not None or result.cost_usd is not None:
+        again.cost_usd = (again.cost_usd or 0) + (result.cost_usd or 0)
+    return again, harder, True
+
+
+async def _reshoot_if_brand_leaked(
+    db: AsyncSession,
+    request: "generation_core.GenerationRequest",
+    result,
+    prompt: str,
+    brands: list[str],
+    *,
+    prefer: str | None,
+):
+    """Посмотреть на готовый кадр и, если в нём чужая марка, снять заново.
+
+    Замер: имя с образца уцелевает примерно в двух кадрах из пяти, всегда в
+    мелкой печати — заголовок модель заменяет исправно, а шеврон размером в
+    сто пикселей воспроизводит вместе с рисунком. Формулировкой это закрыть не
+    удалось: слово называлось буквально, число не сдвинулось.
+
+    Проверяем только когда на образце есть чужие марки. У большинства образцов
+    их нет, и тогда не тратится ни вызова: риск здесь не в буквах, а в чужом
+    знаке, и платить за проверку там, где знака нет, не за что.
+
+    Один повтор, как и у переделки фотографии в рисунок: если марка уцелела и
+    во второй раз, отдаём что есть. Человек ждёт картинку, а не нашу борьбу с
+    упрямством модели.
+    """
+    if not brands:
+        return result, prompt, False
+    leaked = await gpt_service.brands_on_image(result.data, brands)
+    if not leaked:
+        return result, prompt, False
+
+    logger.info("В кадр уехала чужая марка (%s) — переснимаем", ", ".join(leaked))
+    harder = f"{prompt}, {prompt_style.brand_leaked(leaked)}"
+    second = replace(request, prompt=harder)
+    try:
+        again = await generation_core.run(db, second, prefer=prefer)
+    except Exception:  # noqa: BLE001 — повтор не удался, отдаём первый кадр
+        logger.warning("Пересъёмка не удалась, отдаём первый кадр")
+        return result, prompt, True
+    if again.cost_usd is not None or result.cost_usd is not None:
+        again.cost_usd = (again.cost_usd or 0) + (result.cost_usd or 0)
+    return again, harder, True
 
 
 def _reference_take(style: str | None, style_row=None) -> int:

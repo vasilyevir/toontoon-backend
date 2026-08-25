@@ -309,6 +309,14 @@
             "title": "Attachment Ids",
             "type": "array"
           },
+          "forget": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 16,
+            "title": "Forget",
+            "type": "array"
+          },
           "history": {
             "items": {
               "$ref": "#/components/schemas/ChatMessage"
@@ -356,6 +364,25 @@
             ],
             "title": "Ask About"
           },
+          "intent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intent"
+          },
+          "known": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "title": "Known",
+            "type": "object"
+          },
           "options": {
             "default": [],
             "items": {
@@ -386,6 +413,32 @@
           "reply"
         ],
         "title": "ChatResponse",
+        "type": "object"
+      },
+      "ChatState": {
+        "description": "Что мы понимаем про просьбу на момент открытия экрана.",
+        "properties": {
+          "intent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intent"
+          },
+          "known": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "title": "Known",
+            "type": "object"
+          }
+        },
+        "title": "ChatState",
         "type": "object"
       },
       "CreateRequest": {
@@ -2858,6 +2911,72 @@
           }
         },
         "summary": "Messages",
+        "tags": [
+          "chat"
+        ]
+      }
+    },
+    "/api/chat/state": {
+      "get": {
+        "description": "Понятое — на холодный старт.\n\nБез этого приложение открывалось с пустой строкой понятого, а сервер в это\nвремя держал всю просьбу и собирал по ней кадр. Пустая строка читается как\n«нас забыли» — и это была бы та самая ложь, ради устранения которой строка\nи появилась.",
+        "operationId": "state_api_chat_state_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "arteki-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Arteki-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "State",
         "tags": [
           "chat"
         ]

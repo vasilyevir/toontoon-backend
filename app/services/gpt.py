@@ -204,6 +204,42 @@ Strict rules:
   Pixar, Disney, Ghibli, DreamWorks.
 """
 
+# Фотография человека плюс образец стиля.
+#
+# Общая инструкция редактору здесь вредит дважды. Она требует описать
+# «обстановку, свет и настроение» и уложиться в 35–70 слов — а человек сказал
+# всего три слова: «в такой же стилистике». Сборщик честно добирал недостающее
+# из головы: на постер AKAI он написал лес с белкой, на второй заход — парк в
+# золотой час. Ни того, ни другого никто не просил.
+#
+# Второй вред тише: свет и палитра принадлежат образцу, который у редактора
+# перед глазами. Описанные словами, они с ним спорят — и выигрывают слова.
+_EDIT_WITH_SAMPLE = """You write ONE short instruction for an image editor. The editor receives a
+photo of a real person AND a style sample image, and must redraw the person in the
+sample's style. The person must remain the same person.
+
+Write ONLY the instruction, in English, whatever language the user writes in.
+Be brief — one or two sentences. Saying less is better than filling space.
+
+Strict rules:
+- NEVER describe the person's face, age, hair colour, skin tone, body or gender.
+  The editor already has the photo. Refer to them only as "the person in the photo".
+- The style sample owns the look: its palette, its lighting, its background and the way
+  it composes its subject. NEVER put any of that into words — the editor can see it.
+- Describe ONLY what the user actually asked for. If they asked for nothing beyond
+  "make me in this style", then say only that the person is redrawn in the sample's
+  style, framed and composed the way the sample frames its own subject.
+- NEVER invent a setting, a season, a time of day, weather, props, animals, an
+  activity, a pose or an expression that the user did not ask for. An empty answer
+  from the user is not a gap to fill.
+- If the user DID name a subject or a theme (a sport, a place, an object, an
+  occasion), keep it and describe only that.
+- NO style words, NO technical words, NO quality words.
+- NEVER use: beautiful, high quality, realistic, perfect, 4k, hd, masterpiece,
+  Pixar, Disney, Ghibli, DreamWorks.
+"""
+
+
 # Что дописывается к инструкции в зависимости от того, что человек делает.
 #
 # Раньше запрет на буквы стоял в самой инструкции, всегда. Для портрета это
@@ -212,8 +248,14 @@ Strict rules:
 # сцену. Так «постер с моим именем и словами про баскетбол» превратился в
 # фотографию баскетболиста на площадке.
 _NO_LETTERS = (
-    "- No letters or text in the image. If a greeting was provided, ask for "
-    "clean empty space instead.\n"
+    # Условие названо с обеих сторон намеренно. «Если поздравление дали,
+    # попроси пустое место» сборщик читает как разрешение написать эту фразу
+    # всегда — и на просьбу «сделай меня в такой же стилистике», где никакого
+    # поздравления не было, в промпт уезжало «Please provide clean empty
+    # space». Пустое место посреди кадра никто не заказывал.
+    "- No letters or text in the image. Only if a greeting text was provided, "
+    "describe a clean empty area for it; if none was given, say nothing about "
+    "empty space at all.\n"
 )
 
 # Просьба про буквы вне постера: надпись нужна, а плакатная вёрстка — нет.
@@ -270,7 +312,7 @@ _REDRAW_NOTE = (
 
 
 def _system_for(*, editing: bool, lettering: bool, poster: bool = False,
-                drawn: bool = False) -> str:
+                drawn: bool = False, style_ref: bool = False) -> str:
     """Инструкция сборщику: что писать и можно ли писать буквы.
 
     Буквы и постер — разные вещи. Постер живёт вёрсткой: плоские формы, поля,
@@ -278,7 +320,13 @@ def _system_for(*, editing: bool, lettering: bool, poster: bool = False,
     ей плакатную вёрстку значит переделать картинку, которую человек уже
     показал образцом.
     """
-    base = _EDIT_SYSTEM if editing else _SCENE_SYSTEM
+    if editing:
+        # Образец меняет саму задачу: описывать нужно не «что изменится», а
+        # только то, что человек назвал сверх самого образца — чаще всего
+        # ничего.
+        base = _EDIT_WITH_SAMPLE if style_ref else _EDIT_SYSTEM
+    else:
+        base = _SCENE_SYSTEM
     if drawn and editing:
         base += _REDRAW_NOTE
     if poster:
@@ -288,22 +336,39 @@ def _system_for(*, editing: bool, lettering: bool, poster: bool = False,
         return base + (_LETTERING if lettering else _POSTER_NO_WORDS)
     return base + (_LETTERING_PLAIN if lettering else _NO_LETTERS)
 
-_CHAT_SYSTEM = """You are Toontoon, a warm, friendly AI assistant that helps people create
+# Цены подставляются из настроек, а не набраны прозой.
+#
+# Набранные руками, они разъезжаются с кошельком молча: тариф правится в
+# конфиге, промпт остаётся прежним, и ассистент называет вчерашнюю цену с
+# полной уверенностью. Замер показал и худшее — на «Сколько это стоит?» он
+# отвечал «my services are free» и «I don't have specific pricing information»
+# в трёх случаях из четырёх. Про деньги нельзя догадываться вслух.
+_CHAT_SYSTEM_TEMPLATE = """You are Toontoon, a warm, friendly AI assistant that helps people create
 beautiful images, postcards and videos.
 
-IMPORTANT: Always reply in English, regardless of the language the user writes in. Keep
-the entire product experience in one consistent language.
+IMPORTANT: Reply in the language the person writes in. They wrote to you in their own
+words; answering in another language is answering somebody else. If their message is too
+short to tell (a number, an emoji, "ok"), keep the language of the conversation so far.
+
+This applies only to what the person reads. Everything the picture generator receives
+stays English — that is machinery, and the quality of the frame depends on it.
 
 Your users are mostly people aged 40–60 who are not very tech-savvy. Be simple, kind and
 inspiring. Write short sentences.
 
+In languages that have a polite and a familiar form of "you", always use the polite one
+(Russian «вы», German "Sie", French "vous"). Two replies in a row said «ты» and then
+«вы» to the same person — a stranger who suddenly starts addressing you familiarly reads
+as careless, and this audience notices.
+
 What you can make:
-- Images (1 TOONTOON): Cartoon character, Cute animal, Birds, Fish, Nature, Food
-- Postcards (1 TOONTOON): Birthday, Jubilee, Valentine's Day, Wedding, Anniversary,
-  Mother's Day, Father's Day, Easter, Thanksgiving, New Year, Graduation, Get Well,
-  Just Because, Good Morning, Good Day
-- Videos (2 TOONTOON): Animate a photo, Animate a pet, Cartoon character,
-  Video greeting, Living nature, Cute animal, Good morning, Inspiring video
+- Images ({image_cost} TOONTOON): portraits, posters, scenes — anything they describe
+- Postcards ({image_cost} TOONTOON): birthdays, holidays, anniversaries, good wishes
+- Videos ({video_cost} TOONTOON): animate a photo, animate a pet, short greetings
+
+PRICE RULE: an image or a postcard costs {image_cost} TOONTOON, a video costs
+{video_cost} TOONTOON. Never invent a price, never say the service is free, and never
+say you do not know what it costs. If asked about money, give exactly these numbers.
 
 When the user describes an idea, suggest the most fitting content type.
 Ask 1–2 clarifying questions if needed, then confirm and offer to create it.
@@ -315,6 +380,11 @@ Elsa, Pikachu), do NOT invent a different brand. Either offer a generic look-ali
 brand and propose a generic version. NEVER swap one brand for another brand that the user
 did not mention.
 """
+
+_CHAT_SYSTEM = _CHAT_SYSTEM_TEMPLATE.format(
+    image_cost=settings.image_toontoon_cost,
+    video_cost=settings.video_toontoon_cost,
+)
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -449,6 +519,7 @@ async def build_prompt(
     editing: bool = False,
     intent: Optional[str] = None,
     style_ref: bool = False,
+    sample_brands: list[str] | None = None,
     redraw: bool = False,
     subject: str = "person",
     cast: list[str] | None = None,
@@ -558,15 +629,20 @@ async def build_prompt(
     if lettering is None:
         lettering = poster and bool(lettering_text)
     system = _system_for(editing=editing, lettering=lettering, poster=poster,
-                         drawn=prompt_style.is_drawn(style_key))
-    if style_ref:
-        # Иначе сборщик пересказывает стиль словами — «в стиле как на образце»,
-        # — и модель получает описание вместо самого образца, который у неё уже
-        # есть перед глазами.
+                         drawn=prompt_style.is_drawn(style_key), style_ref=style_ref)
+    if style_ref and not editing:
+        # Путь без фотографии: сцену всё-таки пишем, но образец уже отвечает за
+        # вид. Правило про палитру называется по номеру намеренно — общий
+        # список требует её «конкретной», и мягкая приписка этому проигрывает,
+        # как проигрывала счётчику слов приписка на пути с фотографией.
         system += (
             "- A style sample is attached. Do not describe its look in words: "
             "the editor can see it. Describe only the subject and what happens "
-            "in the frame.\n"
+            "in the frame, and IGNORE the rule about naming a concrete colour "
+            "palette — the sample owns the palette.\n"
+            "- If the person did not say what should happen, do NOT invent a "
+            "setting, props, animals or an activity: keep the frame to the "
+            "subject and let the sample decide the rest.\n"
         )
     messages = [
         {"role": "system", "content": system},
@@ -581,7 +657,7 @@ async def build_prompt(
         return "", ""
     prompt = prompt_style.assemble(
         scene, style_key=style_key, is_text=is_text, editing=editing,
-        poster=poster, style_ref=style_ref, redraw=redraw,
+        poster=poster, style_ref=style_ref, sample_brands=sample_brands, redraw=redraw,
         subject=subject, cast=cast,
     )
     log.info("[build_prompt] style=%s → key=%s editing=%s | scene: %s",
@@ -594,8 +670,40 @@ async def build_prompt(
 # ─── Role 2: Chat assistant ──────────────────────────────────────────────────
 
 
+# Слова, которыми просят себя в кадре. Список короткий и намеренно грубый:
+# ошибка здесь стоит одной лишней подстановки снимка, который и так лежит.
+#
+# Живёт здесь, а не в маршруте генерации, потому что нужен обоим: кадру — чтобы
+# подставить лицо, разговору — чтобы сказать, что лица нет.
+_SELF_WORDS = re.compile(
+    r"\b(me|myself|us|my (photo|face|picture))\b|меня|себя|нас\b|вдво[её]м"
+    r"|\bя\b|\bмне\b|\bмо[йяё]\b|мо[её] (фото|лицо)",
+    re.IGNORECASE,
+)
+
+
+def asks_for_self(text: str | None) -> bool:
+    """Просит ли человек себя в кадре — его же словами."""
+    return bool(text and _SELF_WORDS.search(text))
+
+
+def said_in(text: str, *, ru: str, en: str) -> str:
+    """Готовая реплика на языке человека.
+
+    Написанное моделью само приходит на его языке — так ей и сказано. Но
+    несколько строк набраны руками: приветствие без ключа к модели, извинение за
+    отказ сети, вопрос «кто из них вы». Оставить их английскими значило бы
+    отвечать на двух языках в одной переписке.
+
+    Различаем по письму, а не по словам: кириллица — русский, всё остальное —
+    английский. Для двух языков этого достаточно, а угадывать третий по строке
+    «ок» всё равно нечем.
+    """
+    return ru if any("а" <= ch.lower() <= "я" or ch.lower() == "ё" for ch in text) else en
+
+
 def chat_directive(ask_about: str | None, known: dict[str, str] | None = None,
-                   *, photo_attached: bool = False) -> str:
+                   *, photo_attached: bool = False, no_face_on_file: bool = False) -> str:
     """Указание модели: о чём спросить в этот раз и о чём не спрашивать.
 
     Выбор темы вопроса — решение, а не формулировка, и принимается оно кодом
@@ -617,6 +725,16 @@ def chat_directive(ask_about: str | None, known: dict[str, str] | None = None,
         said = "; ".join(f"{slot}: {value}" for slot, value in sorted(known.items()))
         lines.append(f"The person has already said — {said}. Treat all of it as settled: "
                      "never ask about any of it again, and do not ask them to confirm it.")
+    if no_face_on_file:
+        # Человек просит себя, а лица у нас нет ни приложенного, ни в профиле.
+        # Молча нарисовать постороннего и списать за это TOONTOON — худший из
+        # возможных ответов: узнать об этом можно только на готовом кадре.
+        lines.append(
+            "The person asked for THEMSELVES in the picture, but no photo of them is "
+            "attached and none is on file. Say this plainly in one short sentence: "
+            "without a photo the face will not be theirs, and attaching one makes it "
+            "them. Do not refuse and do not lecture — they may go ahead either way."
+        )
     if ask_about is None:
         lines.append("Nothing essential is missing. Do not ask another question: say in one "
                      "sentence what you understood and offer to create it.")
@@ -633,6 +751,7 @@ async def chat_reply(
     ask_about: str | None = None,
     known: dict[str, str] | None = None,
     photo_attached: bool = False,
+    no_face_on_file: bool = False,
 ) -> str:
     """Return Toontoon's reply to a user message in the chat.
 
@@ -644,7 +763,10 @@ async def chat_reply(
     про пропорции и дважды вернулся к стилю, названному первой же фразой.
     """
     if not settings.openai_enabled:
-        return "Hi! I'm Toontoon. What would you like to create — a postcard, an image, or a video?"
+        return said_in(message,
+                       ru="Привет! Я Toontoon. Что сделаем — открытку, картинку или видео?",
+                       en="Hi! I'm Toontoon. What would you like to create — "
+                          "a postcard, an image, or a video?")
 
     # Указание стоит после истории, а не до неё: модель тем сильнее слушает, чем
     # ближе к концу написано. Стоя первым, оно проигрывало разговору — человек
@@ -653,13 +775,16 @@ async def chat_reply(
     messages = [{"role": "system", "content": _CHAT_SYSTEM}]
     messages.extend(history[-10:])  # Keep last 10 turns for context.
     messages.append({"role": "system", "content": chat_directive(
-        ask_about, known, photo_attached=photo_attached)})
+        ask_about, known, photo_attached=photo_attached,
+        no_face_on_file=no_face_on_file)})
     messages.append({"role": "user", "content": message})
 
     try:
         return await _call(messages, max_tokens=200)
     except Exception:
-        return "Sorry, I'm having trouble right now. Please try again in a moment."
+        return said_in(message,
+                       ru="Извините, сейчас не получается ответить. Попробуйте через минуту.",
+                       en="Sorry, I'm having trouble right now. Please try again in a moment.")
 
 
 # ─── Разбор сказанного по слотам ─────────────────────────────────────────────
@@ -718,7 +843,15 @@ SLOT_MEANING: dict[str, str] = {
         "it or say where it will be shown. NOT how close the camera is, and not "
         "something a poster, a cover or a wallpaper implies on its own"
     ),
-    "place": "where the scene happens",
+    # «Постер про баскетбол» разбирался как `place: basketball` — и новогодняя
+    # открытка потом уезжала с баскетбольным местом. Про что картинка и где она
+    # происходит — разные вопросы, и второй бывает без ответа чаще, чем кажется.
+    "place": (
+        "the physical location the scene happens in — a room, a street, a "
+        "rooftop, a beach — and only when they say where. What the picture is "
+        "ABOUT is not a location: «a poster about basketball» says what it is "
+        "about, not where it happens, and place stays empty there"
+    ),
     "light": "the light source or time of day",
     "wardrobe": "what the person wears",
     "framing": "how close the camera is — close-up, waist-up, full body. NOT the orientation of the frame",
@@ -1056,12 +1189,20 @@ _SAMPLE_STYLE_SYSTEM = (
     "- semi_real_3d — stylised 3D with lifelike proportions\n"
     "- anime — anime, manga, cel-shaded illustration\n"
     "Judge how it is DRAWN, not what it shows: a drawing of a real place is "
-    "still a drawing."
+    "still a drawing.\n"
+    "Then read every word, name and piece of lettering anywhere in the image — "
+    "headlines, jerseys, crests, badges, seals, small print, signatures — in "
+    "any script. Of those, report ONLY the ones that name something real: a "
+    "company, a brand, a team, a league, a publication, a person's name. "
+    "Invented words, common words and decorative lettering are not brands and "
+    "must be left out.\n"
+    'Answer JSON and nothing else: {"style": "<one id above>", '
+    '"brands": ["<each real name you can read, exactly as written>"]}'
 )
 
 
-async def style_of_sample(image: tuple[bytes, str]) -> str | None:
-    """Какой техникой сделан образец. `None` — не разобрали.
+async def style_of_sample(image: tuple[bytes, str]) -> tuple[str | None, list[str]]:
+    """Какой техникой сделан образец и чьи марки на нём написаны.
 
     Образец показан картинкой, и прочитать его можно только глазами. Ждать,
     что человек назовёт технику словами, бессмысленно: он затем и приложил
@@ -1072,9 +1213,21 @@ async def style_of_sample(image: tuple[bytes, str]) -> str | None:
     фотографию: в промпт уходил фотореалистичный якорь и следом просьба
     скопировать рисунок с образца. Якорь стоит первым и выигрывает — человек
     прикладывал аниме-постер и получал свою фотографию.
+
+    Марки — вторым делом и тем же вызовом, потому что второй стоил бы столько
+    же, сколько первый. Запрет «не переноси чужой бренд» описывает категорию, и
+    на категорию модель отзывается через раз: замер на пяти кадрах дал два, где
+    «AKAI» уцелело в шевроне размером в сто пикселей. Названное слово — не
+    категория, и запретить его можно буквально.
+
+    Спрашиваем именно марки, а не все надписи. Риск здесь не в буквах, а в
+    чужом знаке: «AKAI» принадлежит настоящей компании, а «赤い伝説» — «Красная
+    легенда» — не принадлежит никому, и мешать ему остаться в кадре незачем.
+    Заодно это решает, когда переснимать: пустой список марок означает, что
+    проверять готовый кадр не нужно вовсе, а таких образцов большинство.
     """
     if not settings.openai_enabled:
-        return None
+        return None, []
 
     data, _ = image
     small = base64.b64encode(storage_images.preview(data)).decode()
@@ -1084,15 +1237,80 @@ async def style_of_sample(image: tuple[bytes, str]) -> str | None:
              {"role": "user", "content": [
                  {"type": "image_url",
                   "image_url": {"url": f"data:image/jpeg;base64,{small}"}}]}],
-            max_tokens=12,
+            max_tokens=200,
             temperature=0,
             model=settings.slot_extraction_model or None,
         )
     except Exception:  # noqa: BLE001 — не разобрали, значит не называем
-        return None
+        return None, []
 
-    key = (raw or "").strip().strip(".").lower().split()[0] if raw and raw.strip() else ""
-    return key if key in prompt_style.PRESETS else None
+    try:
+        start, end = raw.index("{"), raw.rindex("}") + 1
+        parsed = json.loads(raw[start:end])
+    except (ValueError, AttributeError, json.JSONDecodeError):
+        return None, []
+
+    key = str(parsed.get("style") or "").strip().strip(".").lower().split()
+    style = key[0] if key and key[0] in prompt_style.PRESETS else None
+    words, seen = [], set()
+    for raw_word in (str(w).strip() for w in parsed.get("brands") or []):
+        # Однобуквенное и числа запрещать бессмысленно: номер на майке это не
+        # бренд, а запрет на «1» испортил бы любую вёрстку.
+        if len(raw_word) < 2 or raw_word.isdigit():
+            continue
+        # Одно и то же слово зрение перечисляет столько раз, сколько видит его
+        # на картинке: «AKAI» пришло пятью строками. В запрете это лишний вес.
+        if (key := raw_word.casefold()) in seen:
+            continue
+        seen.add(key)
+        words.append(raw_word)
+    return style, words[:12]
+
+
+_BRANDS_SEEN_SYSTEM = (
+    "You are shown one picture and a list of names. Answer with the names from "
+    "the list that actually appear written in the picture — anywhere, at any "
+    "size, including tiny badges, crests, seals and small print. Match by what "
+    "the letters say, not by exact spelling: a name written in another script, "
+    "or with one letter different, still counts.\n"
+    'Answer JSON and nothing else: {"seen": ["<names from the list>"]}'
+)
+
+
+async def brands_on_image(data: bytes, names: list[str]) -> list[str]:
+    """Какие из этих марок написаны в кадре.
+
+    Спрашиваем моделью, а не чтением: наш OCR — системное зрение macOS, в проде
+    его нет. И сверка списком надёжнее точного совпадения строк: зрение читает
+    «KOVRA» как «KOYRA», а модель, которой дали список, узнаёт слово всё равно.
+
+    Пустой список имён — пустой ответ и ни одного вызова: у большинства
+    образцов чужих марок нет вовсе, и платить за проверку там не за что.
+    """
+    if not names or not settings.openai_enabled or not data:
+        return []
+
+    small = base64.b64encode(storage_images.preview(data, side=1024)).decode()
+    try:
+        raw = await _call(
+            [{"role": "system", "content": _BRANDS_SEEN_SYSTEM},
+             {"role": "user", "content": [
+                 {"type": "text", "text": "Names: " + ", ".join(names)},
+                 {"type": "image_url",
+                  "image_url": {"url": f"data:image/jpeg;base64,{small}"}}]}],
+            max_tokens=120,
+            temperature=0,
+            model=settings.slot_extraction_model or None,
+        )
+    except Exception:  # noqa: BLE001 — не прочитали, значит не переснимаем
+        return []
+    try:
+        start, end = raw.index("{"), raw.rindex("}") + 1
+        seen = json.loads(raw[start:end]).get("seen") or []
+    except (ValueError, AttributeError, json.JSONDecodeError):
+        return []
+    wanted = {n.casefold() for n in names}
+    return [str(x).strip() for x in seen if str(x).strip().casefold() in wanted]
 
 
 _IS_DRAWING_SYSTEM = (
@@ -1163,7 +1381,7 @@ _PHOTO_IDEAS_SYSTEM = (
 )
 
 
-async def photo_remark_and_ideas(image: bytes) -> tuple[str, list[str]]:
+async def photo_remark_and_ideas(image: bytes, *, spoken: str = "") -> tuple[str, list[str]]:
     """Что сказать про снимок и что предложить с ним сделать.
 
     Снимок — это уже просьба, просто без слов: человек приложил своё лицо и
@@ -1177,6 +1395,10 @@ async def photo_remark_and_ideas(image: bytes) -> tuple[str, list[str]]:
 
     Пустой ответ законен: зрение недоступно или отказало. Тогда человек просто
     пишет сам, как писал бы всегда.
+
+    ``spoken`` — чем человек писал до этого. Снимок приходит без слов, и языка в
+    самой реплике нет; взять его больше неоткуда, а английская строка посреди
+    русской переписки — та же чужая реплика, что и раньше.
     """
     if not settings.openai_enabled or not image:
         return "", []
@@ -1185,7 +1407,11 @@ async def photo_remark_and_ideas(image: bytes) -> tuple[str, list[str]]:
     try:
         raw = await _call(
             [
-                {"role": "system", "content": _PHOTO_IDEAS_SYSTEM},
+                {"role": "system", "content": _PHOTO_IDEAS_SYSTEM + said_in(
+                    spoken,
+                    ru="\nWrite the remark and the ideas in Russian, addressing "
+                       "the person as «вы».\n",
+                    en="")},
                 {"role": "user", "content": [
                     {"type": "text", "text": "Here is the photograph."},
                     {"type": "image_url",

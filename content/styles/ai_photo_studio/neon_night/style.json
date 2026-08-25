@@ -4,5 +4,6 @@
   "cost": 1,
   "is_home": true,
   "is_shot": true,
-  "sort_order": 40
+  "sort_order": 40,
+  "aspect": "1:1"
 }

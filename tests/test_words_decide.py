@@ -137,10 +137,11 @@ def test_expression_comes_from_the_scene(clause):
 
 
 class FakeResult:
-    def __init__(self, data: bytes):
+    def __init__(self, data: bytes, cost_usd: float | None = None):
         self.data = data
         self.provider_id = "p"
         self.model = "m"
+        self.cost_usd = cost_usd
 
 
 @pytest.fixture
@@ -161,7 +162,7 @@ def guard(monkeypatch):
 
     async def _run(db, request, prefer=None):
         calls["runs"].append(request.prompt)
-        return FakeResult(b"second")
+        return FakeResult(b"second", cost_usd=0.04)
 
     monkeypatch.setattr(router.generation_core, "run", _run)
     request = operations.GenerationRequest(
@@ -175,13 +176,18 @@ async def test_a_photograph_is_drawn_again(guard):
 
     vision, calls, request = guard
     vision([True])
-    result, prompt = await _redraw_if_photographic(
-        None, request, FakeResult(b"first"), "anime poster", prefer=None)
+    result, prompt, redrawn = await _redraw_if_photographic(
+        None, request, FakeResult(b"first", cost_usd=0.04), "anime poster", prefer=None)
     # Переделали, и на повтор ушло прямое «прошлый кадр вернулся фотографией»:
     # вежливое описание стиля модель уже прочитала и не послушалась.
     assert calls["runs"] and "previous attempt came back as a photograph" in calls["runs"][0]
     assert result.data == b"second"
     assert prompt.endswith(prompt_style.REDRAW_HARDER)
+    # Повтор обязан оставить след: человек платит один раз, мы — дважды, и без
+    # этого признака цену упрямства модели не сосчитать.
+    assert redrawn
+    # И заплачено дважды: первый кадр выброшен, но счёт за него выставлен.
+    assert result.cost_usd == pytest.approx(0.08)
 
 
 async def test_a_drawing_is_left_alone(guard):
@@ -189,12 +195,13 @@ async def test_a_drawing_is_left_alone(guard):
 
     vision, calls, request = guard
     vision([False])
-    result, prompt = await _redraw_if_photographic(
+    result, prompt, redrawn = await _redraw_if_photographic(
         None, request, FakeResult(b"first"), "anime poster", prefer=None)
     # Лишний повтор — это наши деньги и чужое ожидание.
     assert calls["runs"] == []
     assert result.data == b"first"
     assert prompt == "anime poster"
+    assert not redrawn
 
 
 async def test_a_failed_retry_still_returns_a_picture(monkeypatch, guard):
@@ -208,11 +215,13 @@ async def test_a_failed_retry_still_returns_a_picture(monkeypatch, guard):
         raise RuntimeError("провайдер лёг")
 
     monkeypatch.setattr(router.generation_core, "run", _boom)
-    result, prompt = await _redraw_if_photographic(
+    result, prompt, redrawn = await _redraw_if_photographic(
         None, request, FakeResult(b"first"), "anime poster", prefer=None)
     # Человек заплатил и ждёт картинку: неудачный повтор не повод отдать ничего.
     assert result.data == b"first"
     assert prompt == "anime poster"
+    # Повтор был, пусть и неудачный: за первый запрос уже заплачено.
+    assert redrawn
 
 
 # ─── Кого рисуем, когда сцена описывает другого ──────────────────────────────
@@ -253,21 +262,49 @@ def test_catalog_styles_do_not_dictate_gender():
     """Гардероб в витрине не решает, кто человек."""
     import pathlib
 
-    # Список растёт по мере находок: каждая строка здесь однажды поменяла
-    # человеку пол, длину волос или фигуру.
-    banned = ("skirt", "dress", "makeup", "finger waves", "winged eyeliner",
-              "matte lip", "cropped top", "crop top", "heels", "long hair",
-              "ponytail", "slender")
+    # Список рос по мере находок, пока каждая строка здесь означала уже
+    # случившуюся ошибку. 25 августа 2026 по всем 90 стилям — и в файлах, и в
+    # базе, откуда витрина их и берёт, — прошли шире этого списка: телосложение,
+    # волосы, макияж, одежда, местоимения, возраст. Находок ноль.
+    #
+    # Поэтому список теперь не журнал находок, а ограда: он держит то, что уже
+    # чисто. Новый стиль с «her flowing dress» не доедет до витрины.
+    banned = (
+        # фигура и рост
+        "slender", "slim", "petite", "curvy", "willowy", "lithe", "statuesque",
+        "muscular", "toned", "hourglass",
+        # волосы
+        "long hair", "short hair", "flowing hair", "wavy hair", "curls",
+        "ponytail", "braid", "finger waves", "tousled hair",
+        # лицо
+        "makeup", "make-up", "lipstick", "lashes", "eyeliner", "eyebrows",
+        "winged eyeliner", "matte lip", "glossy lip", "blush", "complexion",
+        # одежда, привязанная к полу
+        "dress", "gown", "skirt", "blouse", "heels", "stiletto", "stilettos",
+        "crop top", "cropped top", "bodice", "corset", "lingerie",
+        # растительность на лице
+        "beard", "stubble", "moustache", "mustache",
+        # местоимения и роли
+        "she", "her", "hers", "his", "him", "woman", "women", "girl", "boy",
+        "lady", "gentleman", "male", "female",
+        # возраст
+        "young", "youthful", "middle-aged", "elderly", "teenage",
+    )
     # Границы слова обязательны: «dressed head to toe in matte black» — это про
     # одежду вообще, а не про платье, и запрещать его не за что.
     pattern = re.compile(r"\b(" + "|".join(banned) + r")\b")
+    checked = 0
     for path in pathlib.Path("content/styles").glob("*/*/prompt.md"):
         # Питомцам всё это не грозит: у них другой промпт и другой предмет.
         if "pet_" in str(path):
             continue
         text = path.read_text().split("---", 1)[-1].lower()
         found = sorted({m.group(0) for m in pattern.finditer(text)})
-        assert not found, f"{path.name}: {found}"
+        assert not found, f"{path.parent.name}: {found}"
+        checked += 1
+    # Иначе тест зеленеет и на пустой папке: не найдя ни одного файла, цикл не
+    # выполнится ни разу, и «всё чисто» будет означать «мы не смотрели».
+    assert checked >= 80, f"стилей просмотрено всего {checked} — витрина потерялась"
 
 
 # ─── Когда переделывать кадр, а когда не трогать ─────────────────────────────
@@ -347,3 +384,68 @@ def test_lettering_routes_by_words_not_by_intent():
     assert "preferred_provider(style)" in chain
     assert "preferred_provider(intent)" not in chain
     assert prompt_style.preferred_provider("poster") == prompt_style.LETTERING_PROVIDER
+
+
+# ─── Образец стиля владеет внешним видом ─────────────────────────────────────
+
+
+def test_style_sample_silences_our_own_look_words():
+    """Приложен образец — наши прилагательные про вид уходят из промпта.
+
+    Человек приложил плоский графичный постер и попросил «сделай меня в такой
+    же стилистике». Зрение прочитало образец как `anime`, и в промпт уехал наш
+    якорь: «warm hand-painted backgrounds with nostalgic pastoral mood». Модель
+    послушала слова, а не картинку, и вернула лес с белкой.
+
+    Слова спорят с картинкой только тогда, когда картинка уже есть. Поэтому
+    глушится это ровно при образце, а не вообще.
+    """
+    with_sample = prompt_style.assemble(
+        "the person in the frame", style_key="anime", is_text=False,
+        editing=True, style_ref=True)
+    assert "nostalgic pastoral" not in with_sample
+    assert "warm hand-painted backgrounds" not in with_sample
+    # Свет и фон — тоже собственность образца.
+    assert "soft cinematic lighting" not in with_sample
+    assert "detailed background" not in with_sample
+    # А сам образец по-прежнему назван, иначе модель перенесёт из него людей.
+    assert "STYLE SAMPLE" in with_sample
+
+    without = prompt_style.assemble(
+        "the person in the frame", style_key="anime", is_text=False, editing=True)
+    assert "nostalgic pastoral" in without
+
+
+def test_medium_comes_from_the_sample_not_from_our_guess():
+    """Носитель при образце не называется словом.
+
+    Тот же постер зрение во второй раз прочитало как `semi_real_3d`, и промпт
+    попросил «stylised 3D render» — у модели при этом перед глазами лежал
+    плоский рисунок. Наша догадка о технике не должна спорить с образцом.
+    """
+    guessed = prompt_style.identity_clause(
+        subject="person", drawn=True, medium="a stylised 3D render", from_sample=True)
+    assert "stylised 3D render" not in guessed
+    assert "style of the attached style sample" in guessed
+
+    # Без образца носитель называется как прежде: догадок там нет, есть выбор.
+    named = prompt_style.identity_clause(
+        subject="person", drawn=True, medium="a stylised 3D render")
+    assert "redraw this as a stylised 3D render" in named
+
+
+def test_the_brand_guard_spares_our_own_sample_phrase():
+    """«in the style of» вырезается ради брендов, а не ради образца.
+
+    Фраза стоит в списке потому, что за ней обычно следует студия. Но с
+    приложенным образцом её пишет наш же сборщик — и вырезание оставляло
+    «Redraw the character  the sample»: предлог съеден, смысл потерян.
+    """
+    ours = prompt_style.strip_brands("Redraw the character in the style of the sample")
+    assert ours == "Redraw the character in the style of the sample"
+    assert "in the style of the attached style sample" in prompt_style.strip_brands(
+        "redraw this in the style of the attached style sample")
+
+    # Бренды по-прежнему уходят вместе с фразой.
+    assert "Pixar" not in prompt_style.strip_brands("a poster in the style of Pixar")
+    assert "in the style of" not in prompt_style.strip_brands("in the style of Ghibli warmth")

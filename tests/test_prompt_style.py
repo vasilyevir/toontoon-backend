@@ -189,7 +189,11 @@ def test_a_style_sample_is_not_a_person():
     with_ref = prompt_style.assemble("Nikita on a poster", style_key="anime",
                                      is_text=False, editing=True, style_ref=True)
     assert "STYLE SAMPLE, not a person" in with_ref
-    assert "Never copy the people, faces, objects" in with_ref
+    assert "Never copy the people, the faces or the objects" in with_ref
+    # Буквы запрещены не сплошь, а точно. Сплошной запрет и не работал: «AKAI» с
+    # образца приезжало на майку, а пустая майка выглядит браком. Опасны не
+    # буквы, а чужой знак.
+    assert "Never reproduce a brand name" in with_ref
     # Требование сохранить самого человека стоит раньше образца: сначала кто,
     # потом как.
     assert with_ref.index("redrawn as a character") < with_ref.index("STYLE SAMPLE")

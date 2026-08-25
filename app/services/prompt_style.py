@@ -305,8 +305,8 @@ def _without_scenery(text: str) -> str:
 
 def assemble(scene: str, *, style_key: str, is_text: bool, editing: bool = False,
              subject: str = "person", poster: bool = False,
-             style_ref: bool = False, redraw: bool = False,
-             cast: list[str] | None = None) -> str:
+             style_ref: bool = False, sample_brands: list[str] | None = None,
+             redraw: bool = False, cast: list[str] | None = None) -> str:
     """Wrap a scene description with the style anchor (first) and technical (last).
 
     На редактировании снимка порядок другой: первым идёт требование сохранить
@@ -350,9 +350,25 @@ def assemble(scene: str, *, style_key: str, is_text: bool, editing: bool = False
             parts.append(CUTOUT_CLAUSE)
     else:
         parts = [identity_clause(subject=subject, drawn=is_drawn(style_key),
-                                 cutout=poster, medium=medium_of(style_key))]
+                                 cutout=poster, medium=medium_of(style_key),
+                                 from_sample=style_ref)]
     if style_ref:
         parts.append(STYLE_REF_CLAUSE)
+        if (forbidden := forbid_brands(sample_brands or [])):
+            parts.append(forbidden)
+        # Образец отвечает за палитру, свет, фон и настроение — весь внешний
+        # вид. Наш якорь описывает то же самое своими словами, и когда слова
+        # расходятся с картинкой, модель слушает слова.
+        #
+        # Так и вышло: человек приложил плоский графичный постер, зрение
+        # прочитало его как `anime`, и в промпт уехало «warm hand-painted
+        # backgrounds with nostalgic pastoral mood». Вернулся лес с белкой —
+        # ровно то, что было написано, и совсем не то, что было показано.
+        #
+        # Носитель при этом уже назван первым требованием, так что якорь тут не
+        # добавляет ничего, кроме спора.
+        anchor = "" if editing else f"drawn as {medium_of(style_key)}"
+        technical = TECHNICAL_WITH_SAMPLE
     parts += [anchor, scene]
     if poster:
         parts.append(POSTER_LAYOUT)
@@ -488,8 +504,49 @@ CUTOUT_CLAUSE = (
 STYLE_REF_CLAUSE = (
     "the last reference image is a STYLE SAMPLE, not a person: copy its palette, "
     "its drawing technique, its lighting and the way its layout is composed. "
-    "Never copy the people, faces, objects, logos or lettering that appear in it"
+    "Never copy the people, the faces or the objects that appear in it. "
+    # Запрет на буквы был сплошным — и не работал: «AKAI» с образца приехало и
+    # на майку, и на фон. Сплошной запрет и не должен работать: надпись на
+    # форме — часть того самого вида, за которым человек и пришёл, и пустая
+    # майка выглядит браком.
+    #
+    # Опасны не буквы, а чужой бренд: перенести его в картинку человека значит
+    # отдать ему чужой знак вместе с кадром. Поэтому запрет теперь точный.
+    "Never reproduce a brand name, a logo, a wordmark or a team name from it. "
+    # Первая попытка дала половину: на майке появилось изобретённое «TOKYO», а
+    # в эмблеме внизу кадра осталось «AKAI» — то самое имя с образца, только
+    # мелким кеглем. Запрет должен называть места, где имя прячется, иначе
+    # модель считает, что заменила его, заменив крупную надпись.
+    "If a name appears anywhere in the sample — on a jersey, a crest, a badge, "
+    "a headline or in small print — the picture must carry a DIFFERENT invented "
+    "name, never those same letters. Keep the typography, change the word"
 )
+
+
+def forbid_brands(names: list[str]) -> str:
+    """Чужие марки с образца, названные поимённо.
+
+    Запрет «не переноси чужой бренд» описывает категорию, и на категорию модель
+    отзывается через раз: замер на пяти кадрах дал два, где «AKAI» уцелело в
+    шевроне размером в сто пикселей — крупные надписи модель заменила, а мелкую
+    печать сочла частью рисунка, а не именем.
+
+    Имя, названное буквально, категорией уже не является. Читает их то же
+    зрение, что определяет технику образца, — вторым полем того же ответа, так
+    что стоит это ноль.
+
+    Спрашиваем именно марки, а не все надписи: риск здесь не в буквах, а в
+    чужом знаке. «AKAI» принадлежит настоящей компании, а «赤い伝説» — «Красная
+    легенда» — не принадлежит никому, и мешать ему остаться в кадре незачем.
+    """
+    if not names:
+        return ""
+    listed = ", ".join(f"«{n}»" for n in names)
+    return (f"These names belong to somebody else and are printed on the style "
+            f"sample: {listed}. Not one of them may appear anywhere in the "
+            "picture, at any size — not on clothing, not on badges, not in small "
+            "print. Where the design needs a word in that place, invent a "
+            "different one")
 
 
 # Когда исходник — наша же прошлая работа.
@@ -561,11 +618,15 @@ def medium_of(style_key: str) -> str:
 
 
 def identity_clause(*, subject: str, drawn: bool = False, cutout: bool = False,
-                    medium: str | None = None) -> str:
+                    medium: str | None = None, from_sample: bool = False) -> str:
     """Требование сохранить того, кто на снимке.
 
     ``cutout`` — из снимка берётся только человек, а его окружение
     выбрасывается: на постере оно не фон, а помеха.
+
+    ``from_sample`` — носитель берётся из приложенного образца, а не называется
+    словом. Признак отдельный, а не «medium=None»: умолчание должно означать
+    «не сказано», а не «реши за меня» — на этом мы уже обжигались.
     """
     if subject == "pet":
         base = PET_IDENTITY_CLAUSE
@@ -573,11 +634,44 @@ def identity_clause(*, subject: str, drawn: bool = False, cutout: bool = False,
         # Носитель — первым словом. «Нарисуй это аниме-иллюстрацией» модель
         # понимает сразу; «сохрани человека в этом стиле» она понимает как
         # правку фотографии, которой стиль потом припишут.
-        base = (f"redraw this as {medium or 'an illustration'}, "
-                f"never a photograph: {DRAWN_IDENTITY_CLAUSE}")
+        #
+        # Но когда образец приложен, названный носитель — наша догадка о нём, и
+        # догадка спорит с картинкой, которая у модели перед глазами. Плоский
+        # рисованный постер зрение однажды прочитало как `semi_real_3d`, и промпт
+        # честно попросил «stylised 3D render» вместо того, что человек показал.
+        # Носитель тогда берётся из образца, а от нас остаётся только «рисунок».
+        base = (f"redraw this in the drawing style of the attached style sample, "
+                f"never a photograph: {DRAWN_IDENTITY_CLAUSE}" if from_sample
+                else f"redraw this as {medium or 'an illustration'}, "
+                     f"never a photograph: {DRAWN_IDENTITY_CLAUSE}")
     else:
         base = IDENTITY_CLAUSE
     return f"{base}. {CUTOUT_CLAUSE}" if cutout else base
+
+
+def brand_leaked(names: list[str]) -> str:
+    """Что дописать на пересъёмку, когда чужая марка всё-таки приехала в кадр.
+
+    Тон другой намеренно, как и в `REDRAW_HARDER`: вежливый запрет модель уже
+    прочитала и не послушалась. На повторе работает прямая констатация — и
+    названное место, потому что уцелевает марка всегда в одном и том же: не в
+    заголовке, а в шевроне размером в сто пикселей.
+    """
+    listed = ", ".join(f"«{n}»" for n in names)
+    return (f"IMPORTANT: the previous attempt was rejected because it printed "
+            f"{listed} in the picture. That name belongs to somebody else and "
+            "must not appear at all. Look at every place a word can hide — the "
+            "jersey, the crest, the badge, the seal, the signature, the small "
+            "print — and put a different invented name there. Keep the "
+            "typography, change the word")
+
+
+# Технический хвост, когда приложен образец стиля.
+#
+# Обычный несёт свет и фон («soft cinematic lighting, detailed background») —
+# то, чем распоряжается образец. Остаётся только качество исполнения: оно от
+# образца не зависит и портит кадр в любом стиле.
+TECHNICAL_WITH_SAMPLE = "Technical: high resolution, crisp clean detail"
 
 
 # Последняя строка промпта для рисованных стилей.
@@ -806,10 +900,16 @@ def get_light(tile_id: str) -> str:
 
 
 # VIS-9 — Brand guard: strip model/studio names that cause API refusals
+# «in the style of» стоит здесь не как бренд, а как фраза, за которой бренд
+# обычно и следует. Но с приложенным образцом её честно пишет наш же сборщик —
+# «in the style of the sample», — и вырезание превращало фразу в «Redraw the
+# character  the sample»: предлог съеден, смысл потерян. Поэтому фраза уходит
+# только тогда, когда за ней НЕ наш образец.
+_OURS = r"(?!\s+(the\s+)?(attached\s+)?(style\s+)?(sample|reference|photo|photograph)\b)"
 _BRAND_RE = re.compile(
     r"\b(pixar|disney|dreamworks|illumination|ghibli|marvel|nintendo|"
     r"pok[eé]mon|nickelodeon|warner bros|looney tunes|sanrio|"
-    r"in the style of)\b",
+    rf"in the style of{_OURS})\b",
     re.IGNORECASE,
 )
 

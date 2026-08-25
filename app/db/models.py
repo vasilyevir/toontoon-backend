@@ -22,6 +22,7 @@ from typing import Optional
 
 from sqlalchemy import (
     BigInteger,
+    Float,
     Boolean,
     Date,
     DateTime,
@@ -459,6 +460,16 @@ class Generation(Base):
     mask_media_id: Mapped[Optional[str]] = mapped_column(ForeignKey("media_assets.id"))
     result_media_id: Mapped[Optional[str]] = mapped_column(ForeignKey("media_assets.id"))
     cost: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Что кадр стоил нам у исполнителя, в долларах. `cost` выше — это TOONTOON,
+    # списанные с человека, и одно другому не равно: между ними и лежит
+    # экономика.
+    #
+    # Отдельно от `cost` ещё и потому, что повтор сюда складывается. Кадр,
+    # приехавший фотографией там, где просили рисунок, переделывается вторым
+    # запросом внутри той же работы — человек за это не платит, а мы платим
+    # дважды. Пока этого числа не было, вопрос «сколько стоит упрямство
+    # модели» нельзя было даже задать: в базе не оставалось следа.
+    provider_cost_usd: Mapped[Optional[float]] = mapped_column(Float)
     share_id: Mapped[Optional[str]] = mapped_column(String(48), unique=True)
     error: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=_now, nullable=False)
@@ -485,6 +496,39 @@ class Generation(Base):
 
 
 # ─── Chat ────────────────────────────────────────────────────────────────────
+
+
+class ConversationState(Base):
+    """Что мы поняли про просьбу — отдельно от переписки.
+
+    Раньше это жило в тексте последних двадцати реплик и разбиралось заново на
+    каждом ходу. Замер показал цену такого устройства: человек называет технику,
+    палитру и назначение первой фразой, двадцать коротких «ага» вытесняют её из
+    окна — и разговор снова спрашивает, хочет ли он себя в кадре. Забылось не
+    потому, что давно, а потому, что нигде не записано.
+
+    Здесь у каждого поля своё время. Оно нужно не для истории: когда человек
+    меняет решение, новое значение должно побеждать по факту, а не по тому, в
+    каком порядке модель перечислила слоты.
+
+    Строка одна на человека — как и переписка. «Очистка» не удаляет её, а
+    сдвигает `started_at`: тогда всё, что записано раньше, перестаёт считаться
+    сказанным, но остаётся видимым для разбора жалоб.
+    """
+
+    __tablename__ = "conversation_states"
+
+    user_id: Mapped[str] = mapped_column(
+        String(40), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    intent: Mapped[Optional[str]] = mapped_column(String(32))
+    # {"technique": {"value": "anime", "at": "2026-08-25T10:00:00Z"}, ...}
+    slots: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    # С какого момента записанное считается сказанным.
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=_now, onupdate=_now, nullable=False
+    )
 
 
 class ChatMessage(Base):

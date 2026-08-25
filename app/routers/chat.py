@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db import models as m
 from app.db.repositories import chat as chat_repo
+from app.db.repositories import state as state_repo
 from app.db.repositories import profiles as profiles_repo
 from app.db.session import get_session as get_db_session
 from app.storage import get_storage
@@ -61,6 +62,10 @@ class ChatRequest(BaseModel):
     # вопрос не повторялся. Без этого отказ запирает разговор: «без надписи»
     # слот не заполняет, и про надпись спрашивалось бы бесконечно.
     asked: list[str] = Field(default_factory=list, max_length=16)
+    # Что человек снял со строки понятого: разобрали неверно, и он это видит.
+    # Без такого способа ошибка разбора держалась бы до «Очистки» — правило
+    # слияния сохраняет прежнее значение, пока не назвали новое.
+    forget: list[str] = Field(default_factory=list, max_length=16)
     # Что человек уже выбрал руками: пропорции, техника. Приложение знает это
     # точно — он нажал кнопку, — а разбор фразы промахивается: на голом
     # «Landscape» он молчит.
@@ -100,6 +105,14 @@ class ChatResponse(BaseModel):
     # на одном экране не сходились, а человек должен был догадаться, что кнопки
     # не про то.
     ask_about: Optional[str] = None
+    # Что мы поняли про просьбу — то же, из чего потом соберётся кадр.
+    #
+    # Показывать это честнее, чем полосу готовности: человек видит не «на
+    # семьдесят процентов», а «постер · аниме · бело-сине-красный». Разобрано
+    # моделью, значит иногда неверно, — и увидеть ошибку можно только так,
+    # до того как за кадр списаны деньги.
+    known: dict[str, str] = {}
+    intent: Optional[str] = None
 
 
 class StoredMessage(BaseModel):
@@ -151,28 +164,48 @@ async def chat(
     user, _ = ctx
     history = await chat_repo.context_messages(db, user, limit=settings.chat_context_messages)
 
-    # О чём спрашивать — решается здесь, а не моделью. Разбор идёт по всей
-    # реплике человека в этом разговоре, а не по последнему сообщению: стиль он
-    # назвал первой фразой, и спрашивать о нём на третьей — то же самое, что не
-    # слушать вовсе.
-    said = " ".join(
-        [m["content"] for m in history if m.get("role") == "user" and m.get("content")]
-        + [body.message]
-    )
-    intent = conversation.detect_intent(said)
+    # О чём спрашивать — решается здесь, а не моделью.
+    #
+    # Разбирается новая реплика, а сказанное раньше берётся из записи. Раньше
+    # тут разбирался весь тред целиком — и это ломалось ровно там, где окно
+    # кончается: человек называет технику и палитру первой фразой, двадцать
+    # коротких реплик выталкивают её, и разговор снова спрашивает про то, что
+    # ему уже сказали. Замер на двадцати двух ходах: «что знаем сейчас: {}».
+    #
+    # Заодно уходит вторая беда того же устройства — ход дорожал с возрастом
+    # разговора, потому что каждый раз перечитывал всё сначала.
+    if body.forget:
+        await state_repo.drop(db, user, body.forget)
+    remembered_intent, _remembered = await state_repo.load(db, user)
+    # Умолчание не записывается: «не названо» и «портрет» — разные ответы, и
+    # угаданное не должно потом перебивать сказанное.
+    said_intent = conversation.explicit_intent(body.message)
+    intent = said_intent or remembered_intent or conversation.DEFAULT_INTENT
     # Профиль весит как приложенная фотография: человек в кадре уже обеспечен,
     # и просьба считается описанной на эти тридцать процентов.
     has_profile = await profiles_repo.get_default(db, user.id) is not None
-    known = await gpt_service.extract_slots(said, conversation.slots_for(intent))
+    fresh = await gpt_service.extract_slots(body.message, conversation.slots_for(intent))
     # Выбранное кнопкой сильнее разобранного из речи: это не догадка о
     # сказанном, а сам ответ.
-    known.update({
+    fresh.update({
         field: value for field, value in body.answers.items()
         if field in gpt_service.SLOT_MEANING and value
     })
+    # Названо другое назначение — это новая просьба, а не добавка к прежней.
+    #
+    # «Хочу постер про баскетбол, красно-синий» → «нет, лучше открытку на новый
+    # год»: правило «молчание сохраняет прежнее» не отличает молчания от отказа,
+    # и новогодняя открытка уезжала с палитрой и местом от баскетбольного
+    # постера. В генерации это ловит `_restates_the_picture`; здесь до сих пор
+    # не ловило ничего, и с записанным состоянием ошибка стала долгоживущей.
+    started_over = bool(said_intent and remembered_intent and said_intent != remembered_intent)
+    known = await state_repo.remember(db, user, intent=said_intent, fresh=fresh,
+                                      replace=started_over)
     roles, role_options = await _resolve_roles(db, user, body, has_profile)
     if role_options:
-        reply = "Quick check — which one is you?"
+        reply = gpt_service.said_in(body.message,
+                                    ru="Уточню — кто из них вы?",
+                                    en="Quick check — which one is you?")
         await chat_repo.add_message(db, user_id=user.id, role="user",
                                     content=body.message or None, media_id=body.media_id)
         await chat_repo.add_message(db, user_id=user.id, role="assistant", content=reply)
@@ -182,7 +215,19 @@ async def chat(
     # после «сделай в такой же стилистике» — значит не смотреть туда, куда
     # человек показывает пальцем.
     if "style" in roles:
-        known = conversation.with_sample(known, intent=intent)
+        # Записываем и это: образец приложен один раз, а отвечает за технику и
+        # цвета до конца разговора — как и слова, которыми о них сказали бы.
+        filled = conversation.with_sample(known, intent=intent)
+        if filled != known:
+            known = await state_repo.remember(
+                db, user,
+                fresh={f: v for f, v in filled.items() if f not in known},
+            )
+
+    # Спрашивают про нас — значит, вопроса про картинку сейчас не будет: панель
+    # загрузки фотографии под ответом про цены человек читает как сбой.
+    just_asking = conversation.is_a_question_about_us(
+        body.message, said_anything=bool(fresh or said_intent))
 
     ready = conversation.is_ready(
         known,
@@ -205,8 +250,22 @@ async def chat(
     # и приложение честно останавливалось на вопросе: сказанного хватало на кадр,
     # а человек читал очередное «где будет сцена?». Незакрытое поле есть почти
     # всегда — это не повод не работать.
-    if ready:
+    if ready or just_asking:
         gap = None
+
+    # Просит себя, а лица нет ни здесь, ни в профиле. Молча нарисовать
+    # постороннего и списать за это TOONTOON — худший из ответов: узнать об этом
+    # человек может только на готовом кадре. Кнопку не отнимаем, но говорим.
+    #
+    # Смотрим на весь разговор, а не на последнюю реплику: «меня» человек
+    # говорит первой фразой, а на второй пишет «на крыше ночью» — и по одному
+    # последнему сообщению просьба про себя выглядит просьбой про крышу. Окно
+    # то же, из которого собирается кадр, так что оба видят одно и то же.
+    asked_for_self = gpt_service.asks_for_self(body.message) or any(
+        gpt_service.asks_for_self(msg.get("content"))
+        for msg in history if msg.get("role") == "user"
+    )
+    no_face_on_file = asked_for_self and not body.photo_attached and not has_profile
 
     reply = await gpt_service.chat_reply(
         message=body.message,
@@ -214,6 +273,7 @@ async def chat(
         ask_about=conversation.ASK_ABOUT.get(gap) if gap else None,
         known=known,
         photo_attached=body.photo_attached,
+        no_face_on_file=no_face_on_file,
     )
 
     await chat_repo.add_message(db, user_id=user.id, role="user",
@@ -224,7 +284,27 @@ async def chat(
         ask_about=gap,
         ready=ready,
         roles=roles,
+        # Наружу — только сказанное человеком. Внутри назначение имеет
+        # умолчание, и оно нужно: спрашивать о чём-то надо уже на первой фразе.
+        # Но на экране умолчание становится чипом «Portrait», которого человек
+        # не выбирал, — а строка обещает показывать понятое, а не предположенное.
+        known=_worth_showing(known),
+        intent=said_intent or remembered_intent,
     )
+
+
+def _worth_showing(known: dict[str, str]) -> dict[str, str]:
+    """Что из понятого можно показать человеку его же словами.
+
+    Пометка про образец — ответ разговору, а не слово человека: на экране она
+    становилась чипом «from the attached sample», английской служебной строкой
+    посреди русской переписки. Сам образец при этом виден в треде картинкой, и
+    объяснять его подписью не нужно.
+    """
+    return {
+        field: value for field, value in known.items()
+        if value and not value.startswith("from the attached")
+    }
 
 
 async def _resolve_roles(
@@ -337,7 +417,11 @@ async def attachment(
 
     await chat_repo.add_message(db, user_id=user.id, role="user", media_id=asset.id)
     data = await get_storage().get(asset.storage_key)
-    remark, ideas = await gpt_service.photo_remark_and_ideas(data or b"")
+    # Снимок приходит без слов, а язык ответа берётся из слов. Единственное
+    # место, где они есть, — сама переписка.
+    window = await chat_repo.context_messages(db, user, limit=settings.chat_context_messages)
+    spoken = " ".join(msg["content"] for msg in window if msg.get("role") == "user")
+    remark, ideas = await gpt_service.photo_remark_and_ideas(data or b"", spoken=spoken)
     # Реплика ложится в переписку, идеи — нет. Реплика это разговор, и она
     # должна быть на месте завтра; идеи живут до выбора и после него бессмысленны.
     if remark:
@@ -371,6 +455,29 @@ async def messages(
         _serialize(row, media_by_generation.get(row.generation_id) if row.generation_id else None)
         for row in rows
     ]
+
+
+class ChatState(BaseModel):
+    """Что мы понимаем про просьбу на момент открытия экрана."""
+    intent: Optional[str] = None
+    known: dict[str, str] = {}
+
+
+@router.get("/chat/state", response_model=ChatState)
+async def state(
+    ctx: Context = Depends(required_context),
+    db: AsyncSession = Depends(get_db_session),
+) -> ChatState:
+    """Понятое — на холодный старт.
+
+    Без этого приложение открывалось с пустой строкой понятого, а сервер в это
+    время держал всю просьбу и собирал по ней кадр. Пустая строка читается как
+    «нас забыли» — и это была бы та самая ложь, ради устранения которой строка
+    и появилась.
+    """
+    user, _ = ctx
+    intent, known = await state_repo.load(db, user)
+    return ChatState(intent=intent, known=known)
 
 
 @router.post("/chat/clear")

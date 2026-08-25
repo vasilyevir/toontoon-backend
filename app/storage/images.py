@@ -117,6 +117,38 @@ def _apply_orientation(img: "Image.Image") -> "Image.Image":
     return img
 
 
+# Пропорции, которые умеет наш путь генерации. Ближайшая из них и берётся:
+# точную дробь образца («2688×1520») ни одна модель на вход не принимает.
+_ASPECTS: tuple[tuple[str, float], ...] = (
+    ("9:16", 9 / 16), ("2:3", 2 / 3), ("3:4", 3 / 4), ("4:5", 4 / 5),
+    ("1:1", 1.0),
+    ("5:4", 5 / 4), ("4:3", 4 / 3), ("3:2", 3 / 2), ("16:9", 16 / 9),
+)
+
+
+def aspect_of(data: bytes) -> Optional[str]:
+    """Форма кадра у показанной картинки — ближайшая из наших.
+
+    Нужна образцу стиля: человек прикладывает горизонтальный постер, а кадр
+    выходит вертикальным `9:16` по умолчанию, потому что формы он не назвал.
+    Композицию мы у образца просим, а форму до сих пор не брали — и вертикальная
+    обрезка ломает ровно ту плакатную вёрстку, за которой человек пришёл.
+
+    `None` — картинку не удалось прочитать. Тогда остаётся умолчание: угадывать
+    форму по нечитаемому файлу хуже, чем не угадывать вовсе.
+    """
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            img = _apply_orientation(img)
+            width, height = img.size
+    except Exception:  # noqa: BLE001 — форма необязательна, кадр обязателен
+        return None
+    if not width or not height:
+        return None
+    ratio = width / height
+    return min(_ASPECTS, key=lambda pair: abs(pair[1] - ratio))[0]
+
+
 def has_metadata(data: bytes) -> bool:
     """Test helper: does this image still carry EXIF? Used to prove the strip."""
     try:

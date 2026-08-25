@@ -74,10 +74,22 @@ async def context_messages(
 
     Capped on purpose — the cost of a request must not grow with the age of the
     conversation, or an active person's chat becomes more expensive every day.
+
+    Реплика, где человек приложил снимок и ничего не написал, раньше выпадала
+    отсюда целиком: строки без текста отфильтровывались. Для отвечающей модели
+    приложения не было вовсе — а человек его видит в переписке и продолжает
+    разговор про него. Картинку она всё равно не увидит, но знать, что снимок
+    был и когда, обязана: без этого «сделай в такой же стилистике» повисает в
+    воздухе.
+
+    Двадцать при этом берётся ПОСЛЕ отбрасывания пустых строк, а не до. Раньше
+    было наоборот, и разговор с вложениями получал окно короче двадцати — тем
+    короче, чем больше человек прикладывал.
     """
     stmt = (
         select(m.ChatMessage)
-        .where(m.ChatMessage.user_id == user.id)
+        .where(m.ChatMessage.user_id == user.id,
+               (m.ChatMessage.content.isnot(None)) | (m.ChatMessage.media_id.isnot(None)))
         .order_by(m.ChatMessage.created_at.desc(), m.ChatMessage.id.desc())
         .limit(limit)
     )
@@ -85,11 +97,19 @@ async def context_messages(
         stmt = stmt.where(m.ChatMessage.created_at >= user.chat_context_started_at)
     rows = list(await session.scalars(stmt))
     rows.reverse()
-    return [
-        {"role": r.role, "content": r.content or ""}
-        for r in rows
-        if r.content
-    ]
+    out = []
+    for r in rows:
+        content = (r.content or "").strip()
+        if r.media_id and not content:
+            # Пометка, а не выдуманная реплика: человек этих слов не писал, и
+            # ставить их от его имени нельзя. Модели достаточно знать, что тут
+            # было вложение.
+            content = "(attached an image)"
+        elif r.media_id:
+            content = f"{content} (with an attached image)"
+        if content:
+            out.append({"role": r.role, "content": content})
+    return out
 
 
 async def clear_context(session: AsyncSession, user_id: str) -> None:
