@@ -23,6 +23,7 @@ from app.models.user import PublicUser
 from app.db.repositories import chat as chat_repo
 from app.db.repositories import generations as generations_repo
 from app.db.repositories import styles as styles_repo
+from app.routers import styles as styles_router
 from app.services import wallet
 
 router = APIRouter(prefix="/api/app", tags=["app"])
@@ -78,16 +79,20 @@ def _pending(row) -> dict:
 
 
 def _style(row) -> dict:
-    """Стиль в том же виде, что и в /api/styles — один формат на всё приложение."""
-    return {
-        "id": row.id,
-        "title": row.title,
-        "description": row.description,
-        "category": row.category,
-        "operation": row.operation,
-        "input_spec": row.input_spec or {},
-        "cost": row.cost,
-    }
+    """Стиль в том же виде, что и в /api/styles.
+
+    Не своей копией полей, а тем же самым сборщиком. Копия здесь была, и в ней
+    не хватало `examples` — при том, что прямо над ней было написано «один
+    формат на всё приложение». Поле в модели приложения обязательное, разбор
+    всего ответа падал целиком, а `try?` в приложении ошибку глотал: снимок
+    запуска молча становился пустым, и вместе с ним молчали каталог, баланс,
+    засев переписки и подхват незаконченного заказа. Приложение добирало всё
+    отдельными запросами и выглядело исправным.
+
+    Одна копия полей на два маршрута — это два места, где формат может
+    разойтись, и одно из них обязательно отстанет.
+    """
+    return styles_router._style_out(row).model_dump()
 
 
 @router.get("/bootstrap", response_model=BootstrapResponse)
