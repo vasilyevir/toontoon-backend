@@ -385,7 +385,10 @@ async def generate(
         # Стиль из витрины, который обещает человека в кадре, — тоже просьба
         # про лицо, даже когда человек не сказал ни слова.
         or style_needs_photo
-        or intent in conversation.NEEDS_PHOTO
+        # Назначение, в котором человек предполагается. Не NEEDS_PHOTO: тот
+        # уже — он про то, кого стоит побеспокоить вопросом, а здесь речь про
+        # лицо, которое у нас уже есть.
+        or intent in conversation.ABOUT_A_PERSON
         or _asks_for_self(free_text)
         or (bool(restated) and await _last_frame_had_person(db, user.id))
     )

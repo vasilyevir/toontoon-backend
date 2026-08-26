@@ -311,3 +311,31 @@ def test_a_profile_weighs_as_much_as_an_attached_photo():
     assert not c.is_ready(said, intent="poster", has_photo=False)
     assert c.next_gap({}, intent="portrait",
                       photo_attached=False, photo_on_file=True) != "photo"
+
+
+# ─── Взять лицо и спросить лицо — разные вопросы ─────────────────────────────
+
+def test_a_poster_is_a_poster_of_the_person():
+    """Постер в этом продукте — постер с человеком.
+
+    Пока это жило одним кортежем с NEEDS_PHOTO, постер не подставлял профиль:
+    человек просил «постер в стиле аниме, как для NBA», в строке ввода стоял
+    его профиль, а приходил незнакомый мальчик. В базе таких — один из 48;
+    остальные 42 с лицом, и все 42 из профиля.
+    """
+    for intent in ("portrait", "poster", "card", "product"):
+        assert intent in c.ABOUT_A_PERSON, f"{intent} остался без лица"
+
+
+def test_a_newcomer_is_still_not_nagged():
+    """Уже, и намеренно: побеспокоить того, у кого снимка нет, — не то же
+    самое, что взять тот, который есть.
+
+    Портрет без лица не получается вовсе, постер получается — просто хуже.
+    Вопрос новичку плюс три касания выбора — самый дорогой шаг пути.
+    """
+    assert set(c.NEEDS_PHOTO) < set(c.ABOUT_A_PERSON), "кортежи слили обратно"
+    for intent in ("poster", "card"):
+        assert intent not in c.NEEDS_PHOTO
+        assert c.next_gap({}, intent=intent,
+                          photo_attached=False, photo_on_file=False) != "photo"
