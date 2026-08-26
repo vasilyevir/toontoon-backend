@@ -337,6 +337,43 @@ async def refund(
     )
 
 
+async def owed_refunds(session: AsyncSession, *, limit: int = 200) -> list[dict]:
+    """Работы, которые не получились, а деньги за них не вернулись.
+
+    Возврат делает фоновая задача сразу после неудачи. Но она может не дожить
+    до него — упасть базой ровно в тот момент, когда пыталась вернуть, — и
+    тогда след остаётся только в журнале приложения. Человек при этом заплатил
+    и не получил ничего.
+
+    Отсюда и запрос: неудавшаяся работа, у которой в книге нет проводки
+    возврата по её платежу. Читается из того, что переживает перезапуск, а не
+    из памяти упавшего процесса, — поэтому найдёт и то, что случилось,
+    пока нас не было.
+    """
+    pay = m.Generation.request_params["payment_id"].astext
+    refunded = (
+        select(m.WalletLedger.id)
+        .where(m.WalletLedger.ref_id == pay, m.WalletLedger.reason == "refund")
+        .exists()
+    )
+    stmt = (
+        select(m.Generation.id, m.Generation.user_id, m.Generation.cost, pay.label("payment_id"))
+        .where(
+            m.Generation.status == "failed",
+            pay.isnot(None),
+            m.Generation.cost > 0,
+            ~refunded,
+        )
+        .order_by(m.Generation.created_at)
+        .limit(limit)
+    )
+    rows = await session.execute(stmt)
+    return [
+        {"generation_id": g, "user_id": u, "amount": c, "payment_id": p}
+        for g, u, c, p in rows.all()
+    ]
+
+
 async def _already_applied(session: AsyncSession, idempotency_key: str) -> bool:
     stmt = select(m.WalletLedger.id).where(m.WalletLedger.idempotency_key == idempotency_key)
     return await session.scalar(stmt) is not None

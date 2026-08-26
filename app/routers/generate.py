@@ -607,6 +607,10 @@ async def generate(
         status="running",
         prompt=prompt,
         request_params={
+            # Чем заплачено. Не для истории, а чтобы работу и деньги за неё
+            # можно было свести запросом: при неудаче деньги возвращает фоновая
+            # задача, а если не вернула и она — узнать об этом иначе неоткуда.
+            "payment_id": payment.payment_id,
             "tile_id": body.tile_id,
             "style_id": body.style_id,
             "answers": body.answers,

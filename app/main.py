@@ -12,6 +12,7 @@ from app import db, storage
 from app.config import settings
 from app.middleware.app_key import AppKeyMiddleware
 from app.redis_client import connect, disconnect
+from app.services import wallet
 from app.routers import (
     favorites,
     guided,
@@ -63,6 +64,29 @@ def warn_about_debug_flags() -> None:
         )
 
 
+async def settle_unpaid_refunds() -> None:
+    """Вернуть деньги за работы, которым их не вернула фоновая задача.
+
+    Именно на старте, и это не случайность: сюда попадает то, что случилось,
+    когда возвращать было нечем — процесс убили посреди возврата, база легла.
+    Следующий запуск и есть первый момент, когда доплатить снова возможно.
+
+    Не роняет старт. Приложение, которое не поднимается из-за сверки, вредит
+    больше, чем невозвращённые деньги: их вернёт следующий запуск, а лежащий
+    сервис не сделает и этого.
+
+    Реплик несколько, и сверку выполнит каждая. Это безвредно: проводка
+    идемпотентна по ключу платежа, и вторая реплика просто ничего не найдёт.
+    """
+    try:
+        async with db.session_scope() as session:
+            await wallet.settle_owed(session)
+    except Exception as exc:  # noqa: BLE001 — старт важнее сверки
+        logging.getLogger("toontoon.wallet").warning(
+            "Сверка возвратов не прошла (%s). Повторится на следующем запуске.", exc
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     UPLOAD_DIR.mkdir(exist_ok=True)
@@ -85,6 +109,7 @@ async def lifespan(app: FastAPI):
             "Object storage unavailable (%s). Start it with: docker start toontoon-minio", exc
         )
     warn_about_debug_flags()
+    await settle_unpaid_refunds()
 
     yield
     await db.disconnect()
