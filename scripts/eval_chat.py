@@ -113,7 +113,9 @@ async def run_flow(client: httpx.AsyncClient, flow: dict, faces: list[pathlib.Pa
 
     asked: list[str] = []
     reply = ""
+    remark = ""
     answer: dict = {}
+    attached: list[str] = []
     for step in flow["steps"]:
         if isinstance(step, dict):
             # «Очистка» — не реплика, а кнопка. Сбрасывает и переписку, и
@@ -121,6 +123,26 @@ async def run_flow(client: httpx.AsyncClient, flow: dict, faces: list[pathlib.Pa
             if step.get("clear"):
                 await client.post(f"{BASE}/api/chat/clear", headers=headers)
                 asked = []
+                continue
+            # Приложенная картинка. Ручка одна: снимок кладётся в переписку и
+            # сразу получает ответ — реплику и четыре идеи.
+            if (name := step.get("attach")):
+                path = pathlib.Path("tests/data/samples") / name
+                if not path.exists() and faces:
+                    path = faces[0]
+                media_id = await upload(client, headers, path)
+                attached.append(media_id)
+                r = await client.post(f"{BASE}/api/chat/attachment", headers=headers,
+                                      json={"media_id": media_id})
+                if r.status_code == 200:
+                    remark = r.json().get("remark") or ""
+                continue
+            # Снятое со строки понятого. Не реплика: отдельная ручка, молча.
+            if (fields := step.get("forget")):
+                r = await client.post(f"{BASE}/api/chat/forget", headers=headers,
+                                      json={"forget": fields})
+                if r.status_code == 200:
+                    answer = {**answer, "known": r.json().get("known") or {}}
                 continue
             # «Приложение перезапустили»: список заданных вопросов на клиенте
             # пуст, а сервер обязан помнить его сам.
@@ -132,7 +154,8 @@ async def run_flow(client: httpx.AsyncClient, flow: dict, faces: list[pathlib.Pa
             text, repeat = step, 1
         for _ in range(repeat):
             body = {"message": text, "asked": asked,
-                    "photo_attached": False}
+                    "photo_attached": bool(attached),
+                    "attachment_ids": attached}
             r = await client.post(f"{BASE}/api/chat", headers=headers, json=body)
             r.raise_for_status()
             answer = r.json()
@@ -141,6 +164,32 @@ async def run_flow(client: httpx.AsyncClient, flow: dict, faces: list[pathlib.Pa
             reply = answer.get("reply") or ""
 
     known = answer.get("known") or {}
+    for pattern in expect.get("remark_matches") or []:
+        if not matches(pattern, remark):
+            notes.append(f"в реплике на снимок нет «{pattern}»: {remark[:70] or 'пусто'}")
+
+    # Холодное чтение: так строку понятого видит приложение после перезапуска.
+    # Половина проверок про неё — не про отрисовку, а про то, что сервер отдаёт.
+    if any(k in expect for k in ("state_has", "state_lacks", "state_intent", "state_clean")):
+        state = (await client.get(f"{BASE}/api/chat/state", headers=headers)).json()
+        cold = state.get("known") or {}
+        if "state_intent" in expect and state.get("intent") != expect["state_intent"]:
+            notes.append(f"в состоянии назначение {state.get('intent')!r}, "
+                         f"ждали {expect['state_intent']!r}")
+        for field, pattern in (expect.get("state_has") or {}).items():
+            if not matches(pattern, str(cold.get(field, ""))):
+                notes.append(f"после перезапуска {field}={cold.get(field)!r} "
+                             f"не совпало с «{pattern}»")
+        for field in expect.get("state_lacks") or []:
+            if cold.get(field):
+                notes.append(f"после перезапуска {field} остался: {cold[field]!r}")
+        if expect.get("state_clean"):
+            # Служебные пометки и английские заглушки на экране становятся чипом
+            # посреди русской переписки.
+            leaked = [f for f in cold if f.startswith("_")]
+            leaked += [f for f, v in cold.items() if str(v).startswith("from the attached")]
+            if leaked:
+                notes.append(f"наружу вышло служебное: {leaked}")
     if "intent" in expect and answer.get("intent") != expect["intent"]:
         notes.append(f"назначение {answer.get('intent')!r}, ждали {expect['intent']!r}")
     if "ready" in expect and bool(answer.get("ready")) is not expect["ready"]:
@@ -169,6 +218,15 @@ async def run_flow(client: httpx.AsyncClient, flow: dict, faces: list[pathlib.Pa
                 "roles_chosen": False}
         if profile:
             body |= {"profile_id": profile, "profile_ids": [profile]}
+        # Роли приложенным картинкам раздаёт сам разговор — приложение только
+        # раскладывает их по полям запроса. Прогон обязан делать то же самое:
+        # образец, уехавший в поле человека, — это чужое лицо в кадре.
+        roles = answer.get("roles") or []
+        if attached and roles:
+            refs = [f"/api/media/{mid}" for mid, role in zip(attached, roles)
+                    if role == "style"]
+            if refs:
+                body |= {"style_ref_urls": refs, "roles_chosen": True}
         r = await client.post(f"{BASE}/api/generate", headers=headers, json=body)
         if r.status_code != 200:
             notes.append(f"кадр не сделан: {r.status_code} {r.text[:90]}")
@@ -178,6 +236,19 @@ async def run_flow(client: httpx.AsyncClient, flow: dict, faces: list[pathlib.Pa
             path = out / f"{flow['id']}.jpg"
             path.write_bytes(frame)
             notes += await check_frame(frame, want, path)
+            # Слово после кадра и четыре идеи ложатся в ту же переписку, значит
+            # и язык у них оттуда же. Происходит это после КАЖДОЙ генерации,
+            # поэтому английская строка здесь заметнее всего.
+            for pattern in expect.get("ideas_match") or []:
+                r = await client.get(f"{BASE}/api/generations/{d['id']}/ideas",
+                                     headers=headers)
+                if r.status_code != 200:
+                    notes.append(f"идеи не пришли: {r.status_code} {r.text[:60]}")
+                    break
+                ideas = r.json()
+                said = " ".join([ideas.get("remark") or ""] + (ideas.get("ideas") or []))
+                if not matches(pattern, said):
+                    notes.append(f"в идеях нет «{pattern}»: {said[:70] or 'пусто'}")
 
     return not notes, notes
 
