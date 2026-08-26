@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -63,12 +63,18 @@ def _fresh(slots: dict, *, now: datetime | None = None) -> dict:
     return alive
 
 
-def _values(slots: dict) -> dict[str, str]:
-    """Голые значения из хранимого вида — наружу время полей не нужно."""
+def _values(slots: dict, *, service: bool = False) -> dict[str, str]:
+    """Голые значения из хранимого вида — наружу время полей не нужно.
+
+    ``service`` — отдать и служебные ключи (`_asked`, `_restarted`). По
+    умолчанию их нет: это наши пометки, а не слова человека, и на экране они
+    становятся чипом с английской строкой посреди русской переписки.
+    """
     return {
         field: cell["value"]
         for field, cell in (slots or {}).items()
         if isinstance(cell, dict) and cell.get("value")
+        and (service or not field.startswith("_"))
     }
 
 
@@ -80,6 +86,15 @@ def _values(slots: dict) -> dict[str, str]:
 # снова спрашивал про фотографию, о которой вчера уже спрашивал, — та самая
 # глухота, ради защиты от которой список и заводили.
 ASKED = "_asked"
+
+# Когда просьба началась заново. Служебный ключ, как и `_asked`.
+#
+# Замена состояния чистит поля, но не переписку: в окно, из которого кадр
+# берёт слова, «Хочу постер про баскетбол» как лежало, так и лежит. Человек
+# сказал «нет, лучше открытку» — и получил новогоднюю открытку с баскетбольным
+# мячом. Строка понятого при этом была права, и это худший вид ошибки: она
+# показывает, что мы поняли верно, а кадр говорит обратное.
+RESTARTED = "_restarted"
 
 
 async def load(session: AsyncSession, user: m.User) -> tuple[str | None, dict[str, str]]:
@@ -97,9 +112,7 @@ async def load(session: AsyncSession, user: m.User) -> tuple[str | None, dict[st
         row.started_at is None or row.started_at < user.chat_context_started_at
     ):
         return None, {}
-    known = _values(_fresh(row.slots))
-    known.pop(ASKED, None)
-    return row.intent, known
+    return row.intent, _values(_fresh(row.slots))
 
 
 async def remember(
@@ -130,6 +143,18 @@ async def remember(
         intent = intent or None
 
     now = datetime.now(timezone.utc).isoformat()
+    if replace:
+        # Отметка нужна кадру, а не разговору: по ней он обрежет окно и не
+        # возьмёт слов, от которых человек отказался.
+        #
+        # Время берётся у той же базы, что раздаёт его репликам, а не у питона.
+        # Реплика получает `now()` — то есть время НАЧАЛА транзакции, — и
+        # питоновское «сейчас», взятое посреди хода, оказывается позже неё.
+        # Обрезка тогда съедала и саму новую просьбу: в кадр не уходило ни
+        # слова.
+        at_db = await session.scalar(select(func.now()))
+        slots[RESTARTED] = {"value": (at_db or datetime.now(timezone.utc)).isoformat(),
+                            "at": now}
     for field, value in (fresh or {}).items():
         if not value:
             # Пустое значение — это молчание разбора, а не «человек передумал».
@@ -171,6 +196,25 @@ async def asked_about(session: AsyncSession, user: m.User) -> list[str]:
         return []
     cell = _fresh(row.slots).get(ASKED)
     return [f for f in str((cell or {}).get("value", "")).split(",") if f]
+
+
+async def restarted_at(session: AsyncSession, user: m.User) -> datetime | None:
+    """Когда человек отказался от прежней просьбы и начал новую.
+
+    `None` — не отказывался. Тогда кадру достаётся всё окно, как и раньше.
+    """
+    row = await session.get(m.ConversationState, user.id)
+    if row is None:
+        return None
+    if user.chat_context_started_at is not None and (
+        row.started_at is None or row.started_at < user.chat_context_started_at
+    ):
+        return None
+    cell = _fresh(row.slots).get(RESTARTED)
+    try:
+        return datetime.fromisoformat(str((cell or {}).get("value")))
+    except (TypeError, ValueError):
+        return None
 
 
 async def drop(session: AsyncSession, user: m.User, fields: list[str]) -> dict[str, str]:

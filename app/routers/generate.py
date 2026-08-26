@@ -172,8 +172,16 @@ async def generate(
     free_text = body.prompt
     remembered_intent, remembered = None, {}
     if body.from_chat and not (body.prompt or "").strip():
+        # Окно режется по моменту, когда человек начал просьбу заново.
+        #
+        # Замена состояния чистит поля, но не переписку, а слова кадр берёт
+        # именно оттуда. «Хочу постер про баскетбол» → «нет, лучше открытку на
+        # новый год» давало новогоднюю открытку с баскетбольным мячом: строка
+        # понятого при этом показывала верное, и это худший вид ошибки — мы
+        # показываем, что поняли правильно, а кадр говорит обратное.
         history = await chat_repo.context_messages(
-            db, user, limit=settings.chat_context_messages
+            db, user, limit=settings.chat_context_messages,
+            since=await state_repo.restarted_at(db, user),
         )
         said = " ".join(
             msg["content"] for msg in history
@@ -217,11 +225,31 @@ async def generate(
         free_text = " ".join(p for p in (free_text, refine_note) if p) or refine_note
         refine_key, refine_note = None, None
 
-    intent = (restated.get("intent") or body.intent
+    # Порядок здесь — это порядок доверия, и он стоил одного испорченного кадра.
+    #
+    # Человек сказал «хочу постер про баскетбол», потом «нет, лучше открытку на
+    # новый год». Разговор понял верно: в строке встало «Card · New Year», в
+    # реплике — «создам открытку». А в генерацию уехал `poster`, и вот почему:
+    #
+    #   1. Приложение решает назначение ОДИН раз — на том ходу, где впервые
+    #      узнало технику, — и больше не пересматривает. У него остался
+    #      «постер» из первой фразы.
+    #   2. Его догадка стояла выше памяти сервера, где лежало правильное
+    #      «открытка».
+    #
+    # Память сервера теперь выше — но только для просьб из чата: там она и
+    # собрана, по одной реплике за раз, в правильном порядке. В ведомом пути
+    # `body.intent` — это нажатая человеком кнопка, а не догадка, и перебивать
+    # её состоянием чужого экрана нельзя.
+    #
+    # `explicit_intent(free_text)` сюда не годится вовсе: в окне лежат обе фразы
+    # вперемешку, и он вернёт то назначение, что первым стоит в словаре, а не
+    # то, что человек сказал последним. Разбор по одной реплике этой беды не
+    # знает — потому и держим состояние, а не перечитываем тред.
+    intent = (restated.get("intent")
+              or (remembered_intent if body.from_chat and not restated else None)
+              or body.intent
               or (conversation.explicit_intent(free_text) if free_text else None)
-              # Названное разговором, а не угаданное по хвосту: «постер» из
-              # первой фразы весит больше, чем умолчание по последней.
-              or (None if restated else remembered_intent)
               or (conversation.detect_intent(free_text) if free_text else None))
     style = (restated.get("technique") or (None if restated else body.style)
              or (None if restated else remembered.get("technique")))

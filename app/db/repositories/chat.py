@@ -68,7 +68,8 @@ async def list_messages(
 
 
 async def context_messages(
-    session: AsyncSession, user: m.User, *, limit: int
+    session: AsyncSession, user: m.User, *, limit: int,
+    since: Optional[datetime] = None,
 ) -> list[dict]:
     """What the model gets: the last N messages since the most recent Clear.
 
@@ -85,6 +86,11 @@ async def context_messages(
     Двадцать при этом берётся ПОСЛЕ отбрасывания пустых строк, а не до. Раньше
     было наоборот, и разговор с вложениями получал окно короче двадцати — тем
     короче, чем больше человек прикладывал.
+
+    ``since`` — не показывать сказанное раньше этого момента. Нужно кадру, а не
+    разговору: когда человек говорит «нет, лучше открытку», прежняя просьба
+    отменена вся целиком, а не только её назначение. Разговор при этом помнит
+    её как контекст беседы — он же на неё отвечал.
     """
     stmt = (
         select(m.ChatMessage)
@@ -95,6 +101,8 @@ async def context_messages(
     )
     if user.chat_context_started_at is not None:
         stmt = stmt.where(m.ChatMessage.created_at >= user.chat_context_started_at)
+    if since is not None:
+        stmt = stmt.where(m.ChatMessage.created_at >= since)
     rows = list(await session.scalars(stmt))
     rows.reverse()
     out = []

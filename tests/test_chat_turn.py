@@ -120,11 +120,16 @@ async def test_a_new_picture_starts_from_scratch(db):
                               fresh={"palette": "red and blue", "place": "basketball"})
     known = await state_repo.remember(session, user, intent="card",
                                       fresh={"occasion": "New Year"}, replace=True)
-    assert known == {"occasion": "New Year"}
+    # Служебная отметка про перезапуск остаётся внутри — по ней кадр обрежет
+    # окно переписки, чтобы не взять слов, от которых человек отказался.
+    assert {f: v for f, v in known.items() if not f.startswith("_")} == {"occasion": "New Year"}
+    assert await state_repo.restarted_at(session, user) is not None
 
     intent, known = await state_repo.load(session, user)
     assert intent == "card"
     assert "palette" not in known
+    # Наружу служебное не выходит: строка понятого показывает слова человека.
+    assert not [f for f in known if f.startswith("_")]
 
 
 # ─── Язык и обещание про лицо ────────────────────────────────────────────────
@@ -205,3 +210,33 @@ def test_the_frame_takes_its_shape_from_the_sample():
     assert images.aspect_of(shot(1000, 1000)) == "1:1"
     # Нечитаемый файл — не повод гадать: остаётся умолчание.
     assert images.aspect_of(b"not an image") is None
+
+
+# ─── Назначение кадра берётся у того, кто знает свежее ───────────────────────
+
+
+def test_a_changed_intent_beats_the_apps_stale_guess():
+    """«Хочу постер» → «нет, лучше открытку» — а кадр вышел постером.
+
+    Разговор понял верно: в строке встало «Card · New Year», в реплике —
+    «создам открытку». Но приложение решает назначение один раз, на том ходу,
+    где впервые узнало технику, и больше не пересматривает; его «постер»
+    стоял в порядке доверия выше памяти сервера.
+
+    Порядок проверяется здесь напрямую, потому что чинится он одной строкой и
+    ломается так же незаметно, как сломался.
+    """
+    import inspect
+
+    from app.routers import generate as router
+
+    source = inspect.getsource(router.generate)
+    start = source.index("intent = (restated.get(\"intent\")")
+    chain = source[start:source.index("\n\n", start)]
+    # Память сервера — раньше присланного приложением.
+    assert chain.index("remembered_intent") < chain.index("body.intent")
+    # А слова, сказанные прямо про этот кадр, — раньше всего.
+    assert chain.index("restated.get") < chain.index("remembered_intent")
+    # Разбор склеенного окна не участвует до последнего: там обе фразы
+    # вперемешку, и он вернёт ту, что первой стоит в словаре.
+    assert chain.index("body.intent") < chain.index("explicit_intent")
