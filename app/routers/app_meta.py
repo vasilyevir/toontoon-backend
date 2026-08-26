@@ -23,6 +23,7 @@ from app.models.user import PublicUser
 from app.db.repositories import chat as chat_repo
 from app.db.repositories import generations as generations_repo
 from app.db.repositories import styles as styles_repo
+from app.routers import chat as chat_router
 from app.routers import styles as styles_router
 from app.services import wallet
 
@@ -109,16 +110,11 @@ async def bootstrap(
         user = PublicUser.from_row(u, provider=session.provider)
         balance = await wallet.get_balance(db, u.id)
         rows = await chat_repo.list_messages(db, u, limit=20)
-        messages = [
-            {
-                "id": r.id,
-                "role": r.role,
-                "content": r.content,
-                "generation_id": r.generation_id,
-                "created_at": r.created_at.isoformat(),
-            }
-            for r in rows
-        ]
+        # Тем же сборщиком, что и /api/chat/messages. Здесь была своя копия
+        # полей, и в ней не хватало result_url: кадр приходил с одним
+        # идентификатором работы, и показать его было нечем.
+        messages = [msg.model_dump(mode="json") for msg in
+                    await chat_router.serialize_thread(db, rows)]
         pending = [
             _pending(r)
             for r in await generations_repo.pending_for_user(

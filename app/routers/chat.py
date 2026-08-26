@@ -12,10 +12,11 @@ Routes:
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Literal, Optional, Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -125,6 +126,41 @@ class StoredMessage(BaseModel):
     # Снимок, приложенный человеком к этой реплике.
     attachment_url: Optional[str] = None
     created_at: datetime
+
+
+async def serialize_thread(
+    db: AsyncSession, rows: Sequence[m.ChatMessage]
+) -> list[StoredMessage]:
+    """Реплики в том виде, в каком их ждёт приложение.
+
+    Общая на два маршрута: этот и /app/bootstrap, который отдаёт хвост
+    переписки при запуске. Там была своя копия полей, и в ней не хватало
+    `result_url` — кадр приходил с одним лишь идентификатором работы, и
+    показать его было нечем. Не хватало и `attachment_url`: приложенный
+    человеком снимок пропадал так же.
+
+    Держалось это незамеченным потому, что снимок запуска вообще не
+    разбирался (см. `examples` у стиля), и чат всегда падал на полный запрос.
+    Починка разбора включила путь, который не работал ни дня.
+
+    Одна копия полей на два маршрута — это два места, где формат разойдётся,
+    и одно обязательно отстанет.
+    """
+    # Результат рисуется прямо в переписке, поэтому реплика, которая его
+    # породила, несёт ссылку на картинку. Одним запросом на всю страницу:
+    # по одному на реплику — это двадцать запросов на открытие экрана.
+    media_by_generation: dict[str, Optional[str]] = {}
+    generation_ids = [r.generation_id for r in rows if r.generation_id]
+    if generation_ids:
+        stmt = select(m.Generation.id, m.Generation.result_media_id).where(
+            m.Generation.id.in_(generation_ids)
+        )
+        media_by_generation = {gid: mid for gid, mid in (await db.execute(stmt)).all()}
+
+    return [
+        _serialize(row, media_by_generation.get(row.generation_id) if row.generation_id else None)
+        for row in rows
+    ]
 
 
 def _serialize(row: m.ChatMessage, result_media_id: Optional[str]) -> StoredMessage:
@@ -452,22 +488,7 @@ async def messages(
     user, _ = ctx
     rows = await chat_repo.list_messages(db, user, limit=limit, before=before)
 
-    # Results are rendered inline in the thread, so a message that produced one
-    # carries its media link.
-    media_by_generation: dict[str, Optional[str]] = {}
-    generation_ids = [r.generation_id for r in rows if r.generation_id]
-    if generation_ids:
-        from sqlalchemy import select
-
-        stmt = select(m.Generation.id, m.Generation.result_media_id).where(
-            m.Generation.id.in_(generation_ids)
-        )
-        media_by_generation = {gid: mid for gid, mid in (await db.execute(stmt)).all()}
-
-    return [
-        _serialize(row, media_by_generation.get(row.generation_id) if row.generation_id else None)
-        for row in rows
-    ]
+    return await serialize_thread(db, rows)
 
 
 class ChatState(BaseModel):
