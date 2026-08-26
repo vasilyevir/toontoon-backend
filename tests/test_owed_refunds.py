@@ -287,3 +287,29 @@ async def test_finished_work_is_not_in_flight(interrupted):
     inflight = await generations_repo.pending_for_user(
         session, user.id, younger_than=timedelta(minutes=30))
     assert gen.id not in [g.id for g in inflight]
+
+
+@pytest.mark.asyncio
+async def test_how_long_the_work_took_is_measured_not_guessed(unlucky):
+    """`finished_at` обязан двигаться внутри транзакции.
+
+    В PostgreSQL `now()` — время НАЧАЛА транзакции, и внутри неё оно стоит.
+    Фоновая задача открывает транзакцию, минуту рисует, потом ставит
+    `finished_at` — и записывала момент, наступивший ДО рисования. Поле
+    существовало, заполнялось и показывало ноль секунд на работу, которая шла
+    сорок: значение есть, оно правдоподобное, и неправильное.
+
+    Тест ждёт внутри одной транзакции — ровно то, что делает задача.
+    """
+    from sqlalchemy import func, select as sa_select, text
+    from app.db.repositories import generations as generations_repo
+
+    session, user, gen, _ = unlucky
+    await session.execute(text("SELECT pg_sleep(1)"))
+    await generations_repo.mark_done(session, gen, result_media_id=None)
+    await session.flush()
+
+    took = await session.scalar(sa_select(
+        func.extract("epoch", m.Generation.finished_at - m.Generation.created_at)
+    ).where(m.Generation.id == gen.id))
+    assert took >= 0.9, f"записано {took:.2f} сек на работу длиной в секунду"

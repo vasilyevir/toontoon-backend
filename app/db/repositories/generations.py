@@ -82,12 +82,23 @@ async def list_for_user(
     return (await session.scalars(stmt)).all()
 
 
+# `clock_timestamp()`, а не `now()`, и это не придирка.
+#
+# В PostgreSQL `now()` — время НАЧАЛА транзакции, и оно не движется внутри неё.
+# Фоновая задача открывает транзакцию, потом минуту рисует, потом ставит
+# `finished_at` — и записывала момент, который наступил ДО рисования. Поле
+# существовало, заполнялось и показывало ноль секунд на работу, которая шла
+# сорок. Ошибка тихая: значение есть, оно правдоподобное, и неправильное.
+#
+# `clock_timestamp()` возвращает время в момент вызова.
+
+
 async def mark_done(
     session: AsyncSession, generation: m.Generation, *, result_media_id: str, prompt: Optional[str] = None
 ) -> m.Generation:
     generation.status = "done"
     generation.result_media_id = result_media_id
-    generation.finished_at = func.now()
+    generation.finished_at = func.clock_timestamp()
     if prompt is not None:
         generation.prompt = prompt
     await session.flush()
@@ -187,7 +198,7 @@ async def mark_failed(
     """
     generation.status = "failed"
     generation.error = error[:2000]
-    generation.finished_at = func.now()
+    generation.finished_at = func.clock_timestamp()
     await session.flush()
     return generation
 
