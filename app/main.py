@@ -31,10 +31,36 @@ from app.routers import (
     profile,
     push,
     webhooks,
-    webhooks,
 )
 
 UPLOAD_DIR = Path("uploads")
+
+
+def warn_about_debug_flags() -> None:
+    """Прокричать про отладочные флаги, оставленные включёнными в проде.
+
+    Не падаем — падение посреди ночи хуже, — но молчать нельзя: каждый из этих
+    флагов по отдельности отдаёт чужой аккаунт.
+
+    Отдельной функцией, а не строками внутри `lifespan`, чтобы это можно было
+    вызвать из теста. Проверка, которую тест повторяет своими словами вместо
+    того, чтобы вызвать, продолжает проходить и после того, как её удалили
+    отсюда.
+    """
+    log = logging.getLogger("toontoon")
+    if settings.accept_storekit_test_root and not settings.debug:
+        # Сертификат локального StoreKit лежит внутри Xcode у всех, и с ним
+        # подписку себе выпишет кто угодно.
+        log.error(
+            "ACCEPT_STOREKIT_TEST_ROOT=true при DEBUG=false: чеки, подписанные "
+            "тестовым корнем Xcode, принимаются как настоящие. Выключите его."
+        )
+    if settings.expose_dev_tokens and not settings.debug:
+        # С этим флагом чужой пароль меняется одним запросом.
+        log.error(
+            "EXPOSE_DEV_TOKENS=true при DEBUG=false: токены сброса пароля уходят "
+            "в ответе API. Выключите его до публикации."
+        )
 
 
 @asynccontextmanager
@@ -58,20 +84,7 @@ async def lifespan(app: FastAPI):
         logging.getLogger("toontoon.storage").error(
             "Object storage unavailable (%s). Start it with: docker start toontoon-minio", exc
         )
-    if settings.accept_storekit_test_root and not settings.debug:
-        # Тем же тоном и по той же причине: сертификат локального StoreKit
-        # лежит внутри Xcode у всех, и с ним подписку себе выпишет кто угодно.
-        logging.getLogger("toontoon").error(
-            "ACCEPT_STOREKIT_TEST_ROOT=true при DEBUG=false: чеки, подписанные "
-            "тестовым корнем Xcode, принимаются как настоящие. Выключите его."
-        )
-    if settings.expose_dev_tokens and not settings.debug:
-        # Не падаем — падение посреди ночи хуже, — но молчать нельзя: с этим
-        # флагом чужой пароль меняется одним запросом.
-        logging.getLogger("toontoon").error(
-            "EXPOSE_DEV_TOKENS=true при DEBUG=false: токены сброса пароля уходят "
-            "в ответе API. Выключите его до публикации."
-        )
+    warn_about_debug_flags()
 
     yield
     await db.disconnect()
@@ -119,7 +132,6 @@ app.include_router(generations.router)
 app.include_router(payments.router)
 app.include_router(push.router)
 app.include_router(events.router)
-app.include_router(webhooks.router)
 
 
 @app.get("/health", tags=["meta"])
