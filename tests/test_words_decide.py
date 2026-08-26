@@ -449,3 +449,41 @@ def test_the_brand_guard_spares_our_own_sample_phrase():
     # Бренды по-прежнему уходят вместе с фразой.
     assert "Pixar" not in prompt_style.strip_brands("a poster in the style of Pixar")
     assert "in the style of" not in prompt_style.strip_brands("in the style of Ghibli warmth")
+
+
+async def test_the_retry_goes_to_a_different_model(monkeypatch, guard):
+    """Повтор уходит не к тому, кто только что провалился.
+
+    Замер 26 августа на одном и том же промпте: `gemini-3-pro` возвращает
+    рисунок два раза из трёх, `gemini-3.1-flash` — три из трёх. Второй заход к
+    тому же исполнителю с теми же словами, только строже, — это ставка на ту же
+    монету, и однажды она легла так же: «постер в стиле аниме» пришёл
+    фотографией дважды подряд.
+
+    Основным pro при этом остаётся: он единственный надёжно набирает буквы, а
+    постер без надписи — не постер.
+    """
+    from app.routers import generate as router
+
+    vision, calls, request = guard
+    vision([True])
+    seen: list[str | None] = []
+
+    async def _run(db, request, prefer=None):
+        seen.append(prefer)
+        return FakeResult(b"second", cost_usd=0.04)
+
+    monkeypatch.setattr(router.generation_core, "run", _run)
+    await _redraw_if_photographic_at(router, request, prompt_style.DRAWN_PROVIDER)
+    assert seen == [prompt_style.REDRAW_FALLBACK_PROVIDER]
+
+    # А если и первый кадр делал запасной — второй раз менять не на кого.
+    seen.clear()
+    vision([True])
+    await _redraw_if_photographic_at(router, request, prompt_style.REDRAW_FALLBACK_PROVIDER)
+    assert seen == [prompt_style.REDRAW_FALLBACK_PROVIDER]
+
+
+async def _redraw_if_photographic_at(router, request, prefer):
+    return await router._redraw_if_photographic(
+        None, request, FakeResult(b"first", cost_usd=0.04), "anime poster", prefer=prefer)

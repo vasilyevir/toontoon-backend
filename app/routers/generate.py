@@ -905,11 +905,19 @@ async def _redraw_if_photographic(
     if not await gpt_service.looks_photographic(result.data):
         return result, prompt, False
 
-    logger.info("Кадр приехал фотографией там, где просили рисунок — переделываем")
+    # Повтор уходит к ДРУГОМУ исполнителю, а не к тому, который только что
+    # провалился. Замер 26 августа на одном промпте: `gemini-3-pro` возвращает
+    # рисунок два раза из трёх, `gemini-3.1-flash` — три из трёх. Второй заход к
+    # тому же — это ставка на ту же монету, и однажды она легла так же:
+    # «постер в стиле аниме» пришёл фотографией дважды подряд.
+    other = (prompt_style.REDRAW_FALLBACK_PROVIDER
+             if prefer != prompt_style.REDRAW_FALLBACK_PROVIDER else prefer)
+    logger.info("Кадр приехал фотографией там, где просили рисунок — "
+                "переделываем у %s", other)
     harder = f"{prompt}, {prompt_style.REDRAW_HARDER}"
     second = replace(request, prompt=harder)
     try:
-        again = await generation_core.run(db, second, prefer=prefer)
+        again = await generation_core.run(db, second, prefer=other)
     except Exception:  # noqa: BLE001 — повтор не удался, отдаём первый кадр
         logger.warning("Повтор не удался, отдаём первый кадр")
         return result, prompt, True
