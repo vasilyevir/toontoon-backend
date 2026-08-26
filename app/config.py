@@ -126,8 +126,6 @@ class Settings(BaseSettings):
     # Какая модель исполняет операцию — решает реестр провайдеров в базе
     # (таблица generation_providers), а не настройка: включение модели и порядок
     # фолбэка не должны требовать релиза.
-    pollinations_image_url: str = "https://image.pollinations.ai"
-    pollinations_model: str = "flux"
 
     # ─── OpenRouter ──────────────────────────────────────────────────────────
     # Витрина, а не модель: один ключ и один эндпоинт открывают четыре десятка
@@ -215,9 +213,6 @@ class Settings(BaseSettings):
     # Профиль при этом хранит все пятнадцать: цифра меняет отбор, а не сборку.
     profile_reference_count: int = 1
     openrouter_request_timeout: float = 180.0
-    # Optional Pollinations API token (register at https://auth.pollinations.ai).
-    # Without it the anonymous tier frequently returns 402 under load.
-    pollinations_token: str = ""
 
     # Video generation (kie.ai / ByteDance Seedance).
     # ВЫКЛЮЧЕНО в первой версии: все шесть направлений онбординга — про фото,

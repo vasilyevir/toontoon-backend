@@ -1,7 +1,7 @@
 """Что именно уходит провайдеру.
 
 Оба адаптера получают один и тот же запрос, но разговаривают с моделями
-по-разному: у Pollinations негатив — отдельный параметр, у OpenAI такого
+по-разному: у одних негатив — отдельный параметр, у OpenAI такого
 параметра нет вовсе. Тесты держат это различие явным, потому что молчаливая
 потеря негатива не падает и не логируется — она просто ухудшает картинки.
 
@@ -14,7 +14,7 @@ import pytest
 
 from app.services import prompt_style
 from app.services.generation.operations import GenerationRequest, Operation
-from app.services.generation.providers import openai_images, pollinations
+from app.services.generation.providers import openai_images
 
 
 def _request(**kwargs) -> GenerationRequest:
@@ -76,35 +76,6 @@ async def test_photo_edit_gets_its_own_guards_without_cartoon(openai_capture: di
     prompt = openai_capture["data"]["prompt"]
     assert prompt_style.PHOTO_VISUAL_GUARDS in prompt
     assert "cartoon face" not in prompt
-
-
-# ─── Pollinations: негатив уходит целиком ────────────────────────────────────
-
-
-@pytest.fixture
-def pollinations_capture(monkeypatch: pytest.MonkeyPatch) -> dict:
-    sent: dict = {}
-
-    async def _get(self, url, **kwargs):
-        sent["url"] = url
-        return httpx.Response(
-            200, content=_png(), headers={"content-type": "image/png"},
-            request=httpx.Request("GET", url),
-        )
-
-    monkeypatch.setattr(httpx.AsyncClient, "get", _get)
-    return sent
-
-
-async def test_full_negative_prompt_reaches_pollinations(pollinations_capture: dict) -> None:
-    await pollinations.PollinationsProvider().run(_request())
-
-    from urllib.parse import parse_qs, urlparse
-    sent = parse_qs(urlparse(pollinations_capture["url"]).query)["negative"][0]
-    assert sent == prompt_style.NEGATIVE_PROMPT
-    # Хвост списка — запреты на кадр и на текст в картинке; на прежней обрезке
-    # в 500 символов терялись именно они.
-    assert sent.endswith("logo")
 
 
 # ─── Очередь исполнителей ────────────────────────────────────────────────────

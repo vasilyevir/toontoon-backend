@@ -24,7 +24,6 @@ from app.services.generation.operations import (
 from app.services.generation.providers.base import Provider
 from app.services.generation.providers.openai_images import OpenAIImagesProvider
 from app.services.generation.providers.openrouter import OpenRouterProvider
-from app.services.generation.providers.pollinations import PollinationsProvider
 
 logger = logging.getLogger("toontoon.generation")
 
@@ -34,7 +33,6 @@ ADAPTERS: dict[str, Provider] = {
     p.id: p
     for p in (
         OpenAIImagesProvider(),
-        PollinationsProvider(),
     )
 }
 

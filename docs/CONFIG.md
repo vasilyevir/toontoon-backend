@@ -56,8 +56,6 @@
 | `RATE_LIMIT_PER_HOUR` | int | `30` |
 | `IMAGE_TOONTOON_COST` | int | `1` |
 | `VIDEO_TOONTOON_COST` | int | `2` |
-| `POLLINATIONS_IMAGE_URL` | str | «задаётся в окружении» |
-| `POLLINATIONS_MODEL` | str | `flux` |
 | `OPENROUTER_API_KEY` | str | пусто |
 | `OPENROUTER_BASE_URL` | str | «задаётся в окружении» |
 | `OPENROUTER_IMAGE_MODEL` | str | `google/gemini-3.1-flash-image` |
@@ -69,7 +67,6 @@
 | `SLOT_EXTRACTION_MODEL` | str | `google/gemini-2.5-flash` |
 | `PROFILE_REFERENCE_COUNT` | int | `1` |
 | `OPENROUTER_REQUEST_TIMEOUT` | float | `180.0` |
-| `POLLINATIONS_TOKEN` | str | пусто |
 | `VIDEO_ENABLED` | bool | `False` |
 | `KIE_API_KEY` | str | пусто |
 | `KIE_BASE_URL` | str | «задаётся в окружении» |
