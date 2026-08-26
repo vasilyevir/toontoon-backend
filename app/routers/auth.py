@@ -271,7 +271,10 @@ async def by_transaction(
     try:
         payload = app_store.verify_transaction(body.signed_transaction)
     except app_store.BadTransaction as exc:
-        logger.warning("Чек не прошёл проверку: %s", exc)
+        # Со строкой про форму цепочки: без неё отказ на первой живой покупке
+        # означает поездку к разработчику, а с ней — видно, что именно прислали.
+        logger.warning("Чек не прошёл проверку: %s | %s", exc,
+                       app_store.describe_chain(body.signed_transaction))
         raise HTTPException(status.HTTP_400_BAD_REQUEST,
                             detail="This purchase could not be verified") from exc
 

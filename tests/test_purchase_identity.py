@@ -487,3 +487,37 @@ def test_the_real_root_is_still_the_apple_one():
     assert "Apple Root CA - G3" in root.subject.rfc4514_string()
     test_root = x509.load_pem_x509_certificate(app_store._TEST_ROOT_PEM)
     assert "StoreKit" in test_root.subject.rfc4514_string()
+
+
+# ── Разбор отказа ────────────────────────────────────────────────────────────
+# Строка для журнала, а не решение. Требование к ней одно и жёсткое: не падать
+# никогда. Диагностика, роняющая обработчик, превращает отвергнутый чек в
+# пятисотую — и вместо «чек не тот» человек видит «сервис сломался».
+
+def test_the_rejection_note_says_what_arrived():
+    import base64 as b64mod, json as jsonmod, pathlib
+
+    xcode = pathlib.Path("/Applications/Xcode.app/Contents/PlugIns"
+                         "/IDEStoreKitEditor.ideplugin/Contents/Resources"
+                         "/StoreKitTestCertificate.cer")
+    if not xcode.exists():
+        pytest.skip("Xcode не установлен")
+
+    raw = b64mod.b64encode(xcode.read_bytes()).decode()
+    header = b64mod.urlsafe_b64encode(
+        jsonmod.dumps({"alg": "ES256", "x5c": [raw]}).encode()).rstrip(b"=").decode()
+
+    note = app_store.describe_chain(f"{header}.e30.AAAA")
+    assert "звеньев=1" in note
+    # Корень Xcode — RSA, а не эллиптический, как у Apple. Именно это и нужно
+    # увидеть в логе, если первая живая покупка не пройдёт.
+    assert "ключ=RSA" in note
+    assert "StoreKit" in note
+
+
+@pytest.mark.parametrize("junk", [
+    "", "не-jws-вовсе", "a.b.c", "....", "eyJhbGciOiJFUzI1NiJ9.e30",
+])
+def test_the_rejection_note_never_throws(junk):
+    """Иначе отвергнутый чек отвечал бы пятисотой вместо «чек не тот»."""
+    assert isinstance(app_store.describe_chain(junk), str)

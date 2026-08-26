@@ -87,6 +87,37 @@ def _check_dates(cert: x509.Certificate, now: datetime) -> None:
         raise BadTransaction(f"сертификат недействителен по датам: {cert.subject.rfc4514_string()}")
 
 
+def describe_chain(signed: str) -> str:
+    """Из чего сложен чек — для журнала, когда проверка его отвергла.
+
+    Читает заголовок БЕЗ проверки подписи и ничего не решает: строка отсюда
+    годится только в лог. Причина отказа говорит, что не сошлось; эта строка —
+    с чем именно, и без неё каждый отказ стоит поездки к разработчику.
+
+    Нужна ровно один раз в жизни: первая покупка через локальный StoreKit.
+    Цепочка Xcode нами не виденa — корень у неё RSA, а не эллиптический, как
+    у Apple, и длину её мы знаем только по косвенным признакам.
+    """
+    try:
+        header = json.loads(_b64url(signed.split(".")[0]))
+    except Exception:  # noqa: BLE001 — это диагностика, падать ей нельзя
+        return "заголовок не читается"
+
+    bits = [f"alg={header.get('alg')}"]
+    chain_raw = header.get("x5c") or []
+    bits.append(f"звеньев={len(chain_raw)}")
+    for i, raw in enumerate(chain_raw):
+        try:
+            cert = x509.load_der_x509_certificate(base64.b64decode(raw))
+        except Exception:  # noqa: BLE001
+            bits.append(f"[{i}] не читается")
+            continue
+        key = type(cert.public_key()).__name__.replace("PublicKey", "")
+        cn = next((a.value for a in cert.subject if a.oid == x509.NameOID.COMMON_NAME), "?")
+        bits.append(f"[{i}] {cn!r} ключ={key}")
+    return "; ".join(bits)
+
+
 def verify_jws(signed: str, *, now: datetime | None = None) -> dict:
     """Проверить подпись Apple и вернуть тело. Что в теле — решает вызывающий.
 
