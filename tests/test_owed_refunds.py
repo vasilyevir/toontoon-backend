@@ -232,3 +232,58 @@ async def test_the_threshold_is_the_setting_not_a_number_in_the_code(interrupted
     await session.flush()
     await wallet.settle_owed(session)
     assert gen.status == "failed", "порог не соблюдается: не оборвало после срока"
+
+
+# ─── Что человек видит, вернувшись ───────────────────────────────────────────
+# Опрос готовности живёт в задаче на экране, а её убивает закрытие приложения:
+# идентификатор заказа нигде не сохранён. Сервер кадр дорисует и положит в
+# переписку сам, но пока он рисуется, вернувшийся не видит ничего — для него
+# заказ пропал вместе с деньгами.
+
+@pytest.mark.asyncio
+async def test_work_in_flight_is_shown_to_someone_who_came_back(interrupted):
+    from datetime import timedelta
+    from sqlalchemy import func, select as sa_select
+    from app.db.repositories import generations as generations_repo
+
+    session, user, gen, _ = interrupted
+    db_now = await session.scalar(sa_select(func.now()))
+    gen.created_at = db_now - timedelta(minutes=1)   # заказ минуту назад
+    await session.flush()
+
+    inflight = await generations_repo.pending_for_user(
+        session, user.id, younger_than=timedelta(minutes=30))
+    assert [g.id for g in inflight] == [gen.id]
+
+
+@pytest.mark.asyncio
+async def test_a_dead_job_is_not_shown_as_still_running(interrupted):
+    """Показать мёртвую работу идущей — обещать кадр, которого не будет.
+
+    Сверка тем временем вернёт за неё деньги, и человек останется смотреть на
+    вечное «рисуется» с возвращённым балансом. Не показать ничего честнее.
+    """
+    from datetime import timedelta
+    from app.db.repositories import generations as generations_repo
+
+    session, user, gen, _ = interrupted   # фикстура делает её двухчасовой
+    inflight = await generations_repo.pending_for_user(
+        session, user.id, younger_than=timedelta(minutes=30))
+    assert gen.id not in [g.id for g in inflight]
+
+
+@pytest.mark.asyncio
+async def test_finished_work_is_not_in_flight(interrupted):
+    from datetime import timedelta
+    from sqlalchemy import func, select as sa_select
+    from app.db.repositories import generations as generations_repo
+
+    session, user, gen, _ = interrupted
+    db_now = await session.scalar(sa_select(func.now()))
+    gen.created_at = db_now - timedelta(minutes=1)
+    gen.status = "done"
+    await session.flush()
+
+    inflight = await generations_repo.pending_for_user(
+        session, user.id, younger_than=timedelta(minutes=30))
+    assert gen.id not in [g.id for g in inflight]

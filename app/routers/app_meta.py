@@ -7,6 +7,7 @@ render the tile catalog before login.
 """
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends
@@ -20,6 +21,7 @@ from app.deps import Context, optional_context
 from app.models.payment import Balance
 from app.models.user import PublicUser
 from app.db.repositories import chat as chat_repo
+from app.db.repositories import generations as generations_repo
 from app.db.repositories import styles as styles_repo
 from app.services import wallet
 
@@ -46,7 +48,33 @@ class BootstrapResponse(BaseModel):
     # The tail of the single chat thread (CH-20). A cold start gets enough to
     # draw the screen; older messages are paged in from /api/chat/messages.
     messages: list[dict]
+    # Заказы, которые сейчас в пути. Обычно пусто; непусто ровно тогда, когда
+    # человек закрыл приложение, не дождавшись кадра, — и без этого списка
+    # вернувшемуся нечем показать, что работа идёт.
+    pending: list[dict]
     config: AppConfig
+
+
+def _pending(row) -> dict:
+    """Заказ в пути — тем же именами полей, что и готовая работа.
+
+    Приложение читает это в тот же тип, что и всё остальное из истории:
+    отдельная форма ради двух полей означала бы второй разбор и второй способ
+    ошибиться.
+    """
+    return {
+        "id": row.id,
+        "type": (row.request_params or {}).get("type", "image"),
+        "operation": row.operation,
+        "status": row.status,
+        "prompt": row.prompt,
+        "result_url": None,
+        "thumbnail_url": None,
+        "cost": row.cost,
+        "style_id": row.style_id,
+        "share_id": None,
+        "created_at": row.created_at.isoformat(),
+    }
 
 
 def _style(row) -> dict:
@@ -70,6 +98,7 @@ async def bootstrap(
     user: Optional[PublicUser] = None
     balance: Optional[Balance] = None
     messages: list[dict] = []
+    pending: list[dict] = []
     if ctx is not None:
         u, session = ctx
         user = PublicUser.from_row(u, provider=session.provider)
@@ -85,6 +114,13 @@ async def bootstrap(
             }
             for r in rows
         ]
+        pending = [
+            _pending(r)
+            for r in await generations_repo.pending_for_user(
+                db, u.id,
+                younger_than=timedelta(minutes=settings.stale_generation_minutes),
+            )
+        ]
 
     from datetime import datetime, timezone
 
@@ -97,6 +133,7 @@ async def bootstrap(
         home_styles=[_style(s) for s in home],
         shots=[_style(s) for s in shots],
         messages=messages,
+        pending=pending,
         config=AppConfig(
             image_toontoon_cost=settings.image_toontoon_cost,
             video_toontoon_cost=settings.video_toontoon_cost,

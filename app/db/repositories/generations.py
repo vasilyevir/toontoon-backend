@@ -94,6 +94,38 @@ async def mark_done(
     return generation
 
 
+async def pending_for_user(
+    session: AsyncSession, user_id: str, *, younger_than: timedelta, limit: int = 5
+) -> list[m.Generation]:
+    """Работы этого человека, которые сейчас в пути.
+
+    Нужно на холодном старте. Опрос готовности живёт в задаче на экране, а её
+    убивает закрытие приложения — идентификатор заказа при этом нигде не
+    сохранён. Сервер кадр дорисует и положит в переписку сам, но пока он
+    рисуется, вернувшийся человек не видит ничего: ни кадра, ни признака
+    работы. Для него заказ пропал вместе с деньгами.
+
+    Старше порога сюда не попадает, и это не оптимизация. Такая работа не
+    «идёт», а мертва: её процесс убили, и дорисовывать некому. Показать её как
+    идущую значит обещать кадр, которого не будет, — а сверка тем временем
+    вернёт за неё деньги. Пусть лучше человек не увидит ничего, чем увидит
+    вечное «рисуется».
+    """
+    db_now = await session.scalar(select(func.now()))
+    floor = (db_now or datetime.now(timezone.utc)) - younger_than
+    rows = await session.scalars(
+        select(m.Generation)
+        .where(
+            m.Generation.user_id == user_id,
+            m.Generation.status.in_(("queued", "running")),
+            m.Generation.created_at >= floor,
+        )
+        .order_by(m.Generation.created_at.desc())
+        .limit(limit)
+    )
+    return list(rows)
+
+
 async def stale_running(
     session: AsyncSession, *, older_than: timedelta, limit: int = 500
 ) -> list[m.Generation]:
