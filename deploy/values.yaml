@@ -1,7 +1,19 @@
 # Значения релиза для общего чарта oci://ghcr.io/atom-group-software/charts/app (BACKEND).
 # Проект toontoon-web (backend). CI перебивает image.tag.
-# Секреты (DATABASE_URL, ключи) — в Secret toontoon-web-backend-secrets (kubectl, не в git!).
-# TODO: заполнить env/БД/redis/ingress под реальные требования проекта.
+#
+# Что здесь есть и чего здесь нет.
+#   Здесь — не-секретные настройки, уезжающие в ConfigMap.
+#   Не здесь — ключи и строки подключения: Secret toontoon-web-backend-secrets,
+#     заводится через kubectl. Полный список того, что читает код, — в
+#     .env.example; помеченное там «прод:» обязано существовать.
+#
+# ⚠ Осталось решить снаружи (перед первой выкаткой):
+#   1. Домен — ingress.host ниже стоит примером и не выдан.
+#   2. Redis — поднимаем в кластере (redis.enabled: true) или берём внешний
+#      (REDIS_URL в Secret). Ниже включён в кластере.
+#   3. S3 — бакет в MinIO и пара ключей к нему.
+#   4. Почта — SMTP для писем; пока его нет, вход по ссылке и сброс пароля
+#      пройти нельзя (отладочная выдача токенов в ответе в проде выключена).
 type: backend
 
 image:
@@ -9,25 +21,80 @@ image:
   tag: latest
 
 # Не-секретные env → ConfigMap. Секреты — в Secret <release>-secrets (kubectl, не сюда!).
+#
+# Здесь перечислено то, чьё умолчание в коде рассчитано на машину разработчика
+# и в проде было бы неверным. Всё остальное берётся из умолчаний app/config.py.
 env:
   ENV: "production"
+  # Выключает отладочные послабления и включает проверки при старте.
   DEBUG: "false"
+
+  # Ключ сессии не должен уезжать по открытому HTTP.
+  SESSION_COOKIE_SECURE: "true"
+  # Фронтенд и бэкенд на разных доменах → браузер иначе не отдаст куку.
+  # Если фронтенд проксирует /api к себе, вернуть "lax".
+  SESSION_COOKIE_SAMESITE: "none"
+
+  # ⚠ подставить домены вместе с пунктом 1.
+  CORS_ORIGINS: "https://toontoon-web.example.com"
+  PUBLIC_BASE_URL: "https://api.toontoon-web.example.com"
+  FRONTEND_URL: "https://toontoon-web.example.com"
+
+  # Снимки и результаты — в MinIO. "local" пишет в файловую систему пода:
+  # приватность не обеспечивается, и всё пропадает при перезапуске.
+  STORAGE_BACKEND: "s3"
+  S3_ENDPOINT_URL: "http://minio.minio.svc.cluster.local:9000"
+  S3_BUCKET: "toontoon"
+  S3_REGION: "us-east-1"
+
+  # По нему проверяется, что чек StoreKit выписан нашему приложению.
+  APPLE_BUNDLE_ID: "ai.toontoon.ios"
+
+  # Явно, хотя умолчание в коде уже такое: с этим флагом любой, кто достанет
+  # общедоступный сертификат из Xcode, выпишет себе подписку сам.
+  ACCEPT_STOREKIT_TEST_ROOT: "false"
+
+  # Видео выключено в первой версии (см. .env.example).
+  VIDEO_ENABLED: "false"
 
 secret:
   enabled: true        # ссылка на существующий Secret toontoon-web-backend-secrets
+  # Что обязано в нём лежать:
+  #   DATABASE_URL         postgresql+asyncpg://…
+  #   REDIS_URL            redis://… (если redis.enabled: false)
+  #   OPENROUTER_API_KEY   без него не работает ни генерация, ни разбор фразы
+  #   S3_ACCESS_KEY / S3_SECRET_KEY
+  #   APP_KEY / APP_SECRET (когда включим подпись запросов приложения)
+  #   VAPID_PRIVATE_KEY / VAPID_PUBLIC_KEY (когда включим push)
 
-# Подготовка БД (миграции/create_all) до старта. Включи, если нужно.
+# Схему накатывает Alembic — ДО старта пода и один раз на релиз.
+#
+# Включено, и это не необязательная тонкость: Postgres здесь система записи,
+# и без миграций свежая выкатка поднимется с пустой базой, где на любой запрос
+# отвечает пятисотая. Именно в CMD этого делать нельзя — реплик несколько,
+# и они возьмут одну миграцию наперегонки.
 initSchema:
-  enabled: false
-  command: []
-  # пример (Alembic): ["alembic", "upgrade", "head"]
+  enabled: true
+  command: ["alembic", "upgrade", "head"]
 
+# Сессии, кэш, ограничители частоты и замки. Не система записи: потеря Redis
+# разлогинивает, но ничего не теряет — поэтому хватает одного в кластере.
+# Внешний вместо этого: enabled: false и REDIS_URL в Secret.
 redis:
-  enabled: false
+  enabled: true
 
+# ⚠ Домен не выдан (пункт 1). Включить вместе с ним — до тех пор снаружи
+# сервис недоступен, и это верно: пускать наружу под без домена и TLS незачем.
 ingress:
   enabled: false
   host: api.toontoon-web.example.com
   tls:
-    enabled: false
+    enabled: true
     clusterIssuer: letsencrypt-prod
+
+# Живость и готовность — по той же ручке, что и локально.
+probes:
+  liveness:
+    path: /health
+  readiness:
+    path: /health

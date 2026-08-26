@@ -1,13 +1,30 @@
-# ── TOONTOON backend (FastAPI) ───────────────────────────────────────────────────
-# NOTE for DevOps:
-#   - Requires Redis (all persistence — users/sessions/generations — lives in
-#     Redis, there is no SQL DB). Set redis.enabled: true in deploy/values.yaml
-#     or point REDIS_URL at an external instance via the cluster Secret.
-#   - Requires ffmpeg at runtime (video thumbnail extraction) — installed below.
-#   - Health check: GET /health → {"status": "ok", ...}.
-#   - Secrets (OpenAI/Kie.ai/Boostify/Cloudinary/VAPID/session) come from the
-#     Secret named "<release>-secrets" (secret.enabled: true) — see repo README
-#     / PR description for the exact key list, never committed here.
+# ── TOONTOON backend (FastAPI) ───────────────────────────────────────────────
+# Что нужно этому образу, чтобы стать работающим сервисом.
+#
+# PostgreSQL — система записи. Пользователи, кошелёк, генерации, разговоры и
+#   профили лиц живут здесь; DATABASE_URL обязателен, без него не поднимется
+#   ни одна ручка. Раньше в этой шапке было написано «SQL-базы нет, всё в
+#   Redis» — так было до миграции на Postgres, и год спустя это читалось как
+#   инструкция.
+#
+#   Схему накатывает `alembic upgrade head` — ДО старта пода и один раз на
+#   релиз, а не в CMD: реплик несколько, и они возьмут одну миграцию наперегонки.
+#   В чарте за это отвечает initSchema (deploy/values.yaml).
+#
+# Redis — сессии, кэш, ограничители частоты и замки. Не система записи:
+#   потеря Redis разлогинивает, но ничего не теряет.
+#
+# S3 (в кластере MinIO) — снимки и результаты. STORAGE_BACKEND=s3;
+#   "local" пишет в ./uploads и приватность обеспечить не может — только для
+#   разработки. Отдаются короткие подписанные ссылки, не сырые URL объектов.
+#
+# ffmpeg — кадр-обложка для видео. Ставится ниже.
+#
+# Здоровье: GET /health → {"status": "ok", ...}.
+#
+# Секреты (DATABASE_URL, REDIS_URL, OPENROUTER_API_KEY, S3_*, APP_SECRET,
+#   VAPID_*) приходят из Secret "<release>-secrets". Полный список того, что
+#   читает код, — в .env.example; здесь их нет и не будет.
 
 FROM python:3.12-slim AS base
 WORKDIR /app
