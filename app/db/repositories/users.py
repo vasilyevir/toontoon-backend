@@ -80,7 +80,12 @@ async def merge_guest_into(
     if guest_id == target_id:
         return
 
-    for model in (m.MediaAsset, m.Generation, m.ChatMessage):
+    # `PersonProfile` здесь не сразу: лица переезжали не всегда, и заметно это
+    # стало, когда слияние из редкого случая (человек завёл аккаунт) стало
+    # основным (человек восстановил покупку на новом телефоне). Работы
+    # переезжали, а люди на них — нет: профиль оставался у мёртвого гостя, и
+    # следующий кадр рисовался с чужим лицом или без лица вовсе.
+    for model in (m.MediaAsset, m.Generation, m.ChatMessage, m.PersonProfile):
         await session.execute(
             update(model).where(model.user_id == guest_id).values(user_id=target_id)
         )

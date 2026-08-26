@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 
 from cryptography import x509
 from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 
@@ -102,8 +102,8 @@ def verify_transaction(signed: str, *, now: datetime | None = None) -> dict:
     root = x509.load_pem_x509_certificate(_ROOT_PEM)
     # Корень сверяем побайтно. «Тоже от Apple» и «этот самый» — разные вещи, и
     # вторая проверяется только так.
-    if chain[-1].public_bytes(encoding=x509.Encoding.DER) != root.public_bytes(
-            encoding=x509.Encoding.DER):
+    der = serialization.Encoding.DER
+    if chain[-1].public_bytes(encoding=der) != root.public_bytes(encoding=der):
         raise BadTransaction("цепочка ведёт не к нашему корню")
 
     for cert in chain:
