@@ -6,10 +6,12 @@ Boostyfi is gone from the mobile product — purchases go through the App Store
 """
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.cookies import clear_session_cookie, set_session_cookie
@@ -31,8 +33,10 @@ from app.db.repositories import users as users_repo
 from app.db.repositories import wallet as wallet_repo
 from app.db.session import get_session as get_db_session
 from app.redis_client import get_client
-from app.services import apple_oauth, auth_service, google_oauth, identity_service
+from app.services import app_store, apple_oauth, auth_service, google_oauth, identity_service
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -234,6 +238,62 @@ async def login(
     set_session_cookie(response, session.sid)
     return AuthResult(
         user=PublicUser.from_row(user, provider=AuthProvider.EMAIL), session_token=session.sid
+    )
+
+
+class TransactionRequest(BaseModel):
+    """Подписанный чек StoreKit 2 — `Transaction.jwsRepresentation`."""
+
+    signed_transaction: str = Field(min_length=32, max_length=8192)
+
+
+@router.post("/transaction", response_model=AuthResult)
+async def by_transaction(
+    body: TransactionRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db_session),
+    ctx: Optional[Context] = Depends(optional_context),
+) -> AuthResult:
+    """Узнать человека по покупке.
+
+    Вход из продукта убран: человека узнаёт App Store. Покупка привязана к его
+    Apple ID, и на новом устройстве тот же чек приводит его к своим работам,
+    балансу и истории — без пароля и без второй учётной записи.
+
+    Чеку верим только по подписи. Строка с чужим `originalTransactionId`,
+    отправленная руками, иначе отдала бы чужой аккаунт целиком.
+    """
+    allowed, _ = await rate_limit.hit(f"transaction:ip:{_client_ip(request)}", 30, 3600)
+    if not allowed:
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many attempts, try later")
+
+    try:
+        payload = app_store.verify_transaction(body.signed_transaction)
+    except app_store.BadTransaction as exc:
+        logger.warning("Чек не прошёл проверку: %s", exc)
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            detail="This purchase could not be verified") from exc
+
+    # Гость должен существовать: слить в аккаунт можно только того, кто есть.
+    current = ctx[0] if ctx else await users_repo.create_guest(db)
+
+    try:
+        owner, carried = await identity_service.by_transaction(
+            db, payload=payload, current=current)
+    except identity_service.PurchaseBelongsToSomeoneElse:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="This purchase is already linked to another account.",
+        ) from None
+
+    session = await auth_service.create_session_for_user_id(owner.id, AuthProvider.APPLE)
+    set_session_cookie(response, session.sid)
+    logger.info("Покупка %s опознала пользователя %s (перенесено %s TOONTOON)",
+                payload.get("originalTransactionId"), owner.id, carried)
+    return AuthResult(
+        user=PublicUser.from_row(owner, provider=AuthProvider.APPLE),
+        session_token=session.sid,
     )
 
 

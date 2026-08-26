@@ -1572,6 +1572,22 @@
         "title": "SubscribeBody",
         "type": "object"
       },
+      "TransactionRequest": {
+        "description": "Подписанный чек StoreKit 2 — `Transaction.jwsRepresentation`.",
+        "properties": {
+          "signed_transaction": {
+            "maxLength": 8192,
+            "minLength": 32,
+            "title": "Signed Transaction",
+            "type": "string"
+          }
+        },
+        "required": [
+          "signed_transaction"
+        ],
+        "title": "TransactionRequest",
+        "type": "object"
+      },
       "UnsubscribeBody": {
         "properties": {
           "endpoint": {
@@ -2499,6 +2515,82 @@
           }
         },
         "summary": "Reset Password",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/transaction": {
+      "post": {
+        "description": "Узнать человека по покупке.\n\nВход из продукта убран: человека узнаёт App Store. Покупка привязана к его\nApple ID, и на новом устройстве тот же чек приводит его к своим работам,\nбалансу и истории — без пароля и без второй учётной записи.\n\nЧеку верим только по подписи. Строка с чужим `originalTransactionId`,\nотправленная руками, иначе отдала бы чужой аккаунт целиком.",
+        "operationId": "by_transaction_api_auth_transaction_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "arteki-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Arteki-Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransactionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "By Transaction",
         "tags": [
           "auth"
         ]

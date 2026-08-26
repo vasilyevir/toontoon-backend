@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import models as m
+from app.db.repositories import subscriptions as subscriptions_repo
 from app.db.repositories import users as users_repo
 from app.db.repositories import wallet as wallet_repo
 
@@ -99,3 +100,50 @@ async def promote_guest(
     carried = await wallet_repo.transfer_guest_balance(db, guest_id=guest_id, target_id=target.id)
     await users_repo.merge_guest_into(db, guest_id, target.id)
     return carried
+
+
+async def by_transaction(
+    db: AsyncSession, *, payload: dict, current: m.User
+) -> tuple[m.User, int]:
+    """Кто стоит за этой покупкой — и слить с ним нынешнего гостя.
+
+    Возвращает владельца и сколько TOONTOON перенесено.
+
+    Три случая, и путать их нельзя:
+
+    * покупки ещё никто не заявлял — привязываем к нынешнему человеку;
+    * покупку заявлял он же — ничего не меняется, это просто новый запуск;
+    * покупку заявлял другой — значит человек тот же, а устройство новое:
+      гостя сливаем в него и отдаём его аккаунт.
+
+    Последний случай и есть узнавание. Сливаем только гостя: если человек уже
+    вошёл под своим, отдать ему чужой аккаунт нельзя ни при каких условиях —
+    это не узнавание, а подмена. Такую покупку просто не принимаем.
+    """
+    original_id = str(payload["originalTransactionId"])
+    known = await subscriptions_repo.get_by_original_transaction(db, original_id)
+
+    if known is None:
+        await subscriptions_repo.bind(db, user_id=current.id, payload=payload)
+        return current, 0
+
+    if known.user_id == current.id:
+        await subscriptions_repo.refresh(db, known, payload=payload)
+        return current, 0
+
+    owner = await users_repo.get(db, known.user_id)
+    if owner is None or owner.deleted_at is not None:
+        # Владелец удалён — покупка снова ничья.
+        await subscriptions_repo.rebind(db, known, user_id=current.id, payload=payload)
+        return current, 0
+
+    if current.kind != "guest":
+        raise PurchaseBelongsToSomeoneElse(original_id)
+
+    carried = await promote_guest(db, guest_id=current.id, target=owner)
+    await subscriptions_repo.refresh(db, known, payload=payload)
+    return owner, carried
+
+
+class PurchaseBelongsToSomeoneElse(Exception):
+    """Покупка заявлена другим аккаунтом, а этот — не гость."""
