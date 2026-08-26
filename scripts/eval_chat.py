@@ -231,7 +231,10 @@ async def run_flow(client: httpx.AsyncClient, flow: dict, faces: list[pathlib.Pa
         if r.status_code != 200:
             notes.append(f"кадр не сделан: {r.status_code} {r.text[:90]}")
         else:
-            d = r.json()
+            d = await ef.finished(client, headers, r.json())
+            if not d.get("url"):
+                notes.append(f"кадр не доехал: {d.get('status')}")
+                return not notes, notes
             frame = (await client.get(f"{BASE}{d['url']}", headers=headers)).content
             path = out / f"{flow['id']}.jpg"
             path.write_bytes(frame)

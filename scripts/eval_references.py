@@ -64,7 +64,9 @@ async def shoot(client: httpx.AsyncClient, headers: dict, urls: list[str]) -> di
     r = await client.post(f"{BASE}/api/generate", headers=headers, json=body)
     if r.status_code != 200:
         return {"error": f"{r.status_code} {r.text[:160]}"}
-    d = r.json()
+    d = await ef.finished(client, headers, r.json())
+    if not d.get("url"):
+        return {"error": f"кадр не доехал: {d.get('status')}"}
     frame = await client.get(f"{BASE}{d['url']}", headers=headers)
     return {"id": d["id"], "bytes": frame.content, "seconds": time.monotonic() - started}
 

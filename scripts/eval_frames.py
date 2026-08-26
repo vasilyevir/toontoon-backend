@@ -551,6 +551,30 @@ async def provider_of(generation_id: str) -> tuple[str, str]:
         return (row.provider_id or "", row.provider_model or "") if row else ("", "")
 
 
+async def finished(client: httpx.AsyncClient, headers: dict, payload: dict,
+                   *, every: float = 2.0, patience: float = 600.0) -> dict:
+    """Дождаться готовой работы.
+
+    Запрос на генерацию отвечает сразу: он принимает заказ, а кадр рисуется
+    фоновой задачей. Замер поэтому спрашивает готовность так же, как это делает
+    приложение, — иначе он мерил бы скорость приёма заказа, а не кадра.
+    """
+    if payload.get("status") != "queued":
+        return payload
+    deadline = time.monotonic() + patience
+    while time.monotonic() < deadline:
+        await asyncio.sleep(every)
+        row = await client.get(f"{BASE}/api/generations/{payload['id']}", headers=headers)
+        if row.status_code != 200:
+            continue
+        gen = row.json()
+        if gen.get("status") == "done":
+            return {**payload, "url": gen.get("result_url") or "", "status": "done"}
+        if gen.get("status") == "failed":
+            return {**payload, "url": "", "status": "failed"}
+    return {**payload, "url": "", "status": "timeout"}
+
+
 async def upload_sample(client: httpx.AsyncClient, headers: dict, name: str) -> str:
     """Положить образец стиля и вернуть ссылку на него.
 
@@ -578,13 +602,21 @@ async def run_case(client: httpx.AsyncClient, headers: dict, case: Case,
 
     started = time.monotonic()
     response = await client.post(f"{BASE}/api/generate", headers=headers, json=body)
-    result.seconds = time.monotonic() - started
     if response.status_code != 200:
+        result.seconds = time.monotonic() - started
         result.ok = False
         result.notes.append(f"{response.status_code}: {response.text[:120]}")
         return result
 
-    payload = response.json()
+    # Время считается до готового кадра, а не до принятого заказа. Запрос
+    # отвечает за три секунды — это скорость приёмки, и ставить её в колонку
+    # «секунды» значило бы отчитываться о том, чего человек не ждал.
+    payload = await finished(client, headers, response.json())
+    result.seconds = time.monotonic() - started
+    if not payload.get("url"):
+        result.ok = False
+        result.notes.append(f"кадр не доехал: {payload.get('status')}")
+        return result
     frame = (await client.get(f"{BASE}{payload['url']}", headers=headers)).content
     path = out / f"{case.id}.jpg"
     path.write_bytes(frame)

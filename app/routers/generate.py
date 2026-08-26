@@ -33,7 +33,7 @@ from app.models.generation import (
 )
 from app.db.repositories import chat as chat_repo
 from app.db.repositories import state as state_repo
-from app.services import content_gen, conversation, generations_service, prompt_style, tiles_data, video_gen, wallet
+from app.services import content_gen, conversation, generations_service, image_job, prompt_style, tiles_data, video_gen, wallet
 from app.services import gpt as gpt_service
 
 # Пропорции, которые принимают все подключённые исполнители. Вертикаль первой:
@@ -662,97 +662,48 @@ async def generate(
         or ((style_row.prompt_template or {}).get("provider") if style_row else None)
     )
 
-    try:
-        result = await generation_core.run(
-            db, request,
-            # Уточнение перебивает предпочтение стиля: человек только что
-            # посмотрел на кадр и сказал, что не так, — это более свежий довод,
-            # чем выбор, записанный в каталоге месяц назад.
-            # Порядок доводов: свежее — сильнее. Уточнение человек дал только
-            # что, глядя на кадр; назначение он выбрал в начале разговора;
-            # предпочтение стиля записано в каталоге месяц назад.
-            # Назначение и стиль смотрятся оба: новые сборки шлют «poster» в
-            # `intent`, старые — в `style`, а маршрут к тому, кто умеет буквы,
-            # нужен и тем и другим. Как и просьбе про буквы, сказанной словами:
-            # исполнитель выбирается под то, что в кадре должно появиться, а не
-            # под то, как человек это назвал.
-            prefer=prefer_used,
-        )
-    except generation_core.GenerationUnavailable as exc:
-        await _record_failure(record, str(exc))
-        await wallet.cancel(db, user.id, payment)
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Image generator is busy right now, your TOONTOON was refunded — please try again.",
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("Generation failed for user %s (tile=%s)", user.id, body.tile_id)
-        await _record_failure(record, repr(exc))
-        await wallet.cancel(db, user.id, payment)
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="Generation failed")
-
-    # Рисунок, вернувшийся фотографией, — брак, и человек за него уже заплатил.
+    # Заказ принят — дальше человек не ждёт с открытым запросом.
     #
-    # Редактор срывается молча и не каждый раз: на одной и той же просьбе два
-    # кадра из трёх приходят аниме-постером, третий — снимком человека на
-    # рисованном фоне. Промпт при этом верный, стиль назван и в начале, и в
-    # конце. Поэтому смотрим на результат и переделываем один раз — за свой
-    # счёт, а не за его.
+    # Кадр рисуется от сорока секунд до минуты, и всё это время запрос висел.
+    # iOS усыпляет приложение через тридцать секунд в фоне и убивает висящий
+    # запрос: свернул, ответил на уведомление, погасил экран — «ошибка
+    # генерации». Сервер при этом работу доводил до конца, кадр ложился в
+    # историю, TOONTOON списывался, а человек жал «Try again» и платил второй
+    # раз за то же самое.
     #
-    # Проверяем только там, где ждали рисунок. Стили каталога фотографические, и
-    # у них поле `style` пустое: пока «пусто» значило «рисунок», каждый кадр с
-    # витрины делался дважды — вдвое дольше и вдвое дороже, без единой причины.
-    redrawn = False
-    if editing and photo is not None and _wants_drawing(style, style_row, editing):
-        result, prompt, redrawn = await _redraw_if_photographic(
-            db, request, result, prompt, prefer=prefer_used)
-
-    # Чужая марка с образца — то же самое, что фотография вместо рисунка: видно
-    # только на готовом кадре, и молчать об этом нельзя.
-    result, prompt, brand_reshot = await _reshoot_if_brand_leaked(
-        db, request, result, prompt, sample_brands, prefer=prefer_used)
-
-    await wallet.confirm(db, payment)
-
-    asset = await media_repo.save_image(db, user_id=user.id, kind="generation", data=result.data)
-    record.provider_id = result.provider_id
-    record.provider_model = result.model
-    record.provider_cost_usd = result.cost_usd
-    if redrawn or brand_reshot:
-        # Повтор не создаёт отдельной работы — человек просил один кадр и
-        # получил один. Но след он оставить обязан, иначе его не сосчитать.
-        record.request_params = {
-            **(record.request_params or {}),
-            **({"redrawn": True} if redrawn else {}),
-            **({"brand_reshot": True} if brand_reshot else {}),
-        }
-    await generations_repo.mark_done(db, record, result_media_id=asset.id, prompt=prompt)
-    generation_id = record.id
-    result_url = f"/api/media/{asset.id}"
-
-    # В переписку попадает только то, что из неё и вышло. Кадр, запущенный с
-    # карточки на главной, там был бы репликой без вопроса — картинкой посреди
-    # разговора, которого не было. Он и так лежит в истории работ, где его и
-    # ищут.
-    if body.from_chat:
+    # Ровно так уже работало видео. Там это было вынужденно — пять минут не
+    # переживёт никакой запрос; здесь оказалось нужно по той же причине, только
+    # менее очевидно.
+    image_job.schedule(
+        gen_id=record.id,
+        user_id=user.id,
+        payment_id=payment.payment_id,
+        payment_amount=cost,
+        request=request,
+        prompt=prompt,
+        prefer=prefer_used,
+        sample_brands=sample_brands,
+        # Проверять кадр на «пришла фотография» стоит только там, где ждали
+        # рисунок: стили каталога фотографические, и лишний повтор для них —
+        # вдвое дольше и вдвое дороже без единой причины.
+        check_drawn=bool(editing and photo is not None
+                         and _wants_drawing(style, style_row, editing)),
+        from_chat=body.from_chat,
         # Что именно человек попросил на этот раз: уточнение, если оно было, —
-        # иначе исходная просьба. При правке кадра в треде должно стоять
-        # «сделай фон ночным», а не промпт двухчасовой давности.
-        said = (body.refine_note or body.prompt or "").strip()
-        if body.post_prompt and said:
-            await chat_repo.add_message(db, user_id=user.id, role="user", content=said)
-        await chat_repo.add_message(
-            db, user_id=user.id, role="assistant", generation_id=generation_id
-        )
+        # иначе исходная просьба.
+        said=((body.refine_note or body.prompt or "").strip()
+              if body.post_prompt else None) or None,
+    )
 
     balance = await wallet.get_balance(db, user.id)
     return GenerateResponse(
         used_saved_photo=used_saved_photo,
-        id=generation_id,
-        url=result_url,
+        id=record.id,
+        url="",
         type=gen_type,
         balance=balance.available,
         prompt=prompt,
+        status=GenerationStatus.QUEUED,
     )
 
 
@@ -882,92 +833,6 @@ async def _last_frame_had_person(db: AsyncSession, user_id: str) -> bool:
         .limit(1)
     )
     return bool(await db.scalar(stmt))
-
-
-async def _redraw_if_photographic(
-    db: AsyncSession,
-    request: "generation_core.GenerationRequest",
-    result,
-    prompt: str,
-    *,
-    prefer: str | None,
-):
-    """Посмотреть на готовый кадр и, если это фотография, нарисовать заново.
-
-    Один повтор, не больше: если и он вернулся снимком, отдаём что есть —
-    бесконечно платить за упрямство модели нельзя, а человек ждёт картинку.
-
-    Возвращает кадр, промпт, которым он в итоге сделан, и был ли повтор: в
-    историю должно лечь то, что действительно уехало исполнителю, а в счёт —
-    оба запроса. Человек платит один раз, мы платим дважды, и пока это нигде не
-    записывалось, вопрос «сколько стоит упрямство модели» нельзя было задать.
-    """
-    if not await gpt_service.looks_photographic(result.data):
-        return result, prompt, False
-
-    # Повтор уходит к ДРУГОМУ исполнителю, а не к тому, который только что
-    # провалился. Замер 26 августа на одном промпте: `gemini-3-pro` возвращает
-    # рисунок два раза из трёх, `gemini-3.1-flash` — три из трёх. Второй заход к
-    # тому же — это ставка на ту же монету, и однажды она легла так же:
-    # «постер в стиле аниме» пришёл фотографией дважды подряд.
-    other = (prompt_style.REDRAW_FALLBACK_PROVIDER
-             if prefer != prompt_style.REDRAW_FALLBACK_PROVIDER else prefer)
-    logger.info("Кадр приехал фотографией там, где просили рисунок — "
-                "переделываем у %s", other)
-    harder = f"{prompt}, {prompt_style.REDRAW_HARDER}"
-    second = replace(request, prompt=harder)
-    try:
-        again = await generation_core.run(db, second, prefer=other)
-    except Exception:  # noqa: BLE001 — повтор не удался, отдаём первый кадр
-        logger.warning("Повтор не удался, отдаём первый кадр")
-        return result, prompt, True
-    # Первый кадр выброшен, но оплачен: складываем оба.
-    if again.cost_usd is not None or result.cost_usd is not None:
-        again.cost_usd = (again.cost_usd or 0) + (result.cost_usd or 0)
-    return again, harder, True
-
-
-async def _reshoot_if_brand_leaked(
-    db: AsyncSession,
-    request: "generation_core.GenerationRequest",
-    result,
-    prompt: str,
-    brands: list[str],
-    *,
-    prefer: str | None,
-):
-    """Посмотреть на готовый кадр и, если в нём чужая марка, снять заново.
-
-    Замер: имя с образца уцелевает примерно в двух кадрах из пяти, всегда в
-    мелкой печати — заголовок модель заменяет исправно, а шеврон размером в
-    сто пикселей воспроизводит вместе с рисунком. Формулировкой это закрыть не
-    удалось: слово называлось буквально, число не сдвинулось.
-
-    Проверяем только когда на образце есть чужие марки. У большинства образцов
-    их нет, и тогда не тратится ни вызова: риск здесь не в буквах, а в чужом
-    знаке, и платить за проверку там, где знака нет, не за что.
-
-    Один повтор, как и у переделки фотографии в рисунок: если марка уцелела и
-    во второй раз, отдаём что есть. Человек ждёт картинку, а не нашу борьбу с
-    упрямством модели.
-    """
-    if not brands:
-        return result, prompt, False
-    leaked = await gpt_service.brands_on_image(result.data, brands)
-    if not leaked:
-        return result, prompt, False
-
-    logger.info("В кадр уехала чужая марка (%s) — переснимаем", ", ".join(leaked))
-    harder = f"{prompt}, {prompt_style.brand_leaked(leaked)}"
-    second = replace(request, prompt=harder)
-    try:
-        again = await generation_core.run(db, second, prefer=prefer)
-    except Exception:  # noqa: BLE001 — повтор не удался, отдаём первый кадр
-        logger.warning("Пересъёмка не удалась, отдаём первый кадр")
-        return result, prompt, True
-    if again.cost_usd is not None or result.cost_usd is not None:
-        again.cost_usd = (again.cost_usd or 0) + (result.cost_usd or 0)
-    return again, harder, True
 
 
 def _reference_take(style: str | None, style_row=None) -> int:

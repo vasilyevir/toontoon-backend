@@ -147,7 +147,7 @@ class FakeResult:
 @pytest.fixture
 def guard(monkeypatch):
     """Подмена зрения и исполнителя: проверяем решение, а не сеть."""
-    from app.routers import generate as router
+    from app.services import image_job as job
     from app.services.generation import operations
 
     calls: dict = {"runs": []}
@@ -158,13 +158,13 @@ def guard(monkeypatch):
         async def _look(data):
             return answers.pop(0) if answers else False
 
-        monkeypatch.setattr(router.gpt_service, "looks_photographic", _look)
+        monkeypatch.setattr(job.gpt_service, "looks_photographic", _look)
 
     async def _run(db, request, prefer=None):
         calls["runs"].append(request.prompt)
         return FakeResult(b"second", cost_usd=0.04)
 
-    monkeypatch.setattr(router.generation_core, "run", _run)
+    monkeypatch.setattr(job.generation_core, "run", _run)
     request = operations.GenerationRequest(
         operation=operations.Operation.IMAGE_TO_IMAGE, prompt="anime poster",
     )
@@ -172,7 +172,7 @@ def guard(monkeypatch):
 
 
 async def test_a_photograph_is_drawn_again(guard):
-    from app.routers.generate import _redraw_if_photographic
+    from app.services.image_job import redraw_if_photographic as _redraw_if_photographic
 
     vision, calls, request = guard
     vision([True])
@@ -191,7 +191,7 @@ async def test_a_photograph_is_drawn_again(guard):
 
 
 async def test_a_drawing_is_left_alone(guard):
-    from app.routers.generate import _redraw_if_photographic
+    from app.services.image_job import redraw_if_photographic as _redraw_if_photographic
 
     vision, calls, request = guard
     vision([False])
@@ -205,8 +205,8 @@ async def test_a_drawing_is_left_alone(guard):
 
 
 async def test_a_failed_retry_still_returns_a_picture(monkeypatch, guard):
-    from app.routers import generate as router
-    from app.routers.generate import _redraw_if_photographic
+    from app.services import image_job as job
+    from app.services.image_job import redraw_if_photographic as _redraw_if_photographic
 
     vision, _, request = guard
     vision([True])
@@ -214,7 +214,7 @@ async def test_a_failed_retry_still_returns_a_picture(monkeypatch, guard):
     async def _boom(db, request, prefer=None):
         raise RuntimeError("провайдер лёг")
 
-    monkeypatch.setattr(router.generation_core, "run", _boom)
+    monkeypatch.setattr(job.generation_core, "run", _boom)
     result, prompt, redrawn = await _redraw_if_photographic(
         None, request, FakeResult(b"first"), "anime poster", prefer=None)
     # Человек заплатил и ждёт картинку: неудачный повтор не повод отдать ничего.
@@ -380,7 +380,7 @@ def test_lettering_routes_by_words_not_by_intent():
     # стиля. Само по себе назначение «постер» больше никого никуда не уводит:
     # в цепочке предпочтений его нет.
     source = pathlib.Path(router.__file__).read_text()
-    chain = source[source.index("prefer_used = ("):source.index("try:\n        result")]
+    chain = source[source.index("prefer_used = ("):source.index("image_job.schedule(")]
     assert "preferred_provider(style)" in chain
     assert "preferred_provider(intent)" not in chain
     assert prompt_style.preferred_provider("poster") == prompt_style.LETTERING_PROVIDER
@@ -463,7 +463,7 @@ async def test_the_retry_goes_to_a_different_model(monkeypatch, guard):
     Основным pro при этом остаётся: он единственный надёжно набирает буквы, а
     постер без надписи — не постер.
     """
-    from app.routers import generate as router
+    from app.services import image_job as job  # noqa: F401
 
     vision, calls, request = guard
     vision([True])
@@ -473,17 +473,17 @@ async def test_the_retry_goes_to_a_different_model(monkeypatch, guard):
         seen.append(prefer)
         return FakeResult(b"second", cost_usd=0.04)
 
-    monkeypatch.setattr(router.generation_core, "run", _run)
-    await _redraw_if_photographic_at(router, request, prompt_style.DRAWN_PROVIDER)
+    monkeypatch.setattr(job.generation_core, "run", _run)
+    await _redraw_if_photographic_at(job, request, prompt_style.DRAWN_PROVIDER)
     assert seen == [prompt_style.REDRAW_FALLBACK_PROVIDER]
 
     # А если и первый кадр делал запасной — второй раз менять не на кого.
     seen.clear()
     vision([True])
-    await _redraw_if_photographic_at(router, request, prompt_style.REDRAW_FALLBACK_PROVIDER)
+    await _redraw_if_photographic_at(job, request, prompt_style.REDRAW_FALLBACK_PROVIDER)
     assert seen == [prompt_style.REDRAW_FALLBACK_PROVIDER]
 
 
-async def _redraw_if_photographic_at(router, request, prefer):
-    return await router._redraw_if_photographic(
+async def _redraw_if_photographic_at(job, request, prefer):
+    return await job.redraw_if_photographic(
         None, request, FakeResult(b"first", cost_usd=0.04), "anime poster", prefer=prefer)
