@@ -71,11 +71,15 @@ def _check_dates(cert: x509.Certificate, now: datetime) -> None:
         raise BadTransaction(f"сертификат недействителен по датам: {cert.subject.rfc4514_string()}")
 
 
-def verify_transaction(signed: str, *, now: datetime | None = None) -> dict:
-    """Проверить подпись и вернуть тело транзакции.
+def verify_jws(signed: str, *, now: datetime | None = None) -> dict:
+    """Проверить подпись Apple и вернуть тело. Что в теле — решает вызывающий.
 
-    Бросает `BadTransaction` на любом сомнении. Промежуточных состояний здесь
-    нет: чек либо доказан, либо не считается.
+    Тем же ключом подписаны и чек о покупке, и уведомление о продлении, и
+    вложенная в него транзакция. Проверка у всех троих одна, а смысл разный —
+    поэтому она здесь одна, а разбор смысла снаружи.
+
+    Бросает `BadTransaction` на любом сомнении. Промежуточных состояний нет:
+    подпись либо доказана, либо не считается.
     """
     now = now or datetime.now(timezone.utc)
     parts = signed.split(".")
@@ -130,16 +134,60 @@ def verify_transaction(signed: str, *, now: datetime | None = None) -> dict:
         raise BadTransaction("подпись не сходится") from exc
 
     try:
-        payload = json.loads(_b64url(payload_raw))
+        return json.loads(_b64url(payload_raw))
     except (ValueError, json.JSONDecodeError) as exc:
         raise BadTransaction("тело не читается") from exc
 
-    # Чужое приложение подписано тем же корнем. Без этой проверки покупка из
-    # соседней программы открывала бы дверь сюда.
+
+def _check_bundle(payload: dict, where: str) -> None:
+    """Наше ли это приложение.
+
+    Чужая программа подписана тем же корнем Apple, и цепочка у неё безупречная.
+    Без этой сверки её покупка открывала бы дверь сюда.
+    """
     wanted = (settings.apple_bundle_id or "").strip()
     if wanted and payload.get("bundleId") != wanted:
-        raise BadTransaction(f"чек от другого приложения: {payload.get('bundleId')}")
+        raise BadTransaction(f"{where} от другого приложения: {payload.get('bundleId')}")
 
+
+def verify_transaction(signed: str, *, now: datetime | None = None) -> dict:
+    """Чек о покупке: подпись, наше приложение, имя человека внутри."""
+    payload = verify_jws(signed, now=now)
+    _check_bundle(payload, "чек")
     if not payload.get("originalTransactionId"):
         raise BadTransaction("в чеке нет originalTransactionId")
     return payload
+
+
+def verify_notification(signed: str, *, now: datetime | None = None) -> dict:
+    """Уведомление App Store о продлении, отмене или возврате.
+
+    Возвращает разобранное: тип, подтип, идентификатор доставки и уже
+    проверенную транзакцию внутри. Вложенная транзакция — отдельный JWS с той
+    же подписью, и верить ей на слово нельзя ровно так же: сама обёртка
+    подписана Apple, но пересобрать её содержимое, оставив подпись обёртки,
+    нельзя только потому, что мы проверяем и вложенное.
+
+    Уведомление без транзакции внутри — не наше дело: гранты и возвраты живут
+    в ней, а без неё нечего и применять.
+    """
+    outer = verify_jws(signed, now=now)
+    data = outer.get("data") or {}
+    _check_bundle(data, "уведомление")
+
+    inner = data.get("signedTransactionInfo")
+    if not inner:
+        raise BadTransaction("в уведомлении нет транзакции")
+    transaction = verify_jws(str(inner), now=now)
+    if not transaction.get("originalTransactionId"):
+        raise BadTransaction("в транзакции уведомления нет originalTransactionId")
+
+    return {
+        "type": str(outer.get("notificationType") or ""),
+        "subtype": str(outer.get("subtype") or "") or None,
+        # Apple повторяет доставку, пока не получит 200. Идентификатор — то,
+        # по чему повтор отличается от второго события.
+        "uuid": str(outer.get("notificationUUID") or ""),
+        "environment": str(data.get("environment") or "").lower() or None,
+        "transaction": transaction,
+    }

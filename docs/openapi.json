@@ -39,6 +39,22 @@
         "title": "AppConfig",
         "type": "object"
       },
+      "AppStoreNotice": {
+        "description": "Ровно то, что шлёт Apple: одно поле с подписанным телом.",
+        "properties": {
+          "signedPayload": {
+            "maxLength": 32768,
+            "minLength": 32,
+            "title": "Signedpayload",
+            "type": "string"
+          }
+        },
+        "required": [
+          "signedPayload"
+        ],
+        "title": "AppStoreNotice",
+        "type": "object"
+      },
       "AppleAuthRequest": {
         "description": "Body for POST /api/auth/oauth/apple.\n\nThe app completes ``ASAuthorizationAppleIDProvider`` locally and hands us\nthe resulting identity_token (a JWT signed by Apple) to verify. ``name``\nis only ever sent by Apple to the client on the FIRST authorization ever\n(never to the server, never again after) — the client should pass it\nthrough here so we can store it on first login.",
         "properties": {
@@ -5654,6 +5670,49 @@
         "summary": "Upload",
         "tags": [
           "generate"
+        ]
+      }
+    },
+    "/api/webhooks/app-store": {
+      "post": {
+        "description": "Принять уведомление, применить его к подписке и подтвердить приём.\n\nОтвечаем `200` на всё, что удалось разобрать, — включая уведомления о\nпокупках, которых мы не знаем. Apple повторяет доставку, пока не получит\n`200`, и отвечать ошибкой на то, что мы не собираемся обрабатывать, значит\nпросить повторять это вечно.\n\nА вот неразобранное — `400`: если подпись не сходится, это не уведомление\nApple, и подтверждать нам нечего.",
+        "operationId": "app_store_notification_api_webhooks_app_store_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppStoreNotice"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response App Store Notification Api Webhooks App Store Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "App Store Notification",
+        "tags": [
+          "webhooks"
         ]
       }
     },

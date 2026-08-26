@@ -81,3 +81,60 @@ async def active_for_user(session: AsyncSession, user_id: str) -> Optional[m.Sub
         .where(m.Subscription.user_id == user_id, m.Subscription.status == "active")
         .order_by(m.Subscription.created_at.desc())
     )
+
+
+# Что каждое уведомление делает с подпиской.
+#
+# Типы взяты из App Store Server Notifications V2. Здесь только те, что меняют
+# ответ на вопрос «действует ли подписка сейчас»; остальные (смена цены,
+# продление пробного периода) ложатся в журнал и на состояние не влияют.
+#
+# `REFUND` — самый важный и самый неприятный: человеку вернули деньги, и
+# подписка обязана прекратиться. Без обработчика она оставалась бы активной, то
+# есть мы продолжали бы отдавать оплаченное после возврата оплаты.
+_STATUS_BY_TYPE: dict[str, str] = {
+    "SUBSCRIBED": "active",
+    "DID_RENEW": "active",
+    "OFFER_REDEEMED": "active",
+    # Автопродление выключили — но оплаченный период дожить обязан.
+    "DID_CHANGE_RENEWAL_STATUS": "active",
+    "DID_CHANGE_RENEWAL_PREF": "active",
+    # Платёж не прошёл: Apple ещё пробует, доступ пока остаётся.
+    "DID_FAIL_TO_RENEW": "grace",
+    "GRACE_PERIOD_EXPIRED": "expired",
+    "EXPIRED": "expired",
+    "REFUND": "refunded",
+    "REVOKE": "refunded",
+}
+
+
+def status_for(notification_type: str, subtype: str | None = None) -> Optional[str]:
+    """Каким станет состояние подписки. `None` — уведомление её не трогает."""
+    status = _STATUS_BY_TYPE.get(notification_type)
+    # «Отменили автопродление» и «передумали отменять» — оба приходят типом
+    # DID_CHANGE_RENEWAL_STATUS, и оба оставляют оплаченный период в силе.
+    # Прекращает его только EXPIRED, который придёт своим чередом.
+    return status
+
+
+async def apply_notification(
+    session: AsyncSession, *, transaction: dict, status: str
+) -> Optional[m.Subscription]:
+    """Применить состояние к подписке, о которой пришло уведомление.
+
+    `None` — такой покупки мы не знаем. Это законно: уведомления приходят и о
+    песочнице, и о покупках, сделанных до того, как приложение научилось их
+    привязывать. Молчать в этом случае правильнее, чем заводить подписку без
+    владельца.
+    """
+    row = await get_by_original_transaction(
+        session, str(transaction["originalTransactionId"]))
+    if row is None:
+        return None
+    for field, value in _fields(transaction).items():
+        setattr(row, field, value)
+    # Состояние ставится последним: `_fields` возвращает «active» по факту
+    # наличия чека, а решает здесь тип уведомления.
+    row.status = status
+    await session.flush()
+    return row

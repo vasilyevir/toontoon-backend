@@ -321,3 +321,131 @@ async def test_the_faces_come_along(two_people):
 
     await session.refresh(profile)
     assert profile.user_id == owner.id
+
+
+# ─── Уведомления: продление, отмена, возврат ─────────────────────────────────
+
+
+def notice(kind: str, original_id: str, chain, leaf_key, *, subtype: str | None = None,
+           uuid: str = "n-1", bundle: str = "ai.toontoon.ios") -> str:
+    """Уведомление App Store: подписанная обёртка с подписанной транзакцией внутри."""
+    inner = _signed({"originalTransactionId": original_id, "productId": "week",
+                     "bundleId": bundle, "environment": "Sandbox"}, chain, leaf_key)
+    return _signed({
+        "notificationType": kind, "subtype": subtype, "notificationUUID": uuid,
+        "data": {"bundleId": bundle, "environment": "Sandbox",
+                 "signedTransactionInfo": inner},
+    }, chain, leaf_key)
+
+
+def test_a_notification_carries_a_verified_transaction(apple_like):
+    """Вложенная транзакция проверяется отдельно, а не принимается на веру.
+
+    Обёртку подписывает Apple — но если внутрь можно положить что угодно, то
+    подпись обёртки не значит ничего: чужой `originalTransactionId` во
+    вложении отобрал бы подписку у другого человека.
+    """
+    chain, leaf_key = apple_like
+    got = app_store.verify_notification(notice("DID_RENEW", "t-1", chain, leaf_key))
+    assert got["type"] == "DID_RENEW"
+    assert got["transaction"]["originalTransactionId"] == "t-1"
+
+
+def test_a_notification_with_an_unsigned_transaction_is_refused(apple_like):
+    """Внутрь подложили не подписанное — уведомление целиком не считается."""
+    chain, leaf_key = apple_like
+    payload = {"notificationType": "REFUND", "notificationUUID": "n-2",
+               "data": {"bundleId": "ai.toontoon.ios",
+                        "signedTransactionInfo": "не.подписано.вовсе"}}
+    with pytest.raises(app_store.BadTransaction):
+        app_store.verify_notification(_signed(payload, chain, leaf_key))
+
+
+def test_a_notification_from_another_app_is_refused(apple_like):
+    chain, leaf_key = apple_like
+    with pytest.raises(app_store.BadTransaction, match="другого приложения"):
+        app_store.verify_notification(
+            notice("DID_RENEW", "t-1", chain, leaf_key, bundle="com.example.other"))
+
+
+@pytest.mark.parametrize("kind, expected", [
+    ("SUBSCRIBED", "active"),
+    ("DID_RENEW", "active"),
+    # Автопродление выключили — оплаченный период дожить обязан.
+    ("DID_CHANGE_RENEWAL_STATUS", "active"),
+    # Платёж не прошёл, Apple ещё пробует: доступ пока остаётся.
+    ("DID_FAIL_TO_RENEW", "grace"),
+    ("EXPIRED", "expired"),
+    ("GRACE_PERIOD_EXPIRED", "expired"),
+    # Деньги вернули — отдавать оплаченное больше не за что.
+    ("REFUND", "refunded"),
+    ("REVOKE", "refunded"),
+    # Про цену и пробный период мы ничего не решаем.
+    ("PRICE_INCREASE", None),
+    ("RENEWAL_EXTENDED", None),
+])
+def test_what_each_notification_does_to_the_subscription(kind: str, expected):
+    from app.db.repositories import subscriptions as subs
+
+    assert subs.status_for(kind) == expected
+
+
+@pytest.mark.asyncio
+async def test_a_refund_stops_the_subscription(two_people):
+    """Самое дорогое из всего: человеку вернули деньги.
+
+    Без обработчика подписка оставалась бы активной — мы продолжали бы отдавать
+    оплаченное, перестав получать оплату.
+    """
+    from app.db.repositories import subscriptions as subs
+
+    session, owner, _ = two_people
+    await identity_service.by_transaction(session, payload=receipt("t-refund"), current=owner)
+
+    row = await subs.apply_notification(
+        session,
+        transaction={"originalTransactionId": "t-refund", "productId": "week"},
+        status="refunded")
+    assert row is not None and row.status == "refunded"
+
+
+@pytest.mark.asyncio
+async def test_a_notification_about_a_purchase_we_never_saw_is_quiet(two_people):
+    """Уведомления приходят и о песочнице, и о покупках до нашей привязки.
+
+    Заводить подписку без владельца по чужому уведомлению нельзя: получился бы
+    доступ, не привязанный ни к кому.
+    """
+    from app.db.repositories import subscriptions as subs
+
+    session, _, _ = two_people
+    row = await subs.apply_notification(
+        session, transaction={"originalTransactionId": "t-never-seen"}, status="refunded")
+    assert row is None
+
+
+@pytest.mark.asyncio
+async def test_a_repeated_delivery_is_applied_once(two_people):
+    """Apple повторяет доставку, пока не получит 200.
+
+    Идентификатор доставки стоит первичным ключом, поэтому повтор — это
+    конфликт вставки, а не второе применение. Возврат, применённый дважды,
+    был бы безвреден; грант — нет, и полагаться на безвредность не стоит.
+    """
+    from sqlalchemy.dialects.postgresql import insert
+
+    session, _, _ = two_people
+    values = dict(notification_uuid="n-dup", type="DID_RENEW", subtype=None, payload={})
+
+    async def deliver() -> bool:
+        got = await session.execute(
+            insert(m.AppStoreNotification).values(**values)
+            .on_conflict_do_nothing(index_elements=[m.AppStoreNotification.notification_uuid])
+            .returning(m.AppStoreNotification.notification_uuid))
+        return got.scalar_one_or_none() is not None
+
+    assert await deliver() is True
+    assert await deliver() is False
+
+    await session.execute(
+        delete(m.AppStoreNotification).where(m.AppStoreNotification.notification_uuid == "n-dup"))

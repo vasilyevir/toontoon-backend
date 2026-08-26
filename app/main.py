@@ -31,6 +31,7 @@ from app.routers import (
     profile,
     push,
     webhooks,
+    webhooks,
 )
 
 UPLOAD_DIR = Path("uploads")
@@ -97,6 +98,7 @@ app.include_router(auth.router)
 app.include_router(app_meta.router)
 app.include_router(media.router)
 app.include_router(billing.router)
+app.include_router(webhooks.router)
 app.include_router(onboarding.router)
 app.include_router(styles.router)
 app.include_router(favorites.router)
