@@ -346,6 +346,38 @@ async def generate(
             status=GenerationStatus.QUEUED,
         )
 
+    # ── Заказ заводится здесь, до всего остального ────────────────────────────
+    #
+    # Раньше запись появлялась в самом конце, после сборки промпта, — и до тех
+    # пор заказа не существовало ни в одном списке. Замер: семь секунд между
+    # нажатием и тем моментом, когда сервер о заказе способен рассказать. Всё
+    # это время деньги у человека уже списаны, а показать ему нечего: кто
+    # закрыл приложение и открыл заново, попадал внутрь этого окна и видел
+    # пустое место.
+    #
+    # Промпта здесь ещё нет, и это правильно: заказ — про то, что человек
+    # заплатил и ждёт, а не про то, какими словами мы это переведём модели.
+    # Слова допишутся ниже, к той же записи.
+    #
+    # Коммит сразу и явный. Без него запись не видна другим запросам до конца
+    # обработки, то есть ровно те семь секунд и остаются. Вместе с ней
+    # коммитится и списание — так и надо: деньги взяты, заказ записан, одним
+    # движением.
+    # Операция здесь предварительная. Какой она будет на самом деле — с нуля
+    # или правкой снимка, — решится ниже, когда станет известно, есть ли лицо;
+    # это подробность исполнения, а не свойство заказа. Человек заплатил и ждёт
+    # независимо от того, каким путём мы будем рисовать. Уточняется там же, где
+    # дописывается промпт.
+    record = await generations_repo.create(
+        db,
+        operation=generation_core.Operation.TEXT_TO_IMAGE.value,
+        user_id=user.id,
+        status="running",
+        request_params={"payment_id": payment.payment_id, "type": gen_type.value},
+        cost=cost,
+    )
+    await db.commit()
+
     # The reference photo lives in private storage and is handed over as bytes,
     # not as a URL a provider could fetch: nothing about someone's face should
     # be reachable by a link.
@@ -587,7 +619,15 @@ async def generate(
         # Переводить запрос нечем. Отказ с возвратом — единственный честный
         # ответ: картинка, собранная из непереведённого текста, к просьбе
         # отношения не имеет, а списание за неё выглядит как обман.
+        #
+        # Заказ помечается неудачей здесь же. Он заведён и закоммичен выше, и
+        # без этой пометки остался бы висеть в «рисуется» до сверки — то есть
+        # полчаса показывал бы человеку работу, которой не будет, при уже
+        # возвращённых деньгах.
+        await generations_repo.mark_failed(
+            db, record, error="Промпт собрать нечем: перевод недоступен.")
         await wallet.cancel(db, user.id, payment)
+        await db.commit()
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="We couldn't process your request right now, your TOONTOON was refunded — please try again in a minute.",
@@ -601,40 +641,37 @@ async def generate(
     if refine_key is not None or refine_note:
         prompt, prefer_refine = prompt_style.refine(prompt, refine_key, refine_note)
 
-    # The attempt is recorded before the provider is called, so a failure leaves
-    # a trace instead of nothing at all.
-    record = await generations_repo.create(
-        db,
-        operation=operation.value,
-        user_id=user.id,
-        status="running",
-        prompt=prompt,
-        request_params={
-            # Чем заплачено. Не для истории, а чтобы работу и деньги за неё
-            # можно было свести запросом: при неудаче деньги возвращает фоновая
-            # задача, а если не вернула и она — узнать об этом иначе неоткуда.
-            "payment_id": payment.payment_id,
-            "tile_id": body.tile_id,
-            "style_id": body.style_id,
-            "answers": body.answers,
-            "aspect": aspect,
-            "style": style,
-            "intent": intent,
-            "style_refs": len(body.style_ref_urls),
-            "photo_media_id": _media_id(photo_url),
-            "used_saved_photo": used_saved_photo,
-            "redraw": redraw,
-            "type": gen_type.value,
-            "refine": refine_key,
-            "lettering": lettering,
-            "lettering_text": lettering_text,
-            # Только когда это правда: лишний ключ в каждой записи стоит места
-            # и читается как «мы про это думали», хотя думать было не о чем.
-            **({"made_without_face": True} if made_without_face else {}),
-        },
-        source_media_id=_media_id(photo_url),
-        cost=cost,
-    )
+    # Дописываем заказ, заведённый в начале. Не заводим второй: заказ один —
+    # тот, за который человек заплатил, — а промпт и подробности просьбы это
+    # его свойства, а не новая работа.
+    record.operation = operation.value
+    record.prompt = prompt
+    record.request_params = {
+        **record.request_params,
+        # Чем заплачено. Не для истории, а чтобы работу и деньги за неё
+        # можно было свести запросом: при неудаче деньги возвращает фоновая
+        # задача, а если не вернула и она — узнать об этом иначе неоткуда.
+        "payment_id": payment.payment_id,
+        "tile_id": body.tile_id,
+        "style_id": body.style_id,
+        "answers": body.answers,
+        "aspect": aspect,
+        "style": style,
+        "intent": intent,
+        "style_refs": len(body.style_ref_urls),
+        "photo_media_id": _media_id(photo_url),
+        "used_saved_photo": used_saved_photo,
+        "redraw": redraw,
+        "type": gen_type.value,
+        "refine": refine_key,
+        "lettering": lettering,
+        "lettering_text": lettering_text,
+        # Только когда это правда: лишний ключ в каждой записи стоит места
+        # и читается как «мы про это думали», хотя думать было не о чем.
+        **({"made_without_face": True} if made_without_face else {}),
+    }
+    record.source_media_id = _media_id(photo_url)
+    await db.flush()
 
     request = generation_core.GenerationRequest(
         operation=operation,
