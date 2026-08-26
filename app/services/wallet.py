@@ -10,11 +10,14 @@ Boostyfi is gone from this path — the mobile product buys through the App Stor
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.core.security import new_id
+from app.db.repositories import generations as generations_repo
 from app.db.repositories import wallet as wallet_repo
 from app.models.payment import Balance, Payment, PaymentStatus
 
@@ -87,11 +90,18 @@ async def cancel(db: AsyncSession, user_id: str, payment: Payment) -> None:
 
 
 async def settle_owed(db: AsyncSession, *, limit: int = 200) -> list[dict]:
-    """Вернуть деньги за работы, которым фоновая задача их не вернула.
+    """Расплатиться по всему, за что деньги взяты, а работы человек не получил.
 
-    Сеть подстраховки, а не основной путь: обычно возврат делает сама задача,
-    сразу и в той же транзакции. Сюда попадает то, что случилось, когда
-    возвращать было нечем — база лежала, процесс убили посреди возврата.
+    Два разных несчастья, и второе я сперва пропустил:
+
+      1. Задача дошла до своего `except`, но вернуть не смогла — база лежала
+         ровно в тот момент. Работа помечена `failed`, возврата в книге нет.
+      2. Задачу убили раньше, чем она успела что-либо пометить: выкатка, OOM,
+         перезапуск пода. Работа осталась `running` навсегда, и первая проверка
+         её не видит — она смотрит на `failed`.
+
+    Сеть подстраховки, а не основной путь: обычно задача возвращает сама,
+    сразу и в той же транзакции.
 
     Повторить безопасно: проводка идемпотентна по `refund:{payment_id}`, и
     ключ здесь тот же самый, что у задачи. Значит эта сверка не может заплатить
@@ -100,6 +110,16 @@ async def settle_owed(db: AsyncSession, *, limit: int = 200) -> list[dict]:
     Возвращает то, что доплатила, — не число, а список: «вернули 4 TOONTOON
     двоим» это разговор с людьми, которым не повезло, и знать надо кому.
     """
+    # Сперва признать оборвавшиеся неудачей. Работа, чей процесс убили между
+    # «начал» и «пометил», остаётся в `running` навсегда: сама она уже ничего
+    # не пометит, и запрос ниже — который смотрит на `failed` — её не увидит.
+    # Деньги за неё списаны так же, как за любую другую.
+    stale = await generations_repo.fail_stale(
+        db, older_than=timedelta(minutes=settings.stale_generation_minutes))
+    if stale:
+        logger.warning("Сверка признала оборвавшимися %d работ(ы): %s", len(stale),
+                       ", ".join(g.id for g in stale))
+
     owed = await wallet_repo.owed_refunds(db, limit=limit)
     settled = []
     for row in owed:

@@ -141,3 +141,94 @@ async def test_a_refund_that_did_go_through_is_not_repeated(unlucky):
 
     owed = await wallet_repo.owed_refunds(session)
     assert gen.id not in [r["generation_id"] for r in owed]
+
+
+# ─── Оборвавшиеся: убиты раньше, чем успели себя пометить ────────────────────
+# Выкатка посреди генерации — обычное дело, и до этой сверки такая работа
+# висела в `running` вечно: деньги списаны, человек видит бесконечное
+# «рисуется», а проверка выше её не видит, потому что смотрит на `failed`.
+
+@pytest_asyncio.fixture
+async def interrupted():
+    """Работа, чей процесс убили на середине."""
+    from datetime import timedelta
+    from sqlalchemy import func, select as sa_select
+
+    await connect()
+    async with get_factory()() as session:
+        user = m.User(kind="guest")
+        session.add(user)
+        await session.flush()
+        await wallet_repo.grant(session, user.id, amount=10, bucket="free",
+                                reason="signup", idempotency_key=f"seed2:{user.id}")
+        pay = f"pay2_{user.id[-8:]}"
+        await wallet_repo.spend(session, user.id, cost=3, reason="generation",
+                                ref_id=pay, idempotency_key=f"spend:{pay}")
+
+        # Часы берём у базы: тест не должен зависеть от часов машины.
+        db_now = await session.scalar(sa_select(func.now()))
+        gen = m.Generation(user_id=user.id, operation="text_to_image", status="running",
+                           cost=3, request_params={"payment_id": pay},
+                           created_at=db_now - timedelta(hours=2))
+        session.add(gen)
+        await session.flush()
+        await session.commit()
+
+        yield session, user, gen, db_now
+
+        await session.execute(delete(m.Generation).where(m.Generation.user_id == user.id))
+        await session.execute(delete(m.WalletLedger).where(m.WalletLedger.user_id == user.id))
+        await session.execute(delete(m.User).where(m.User.id == user.id))
+        await session.commit()
+    await disconnect()
+
+
+@pytest.mark.asyncio
+async def test_an_interrupted_job_gets_its_money_back(interrupted):
+    session, user, gen, _ = interrupted
+    before = (await wallet_repo.balance(session, user.id)).total
+
+    settled = await wallet.settle_owed(session)
+    await session.commit()
+
+    assert gen.status == "failed", "работа осталась вечно рисующейся"
+    assert gen.id in [r["generation_id"] for r in settled]
+    assert (await wallet_repo.balance(session, user.id)).total == before + 3
+
+
+@pytest.mark.asyncio
+async def test_a_job_still_running_is_left_alone(interrupted):
+    """Самое опасное здесь — отменить чужую работу на середине.
+
+    Кадр, который вот-вот придёт, объявленный неудачей, — это хуже, чем
+    подождать лишние двадцать минут: человек получит возврат и не получит
+    картинку, за которую уже заплатил.
+    """
+    from datetime import timedelta
+    session, user, gen, db_now = interrupted
+    gen.created_at = db_now - timedelta(minutes=2)   # началась две минуты назад
+    await session.flush()
+
+    settled = await wallet.settle_owed(session)
+    await session.commit()
+
+    assert gen.status == "running", "сверка оборвала работу, которая ещё шла"
+    assert gen.id not in [r["generation_id"] for r in settled]
+
+
+@pytest.mark.asyncio
+async def test_the_threshold_is_the_setting_not_a_number_in_the_code(interrupted):
+    """Иначе подобрать его на живых отказах стоило бы релиза."""
+    from datetime import timedelta
+    from app.config import settings
+
+    session, user, gen, db_now = interrupted
+    gen.created_at = db_now - timedelta(minutes=settings.stale_generation_minutes - 1)
+    await session.flush()
+    await wallet.settle_owed(session)
+    assert gen.status == "running", "порог не соблюдается: оборвало раньше срока"
+
+    gen.created_at = db_now - timedelta(minutes=settings.stale_generation_minutes + 1)
+    await session.flush()
+    await wallet.settle_owed(session)
+    assert gen.status == "failed", "порог не соблюдается: не оборвало после срока"

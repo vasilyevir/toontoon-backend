@@ -6,7 +6,7 @@ of "load everything the user ever made".
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Sequence
 
 from sqlalchemy import func, select
@@ -92,6 +92,57 @@ async def mark_done(
         generation.prompt = prompt
     await session.flush()
     return generation
+
+
+async def stale_running(
+    session: AsyncSession, *, older_than: timedelta, limit: int = 500
+) -> list[m.Generation]:
+    """Найти оборвавшиеся, ничего не меняя.
+
+    Отдельно от `fail_stale` не ради красоты: показ в scripts/settle_refunds.py
+    обязан перечислить ровно то, за что заплатит выплата. Пока поиск был
+    заперт внутри пометки, показ звал запрос по `failed` и оборвавшихся не
+    видел — то есть занижал долг и молчал именно о том, что выплата тронет.
+
+    Время берётся у базы, а не у процесса: реплик несколько, часы у них
+    расходятся, а решение о чужих деньгах не должно зависеть от того, на какой
+    машине выполнилась сверка.
+    """
+    db_now = await session.scalar(select(func.now()))
+    cutoff = (db_now or datetime.now(timezone.utc)) - older_than
+    rows = await session.scalars(
+        select(m.Generation)
+        .where(m.Generation.status == "running", m.Generation.created_at < cutoff)
+        .order_by(m.Generation.created_at)
+        .limit(limit)
+    )
+    return list(rows)
+
+
+async def fail_stale(session: AsyncSession, *, older_than: timedelta) -> list[m.Generation]:
+    """Пометить неудачей работы, которые уже никто не дорисует.
+
+    Задача помечает свою работу сама — и удавшуюся, и провалившуюся. Но между
+    «начал» и «пометил» её могут убить: выкатка, OOM, перезапуск пода. Тогда
+    запись остаётся в `running` навсегда, деньги списаны, и человек видит
+    вечное «рисуется». Ни сверка возвратов, ни он сам о ней уже не узнают.
+
+    Порог берётся с запасом. Честная работа — это до трёх обращений к модели по
+    три минуты каждое, то есть девять минут в пределе. Всё, что висит дольше
+    получаса, мертво наверняка; ошибиться здесь значит отменить чужую работу
+    на середине и вернуть деньги за кадр, который вот-вот придёт.
+
+    Время берётся у базы, а не у процесса: реплик несколько, и часы у них
+    расходятся — а решение о чужих деньгах не должно зависеть от того, на
+    какой машине выполнилась сверка.
+    """
+    stale = await stale_running(session, older_than=older_than)
+    for generation in stale:
+        await mark_failed(
+            session, generation,
+            error="Работа оборвалась: процесс не дожил до конца (найдена сверкой).",
+        )
+    return stale
 
 
 async def mark_failed(
