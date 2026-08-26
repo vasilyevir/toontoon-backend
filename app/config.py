@@ -284,6 +284,17 @@ class Settings(BaseSettings):
     # only need to know our own audience(s) to check the `aud` claim: the
     # iOS app's Bundle ID (native flow) and/or a Services ID (web/Android
     # "Sign in with Apple" button, if ever added). Set at least one to enable.
+    # Принимать чеки, подписанные локальным корнем StoreKit из Xcode.
+    #
+    # Настоящую песочницу Apple без платного членства не открыть, а проверить
+    # весь путь узнавания надо раньше. Локальная конфигурация Xcode выдаёт
+    # НАСТОЯЩИЙ подписанный чек той же формы — только корень у него свой,
+    # тестовый, и лежит он внутри самого Xcode.
+    #
+    # В проде ОБЯЗАН быть false: с ним любой, кто достанет этот общедоступный
+    # сертификат, выпишет себе подписку сам. Приложение при старте кричит, если
+    # `debug` выключён, а это включено.
+    accept_storekit_test_root: bool = False
     apple_bundle_id: str = ""
     apple_service_id: str = ""
 

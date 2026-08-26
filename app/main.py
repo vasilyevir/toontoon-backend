@@ -58,6 +58,13 @@ async def lifespan(app: FastAPI):
         logging.getLogger("toontoon.storage").error(
             "Object storage unavailable (%s). Start it with: docker start toontoon-minio", exc
         )
+    if settings.accept_storekit_test_root and not settings.debug:
+        # Тем же тоном и по той же причине: сертификат локального StoreKit
+        # лежит внутри Xcode у всех, и с ним подписку себе выпишет кто угодно.
+        logging.getLogger("toontoon").error(
+            "ACCEPT_STOREKIT_TEST_ROOT=true при DEBUG=false: чеки, подписанные "
+            "тестовым корнем Xcode, принимаются как настоящие. Выключите его."
+        )
     if settings.expose_dev_tokens and not settings.debug:
         # Не падаем — падение посреди ночи хуже, — но молчать нельзя: с этим
         # флагом чужой пароль меняется одним запросом.

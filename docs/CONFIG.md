@@ -87,6 +87,7 @@
 | `GOOGLE_CLIENT_ID` | str | пусто |
 | `GOOGLE_CLIENT_SECRET` | str | пусто |
 | `GOOGLE_REDIRECT_URI` | str | пусто |
+| `ACCEPT_STOREKIT_TEST_ROOT` | bool | `False` |
 | `APPLE_BUNDLE_ID` | str | пусто |
 | `APPLE_SERVICE_ID` | str | пусто |
 | `APP_DEEP_LINK_SCHEME` | str | `toontoon` |

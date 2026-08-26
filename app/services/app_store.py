@@ -39,7 +39,23 @@ from app.config import settings
 
 # Корень Apple, приложенный к коду. Забирать его из сети в момент проверки
 # значило бы доверять сети ровно там, где мы проверяем доверие.
-_ROOT_PEM = (pathlib.Path(__file__).parent / "certs" / "apple_root_ca_g3.pem").read_bytes()
+_CERTS = pathlib.Path(__file__).parent / "certs"
+_ROOT_PEM = (_CERTS / "apple_root_ca_g3.pem").read_bytes()
+
+# Корень локального StoreKit из Xcode. Им подписаны чеки, выданные локальной
+# конфигурацией покупок, — настоящие чеки настоящей формы, но своего корня.
+#
+# Принимается только при `accept_storekit_test_root`, и настройка эта в проде
+# обязана быть выключена: сертификат лежит внутри Xcode у всех, и с ним подписку
+# себе выпишет кто угодно.
+_TEST_ROOT_PEM = (_CERTS / "storekit_test_root.pem").read_bytes()
+
+
+def _trusted_roots() -> list[bytes]:
+    roots = [_ROOT_PEM]
+    if settings.accept_storekit_test_root:
+        roots.append(_TEST_ROOT_PEM)
+    return roots
 
 
 class BadTransaction(Exception):
@@ -103,11 +119,13 @@ def verify_jws(signed: str, *, now: datetime | None = None) -> dict:
     except Exception as exc:  # noqa: BLE001
         raise BadTransaction("сертификаты не читаются") from exc
 
-    root = x509.load_pem_x509_certificate(_ROOT_PEM)
     # Корень сверяем побайтно. «Тоже от Apple» и «этот самый» — разные вещи, и
     # вторая проверяется только так.
     der = serialization.Encoding.DER
-    if chain[-1].public_bytes(encoding=der) != root.public_bytes(encoding=der):
+    ours = chain[-1].public_bytes(encoding=der)
+    known = [x509.load_pem_x509_certificate(pem).public_bytes(encoding=der)
+             for pem in _trusted_roots()]
+    if ours not in known:
         raise BadTransaction("цепочка ведёт не к нашему корню")
 
     for cert in chain:

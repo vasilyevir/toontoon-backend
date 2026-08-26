@@ -449,3 +449,41 @@ async def test_a_repeated_delivery_is_applied_once(two_people):
 
     await session.execute(
         delete(m.AppStoreNotification).where(m.AppStoreNotification.notification_uuid == "n-dup"))
+
+
+# ─── Локальный корень Xcode: только по флагу ─────────────────────────────────
+
+
+def test_the_test_root_is_refused_unless_switched_on(monkeypatch):
+    """Сертификат локального StoreKit лежит внутри Xcode у всех.
+
+    Значит подписать им чек может кто угодно. Принимать его можно только там,
+    где нам это нужно самим, — и настройка по умолчанию выключена.
+    """
+    from cryptography.hazmat.primitives import serialization
+    from app.config import settings
+
+    monkeypatch.setattr("app.config.settings.apple_bundle_id", "ai.toontoon.ios",
+                        raising=False)
+    chain, leaf_key, _ = _chain_and_key()
+    monkeypatch.setattr(app_store, "_TEST_ROOT_PEM",
+                        chain[-1].public_bytes(encoding=serialization.Encoding.PEM))
+    signed = _signed({"originalTransactionId": "t-local", "bundleId": "ai.toontoon.ios"},
+                     chain, leaf_key)
+
+    monkeypatch.setattr(settings, "accept_storekit_test_root", False, raising=False)
+    with pytest.raises(app_store.BadTransaction, match="корню"):
+        app_store.verify_transaction(signed)
+
+    monkeypatch.setattr(settings, "accept_storekit_test_root", True, raising=False)
+    assert app_store.verify_transaction(signed)["originalTransactionId"] == "t-local"
+
+
+def test_the_real_root_is_still_the_apple_one():
+    """Флаг добавляет корень, а не подменяет: боевой остаётся на месте."""
+    from cryptography import x509
+
+    root = x509.load_pem_x509_certificate(app_store._ROOT_PEM)
+    assert "Apple Root CA - G3" in root.subject.rfc4514_string()
+    test_root = x509.load_pem_x509_certificate(app_store._TEST_ROOT_PEM)
+    assert "StoreKit" in test_root.subject.rfc4514_string()
