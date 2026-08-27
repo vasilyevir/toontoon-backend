@@ -356,7 +356,7 @@ def _worth_showing(known: dict[str, str]) -> dict[str, str]:
     """
     return {
         field: value for field, value in known.items()
-        if value and not value.startswith("from the attached")
+        if value and value != conversation.SAMPLE_MARK
     }
 
 
@@ -532,7 +532,13 @@ async def _state_for(db: AsyncSession, user) -> "ChatState":
         has_photo=has_photo or bool(roles),
         asked=sorted(await state_repo.asked_about(db, user)),
     )
-    return ChatState(intent=intent, known=known, ready=ready, roles=roles)
+    # Наружу — только сказанное. Готовность выше считается по полному
+    # понятому, вместе с пометкой про образец: она отвечает разговору, а не
+    # человеку. Здесь этого фильтра не было, и после перезапуска в строке
+    # вставали два чипа «from the attached sample» — английская служебная
+    # строка посреди русской переписки, да ещё и со снимающим её крестиком.
+    return ChatState(intent=intent, known=_worth_showing(known),
+                     ready=ready, roles=roles)
 
 
 class RolesRequest(BaseModel):

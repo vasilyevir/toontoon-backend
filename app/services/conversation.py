@@ -278,11 +278,22 @@ def is_ready(
 SAMPLE_ANSWERS = ("technique", "palette", "reference")
 
 
+# Пометка «на это ответил образец».
+#
+# Внутрь она нужна: без неё разговор спрашивал бы про технику и цвета у того,
+# кто уже показал их картинкой. Наружу — нет: строка понятого показывает
+# сказанное человеком, а это наша пометка, да ещё и по-английски. У чипа при
+# этом есть ✕, и снять «from the attached sample» означало бы забыть технику,
+# хотя образец никуда не делся.
+SAMPLE_MARK = "from the attached sample"
+
+
 def with_sample(known: dict[str, str], *, intent: str) -> dict[str, str]:
     """Считать закрытым то, на что ответил образец."""
     fields = set(slots_for(intent))
     answered = dict(known)
     for field in SAMPLE_ANSWERS:
         if field in fields and not answered.get(field):
-            answered[field] = "from the attached sample"
+            answered[field] = SAMPLE_MARK
     return answered
+
