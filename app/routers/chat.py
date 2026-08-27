@@ -495,6 +495,13 @@ class ChatState(BaseModel):
     """Что мы понимаем про просьбу на момент открытия экрана."""
     intent: Optional[str] = None
     known: dict[str, str] = {}
+    # Можно ли уже браться за кадр.
+    #
+    # Понятое переживало перезапуск, а готовность — нет, и строка получалась
+    # красноречивой, но бесполезной: «я всё понял», а взяться не за что.
+    # Карточка с ценой при этом чисто клиентская, восстановить её приложению
+    # неоткуда, кроме как отсюда.
+    ready: bool = False
 
 
 @router.get("/chat/state", response_model=ChatState)
@@ -511,7 +518,17 @@ async def state(
     """
     user, _ = ctx
     intent, known = await state_repo.load(db, user)
-    return ChatState(intent=intent, known=known)
+    # Готовность считается тем же, чем в разговоре, — не своей копией условий.
+    # Разойтись они могут только молча, и тогда карточка появлялась бы там, где
+    # разговор ещё спрашивает, или наоборот.
+    has_photo = await profiles_repo.get_default(db, user.id) is not None
+    ready = conversation.is_ready(
+        known,
+        intent=intent or conversation.DEFAULT_INTENT,
+        has_photo=has_photo,
+        asked=sorted(await state_repo.asked_about(db, user)),
+    )
+    return ChatState(intent=intent, known=known, ready=ready)
 
 
 class ForgetRequest(BaseModel):
