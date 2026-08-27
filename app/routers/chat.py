@@ -249,6 +249,9 @@ async def chat(
         reply = gpt_service.said_in(body.message,
                                     ru="Уточню — кто из них вы?",
                                     en="Quick check — which one is you?")
+        # Снимки — своими репликами и до слов: в переписке они стоят выше
+        # фразы, как их и показывает экран.
+        await chat_repo.record_attachments(db, user_id=user.id, media_ids=body.attachment_ids)
         await chat_repo.add_message(db, user_id=user.id, role="user",
                                     content=body.message or None, media_id=body.media_id)
         await chat_repo.add_message(db, user_id=user.id, role="assistant", content=reply)
@@ -325,6 +328,7 @@ async def chat(
         await state_repo.remember(db, user, fresh={
             state_repo.ASKED: ",".join(sorted(set(asked) | {gap}))})
 
+    await chat_repo.record_attachments(db, user_id=user.id, media_ids=body.attachment_ids)
     await chat_repo.add_message(db, user_id=user.id, role="user",
                                 content=body.message or None, media_id=body.media_id)
     await chat_repo.add_message(db, user_id=user.id, role="assistant", content=reply)

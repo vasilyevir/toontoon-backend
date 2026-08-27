@@ -18,6 +18,36 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import models as m
 
 
+async def record_attachments(session: AsyncSession, *, user_id: str, media_ids: list[str]) -> int:
+    """Положить приложенные снимки в переписку — каждый один раз.
+
+    Раньше это делала отдельная ручка: снимок отправлялся сам, в тот же миг,
+    как его выбрали, и она же заводила ему реплику. Теперь фотография ждёт в
+    поле ввода и уезжает вместе с сообщением — а `/api/chat` про неё не знал
+    ничего, и снимок в переписке не сохранялся вовсе. На экране он был, до
+    первого перезапуска: тред перечитывается с сервера, а там его нет.
+
+    Идемпотентно, и это обязательно: приложение шлёт список приложенного за
+    весь разговор, а не за последнее сообщение. Без проверки каждый следующий
+    ответ добавлял бы к треду ещё по копии всех прежних снимков.
+    """
+    if not media_ids:
+        return 0
+    seen = set((await session.scalars(
+        select(m.ChatMessage.media_id).where(
+            m.ChatMessage.user_id == user_id,
+            m.ChatMessage.media_id.in_(media_ids),
+        )
+    )).all())
+    added = 0
+    for media_id in media_ids:
+        if media_id in seen:
+            continue
+        await add_message(session, user_id=user_id, role="user", media_id=media_id)
+        added += 1
+    return added
+
+
 async def add_message(
     session: AsyncSession,
     *,
