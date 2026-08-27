@@ -1,9 +1,10 @@
 {
   "title": "Space Captain",
   "description": "Bridge lights, a flight suit, somewhere far from here.",
-  "cost": 1,
+  "cost": 10,
   "is_home": false,
   "is_shot": true,
   "sort_order": 20,
-  "sample_source": "an ordinary casual smartphone snapshot of a man in his thirties standing in an office kitchen, flat fluorescent light, fridge behind, plain shirt, neutral expression, amateur framing"
+  "sample_source": "an ordinary casual smartphone snapshot of a man in his thirties standing in an office kitchen, flat fluorescent light, fridge behind, plain shirt, neutral expression, amateur framing",
+  "anchor": "realistic"
 }

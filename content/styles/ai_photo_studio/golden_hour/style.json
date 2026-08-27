@@ -1,9 +1,10 @@
 {
   "title": "Golden Hour",
   "description": "Warm sunset light with a soft glow around you — the most flattering light there is.",
-  "cost": 1,
+  "cost": 10,
   "is_home": true,
   "is_shot": true,
   "sort_order": 10,
-  "aspect": "1:1"
+  "aspect": "1:1",
+  "anchor": "realistic"
 }

@@ -1,9 +1,10 @@
 {
   "title": "Café Fashion",
   "description": "A magazine portrait at a café table.",
-  "cost": 1,
+  "cost": 10,
   "is_home": true,
   "is_shot": true,
   "sort_order": 10,
-  "sample_source": "an ordinary casual smartphone snapshot of a person indoors, flat overhead light, plain clothes, amateur framing"
+  "sample_source": "an ordinary casual smartphone snapshot of a person indoors, flat overhead light, plain clothes, amateur framing",
+  "anchor": "realistic"
 }

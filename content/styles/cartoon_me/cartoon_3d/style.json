@@ -1,7 +1,7 @@
 {
   "title": "Cartoon Me",
   "description": "You, drawn as an animated feature character — stylised, but close to life.",
-  "cost": 1,
+  "cost": 20,
   "is_home": true,
   "is_shot": true,
   "sort_order": 1,

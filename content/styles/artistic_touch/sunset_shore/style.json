@@ -1,7 +1,7 @@
 {
   "title": "Sunset Shore",
   "description": "Painted light on the water.",
-  "cost": 1,
+  "cost": 20,
   "is_home": false,
   "is_shot": true,
   "sort_order": 20,

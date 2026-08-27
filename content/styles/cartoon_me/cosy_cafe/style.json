@@ -1,7 +1,7 @@
 {
   "title": "Cosy Café",
   "description": "Rain outside, a book and a latte.",
-  "cost": 1,
+  "cost": 20,
   "is_home": false,
   "is_shot": true,
   "sort_order": 28,

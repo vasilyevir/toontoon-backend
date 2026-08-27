@@ -1,9 +1,10 @@
 {
   "title": "Studio Portrait",
   "description": "Soft studio light and a clean backdrop — a shot straight out of a photo studio.",
-  "cost": 1,
+  "cost": 10,
   "is_home": true,
   "is_shot": true,
   "sort_order": 10,
-  "aspect": "1:1"
+  "aspect": "1:1",
+  "anchor": "realistic"
 }

@@ -1,7 +1,7 @@
 {
   "title": "Plant Room",
   "description": "Soft light among houseplants.",
-  "cost": 1,
+  "cost": 20,
   "is_home": false,
   "is_shot": true,
   "sort_order": 21,

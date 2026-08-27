@@ -1,7 +1,7 @@
 {
   "title": "Comic Hero",
   "description": "Bold ink, halftone dots, a cover you could pick off a shelf.",
-  "cost": 1,
+  "cost": 20,
   "is_home": false,
   "is_shot": false,
   "sort_order": 30,

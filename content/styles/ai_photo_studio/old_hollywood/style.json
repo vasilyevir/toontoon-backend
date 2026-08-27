@@ -1,9 +1,10 @@
 {
   "title": "Old Hollywood",
   "description": "A 1940s studio portrait: hard key light, deep shadow, velvet and waves.",
-  "cost": 1,
+  "cost": 10,
   "is_home": false,
   "is_shot": true,
   "sort_order": 60,
-  "sample_source": "an ordinary casual smartphone snapshot of a woman standing in a plain hallway at home, flat overhead light, closed door behind, simple grey top, neutral expression, amateur framing"
+  "sample_source": "an ordinary casual smartphone snapshot of a woman standing in a plain hallway at home, flat overhead light, closed door behind, simple grey top, neutral expression, amateur framing",
+  "anchor": "realistic"
 }

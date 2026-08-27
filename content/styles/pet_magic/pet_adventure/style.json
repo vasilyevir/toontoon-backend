@@ -1,10 +1,11 @@
 {
   "title": "Pet Adventure",
   "description": "Off the sofa and into the mountains — with a tiny backpack.",
-  "cost": 1,
+  "cost": 10,
   "is_home": false,
   "is_shot": true,
   "sort_order": 20,
   "sample_source": "an ordinary casual smartphone snapshot of a small dog standing on a kitchen floor, flat ceiling light, chair legs behind, amateur framing",
-  "subject": "pet"
+  "subject": "pet",
+  "anchor": "realistic"
 }

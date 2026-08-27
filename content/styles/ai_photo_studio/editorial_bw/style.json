@@ -1,9 +1,10 @@
 {
   "title": "Editorial B&W",
   "description": "A black-and-white magazine portrait: one strong light, deep shadow, nothing else.",
-  "cost": 1,
+  "cost": 10,
   "is_home": true,
   "is_shot": true,
   "sort_order": 20,
-  "aspect": "1:1"
+  "aspect": "1:1",
+  "anchor": "realistic"
 }

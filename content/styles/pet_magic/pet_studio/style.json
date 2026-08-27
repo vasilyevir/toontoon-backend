@@ -1,10 +1,11 @@
 {
   "title": "Pet Studio",
   "description": "Your pet, photographed like it pays the bills.",
-  "cost": 1,
+  "cost": 10,
   "is_home": true,
   "is_shot": true,
   "sort_order": 10,
   "sample_source": "an ordinary casual smartphone snapshot of a domestic cat lying on a sofa at home, flat indoor light, cushions behind, slightly blurry amateur framing",
-  "subject": "pet"
+  "subject": "pet",
+  "anchor": "realistic"
 }

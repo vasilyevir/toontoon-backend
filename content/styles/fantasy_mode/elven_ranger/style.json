@@ -1,9 +1,10 @@
 {
   "title": "Elven Ranger",
   "description": "Forest cloak, quiet light, a world that runs on old magic.",
-  "cost": 1,
+  "cost": 10,
   "is_home": true,
   "is_shot": true,
   "sort_order": 10,
-  "sample_source": "an ordinary casual smartphone snapshot of a woman in her twenties standing in a park, flat overcast daylight, bare trees behind, plain jacket, neutral expression, amateur framing"
+  "sample_source": "an ordinary casual smartphone snapshot of a woman in her twenties standing in a park, flat overcast daylight, bare trees behind, plain jacket, neutral expression, amateur framing",
+  "anchor": "realistic"
 }

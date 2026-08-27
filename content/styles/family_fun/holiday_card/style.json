@@ -1,9 +1,10 @@
 {
   "title": "Holiday Card",
   "description": "Warm lights, knitwear and a card worth sending.",
-  "cost": 1,
+  "cost": 10,
   "is_home": true,
   "is_shot": true,
   "sort_order": 10,
-  "sample_source": "an ordinary casual smartphone snapshot of a woman in her thirties standing in a living room, flat ceiling light, plain wall and a shelf behind, simple jumper, neutral expression, amateur framing"
+  "sample_source": "an ordinary casual smartphone snapshot of a woman in her thirties standing in a living room, flat ceiling light, plain wall and a shelf behind, simple jumper, neutral expression, amateur framing",
+  "anchor": "realistic"
 }

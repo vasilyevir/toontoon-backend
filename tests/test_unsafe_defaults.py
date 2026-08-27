@@ -53,14 +53,21 @@ def test_leaving_a_debug_flag_on_in_production_is_shouted_about(flag, caplog, mo
     """
     from app import main
 
+    # Гасим все флаги и зажигаем один: иначе тест меряет не то, что называет.
+    # Он уже соврал однажды — на машине, где в `.env` включили второй флаг,
+    # первой записью в журнале оказалась чужая, и проверка упала, хотя
+    # проверяемое работало.
     monkeypatch.setattr(main.settings, "debug", False)
-    monkeypatch.setattr(main.settings, flag, True)
+    for other in ("expose_dev_tokens", "accept_storekit_test_root"):
+        monkeypatch.setattr(main.settings, other, other == flag)
 
     with caplog.at_level(logging.ERROR, logger="toontoon"):
         main.warn_about_debug_flags()
 
     assert caplog.records, f"{flag}=true при DEBUG=false прошло молча"
-    assert flag.upper() in caplog.records[0].message
+    assert any(flag.upper() in r.message for r in caplog.records), \
+        f"крикнули, но не про {flag}: {[r.message for r in caplog.records]}"
+    assert len(caplog.records) == 1, "зажгли один флаг, а криков больше одного"
 
 
 def test_a_correctly_configured_production_start_is_quiet(caplog, monkeypatch):
