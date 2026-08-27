@@ -96,6 +96,33 @@ ASKED = "_asked"
 # показывает, что мы поняли верно, а кадр говорит обратное.
 RESTARTED = "_restarted"
 
+# Кто на приложенных снимках: человек или образец стиля. Служебный ключ.
+#
+# Решение это принимает человек, отвечая на «кто из них вы», — и жило оно
+# только в памяти приложения. Закрыл и открыл: в переписке висит вопрос, ответа
+# нет, вариантов нет, а роли неизвестны. Разговор упирался в тупик, из которого
+# выход был один — начать заново.
+#
+# Хранится строкой «media_id:роль», через запятую: по тем же правилам, что и
+# остальные поля, и гаснет вместе с ними через сутки. Отдельной таблицы это не
+# заслуживает — роли живут ровно столько же, сколько сама просьба.
+ROLES = "_roles"
+
+
+def roles_to_slot(roles: dict[str, str]) -> str:
+    return ",".join(f"{mid}:{role}" for mid, role in sorted(roles.items()))
+
+
+def roles_from_slot(raw: str | None) -> dict[str, str]:
+    if not raw:
+        return {}
+    out: dict[str, str] = {}
+    for pair in raw.split(","):
+        mid, _, role = pair.partition(":")
+        if mid and role:
+            out[mid] = role
+    return out
+
 
 async def load(session: AsyncSession, user: m.User) -> tuple[str | None, dict[str, str]]:
     """Назначение и поля, которые человек уже назвал.
@@ -179,6 +206,27 @@ async def remember(
         )
     )
     return _values(slots)
+
+
+async def roles_of(session: AsyncSession, user: m.User) -> dict[str, str]:
+    """Кто на приложенных снимках: человек или образец.
+
+    Читается так же, как `asked_about`, и не через `load`: тот отдаёт только
+    сказанное человеком и служебные ключи отсекает — иначе они посыпались бы в
+    строку понятого над полем ввода, где им не место.
+
+    Срок годности тот же, что у полей: снимок суточной давности к нынешней
+    просьбе отношения уже не имеет.
+    """
+    row = await session.get(m.ConversationState, user.id)
+    if row is None:
+        return {}
+    if user.chat_context_started_at is not None and (
+        row.started_at is None or row.started_at < user.chat_context_started_at
+    ):
+        return {}
+    cell = _fresh(row.slots).get(ROLES)
+    return roles_from_slot(str((cell or {}).get("value", "")) or None)
 
 
 async def asked_about(session: AsyncSession, user: m.User) -> list[str]:

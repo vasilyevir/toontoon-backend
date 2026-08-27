@@ -506,6 +506,86 @@ class ChatState(BaseModel):
     # Карточка с ценой при этом чисто клиентская, восстановить её приложению
     # неоткуда, кроме как отсюда.
     ready: bool = False
+    # Кто на приложенных снимках: media_id → person | style.
+    #
+    # Без них приложение после перезапуска не знает, какой снимок чей, — и
+    # генерация ушла бы либо без образца, либо с чужим лицом. Карточка
+    # готовности без этого была бы обещанием, которое некому выполнить.
+    roles: dict[str, str] = {}
+
+
+async def _state_for(db: AsyncSession, user) -> "ChatState":
+    """Состояние разговора — одним сборщиком на все ручки.
+
+    Готовность считается тем же `conversation.is_ready`, что и в разговоре, а
+    не своей копией условий: разойтись они могут только молча, и тогда карточка
+    появлялась бы там, где разговор ещё спрашивает, или наоборот.
+    """
+    intent, known = await state_repo.load(db, user)
+    roles = await state_repo.roles_of(db, user)
+    has_photo = await profiles_repo.get_default(db, user.id) is not None
+    ready = conversation.is_ready(
+        known,
+        intent=intent or conversation.DEFAULT_INTENT,
+        # Образец на руках — значит человек уже показал, чего хочет: снимок для
+        # лица возьмётся из профиля, а если его нет, спросит генерация.
+        has_photo=has_photo or bool(roles),
+        asked=sorted(await state_repo.asked_about(db, user)),
+    )
+    return ChatState(intent=intent, known=known, ready=ready, roles=roles)
+
+
+class RolesRequest(BaseModel):
+    """Кто на приложенных снимках — ответ человека на «кто из них вы».
+
+    Роль на каждый снимок: `person` или `style`. Порядок не важен, важна
+    полнота: снимок, о котором не сказали, останется неразобранным.
+    """
+
+    roles: dict[str, str] = Field(default_factory=dict, max_length=8)
+    # Что человек нажал — теми же словами, что стояли на кнопке. В переписку
+    # это идёт его репликой: иначе после перезапуска остаётся вопрос без
+    # ответа, и разговор выглядит брошенным на полуслове.
+    label: str = Field(default="", max_length=120)
+
+
+@router.post("/chat/roles", response_model=ChatState)
+async def choose_roles(
+    body: RolesRequest,
+    ctx: Context = Depends(required_context),
+    db: AsyncSession = Depends(get_db_session),
+) -> ChatState:
+    """Запомнить, кто из приложенных снимков человек, а кто образец.
+
+    Решение принимал человек, а знало о нём только приложение. Закрыл и открыл
+    — в переписке висит вопрос, ответа нет, вариантов нет, роли неизвестны:
+    тупик, из которого выход один — начать заново. Причём сам вопрос заводили
+    ровно затем, чтобы не ошибиться чужим лицом в кадре.
+
+    Здесь же доделывается то, что не успело случиться из-за вопроса: разговор
+    возвращается с ним раньше, чем доходит до образца, — а образец отвечает за
+    технику и цвета до конца просьбы, как если бы о них сказали словами.
+    """
+    user, _ = ctx
+    known = {}
+    if body.label:
+        await chat_repo.add_message(db, user_id=user.id, role="user", content=body.label)
+
+    intent, known = await state_repo.load(db, user)
+    fresh: dict[str, str] = {}
+    if body.roles:
+        fresh[state_repo.ROLES] = state_repo.roles_to_slot(body.roles)
+
+    # Образец отвечает за то, как это выглядит. Тот же вызов, что и в разговоре:
+    # своя копия условий разошлась бы молча.
+    if "style" in body.roles.values():
+        filled = conversation.with_sample(known, intent=intent or conversation.DEFAULT_INTENT)
+        fresh.update({f: v for f, v in filled.items() if f not in known})
+
+    if fresh:
+        known = await state_repo.remember(db, user, fresh=fresh)
+
+    return await _state_for(db, user)
 
 
 @router.get("/chat/state", response_model=ChatState)
@@ -521,18 +601,7 @@ async def state(
     и появилась.
     """
     user, _ = ctx
-    intent, known = await state_repo.load(db, user)
-    # Готовность считается тем же, чем в разговоре, — не своей копией условий.
-    # Разойтись они могут только молча, и тогда карточка появлялась бы там, где
-    # разговор ещё спрашивает, или наоборот.
-    has_photo = await profiles_repo.get_default(db, user.id) is not None
-    ready = conversation.is_ready(
-        known,
-        intent=intent or conversation.DEFAULT_INTENT,
-        has_photo=has_photo,
-        asked=sorted(await state_repo.asked_about(db, user)),
-    )
-    return ChatState(intent=intent, known=known, ready=ready)
+    return await _state_for(db, user)
 
 
 class ForgetRequest(BaseModel):
