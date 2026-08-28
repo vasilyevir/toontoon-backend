@@ -118,6 +118,37 @@ def describe_chain(signed: str) -> str:
     return "; ".join(bits)
 
 
+# Имя, которым StoreKit из Xcode подписывает свои чеки.
+_LOCAL_TEST_CN = "StoreKit Testing in Xcode"
+
+
+def _is_local_test_receipt(chain: list[x509.Certificate]) -> bool:
+    """Чек, выписанный проверкой StoreKit внутри Xcode.
+
+    Такой чек нельзя привязать к корню, и это не наша недоработка. Xcode
+    подписывает его сертификатом, который создаёт у себя: в цепочке одно звено,
+    самоподписанное, эллиптическое, с именем «StoreKit Testing in Xcode». В
+    связке ключей его нет, в самом Xcode лежит другой — RSA с именем
+    «StoreKit», — и к присланному он отношения не имеет. Постоянного корня,
+    к которому можно привязаться, просто не существует.
+
+    Поэтому здесь честнее сказать вслух, что проверяется, а что нет. Мы
+    убеждаемся, что чек внутренне сходится: подпись отвечает ключу из
+    собственного сертификата, срок не вышел, приложение наше. Мы НЕ убеждаемся,
+    что его выписала Apple — такой чек может выписать кто угодно, у кого есть
+    Xcode.
+
+    Ровно об этом и предупреждает `ACCEPT_STOREKIT_TEST_ROOT`: с ним подписку
+    себе выпишет любой. Флаг выключен по умолчанию, а при DEBUG=false о нём
+    кричит проверка при старте.
+    """
+    if not settings.accept_storekit_test_root or len(chain) != 1:
+        return False
+    only = chain[0]
+    name = next((a.value for a in only.subject if a.oid == x509.NameOID.COMMON_NAME), "")
+    return name == _LOCAL_TEST_CN and only.subject == only.issuer
+
+
 def verify_jws(signed: str, *, now: datetime | None = None) -> dict:
     """Проверить подпись Apple и вернуть тело. Что в теле — решает вызывающий.
 
@@ -143,26 +174,33 @@ def verify_jws(signed: str, *, now: datetime | None = None) -> dict:
         raise BadTransaction(f"чужой алгоритм подписи: {header.get('alg')}")
 
     chain_raw = header.get("x5c") or []
-    if len(chain_raw) < 2:
-        raise BadTransaction("в заголовке нет цепочки сертификатов")
+    if not chain_raw:
+        raise BadTransaction("в заголовке нет сертификатов")
     try:
         chain = [x509.load_der_x509_certificate(base64.b64decode(c)) for c in chain_raw]
     except Exception as exc:  # noqa: BLE001
         raise BadTransaction("сертификаты не читаются") from exc
 
-    # Корень сверяем побайтно. «Тоже от Apple» и «этот самый» — разные вещи, и
-    # вторая проверяется только так.
-    der = serialization.Encoding.DER
-    ours = chain[-1].public_bytes(encoding=der)
-    known = [x509.load_pem_x509_certificate(pem).public_bytes(encoding=der)
-             for pem in _trusted_roots()]
-    if ours not in known:
-        raise BadTransaction("цепочка ведёт не к нашему корню")
-
     for cert in chain:
         _check_dates(cert, now)
-    for child, parent in zip(chain, chain[1:]):
-        _verify_signed_by(child, parent)
+
+    if _is_local_test_receipt(chain):
+        # Дальше — только подпись листа. Цепочки доверия здесь нет и быть не
+        # может: см. `_is_local_test_receipt`.
+        pass
+    else:
+        if len(chain) < 2:
+            raise BadTransaction("в заголовке нет цепочки сертификатов")
+        # Корень сверяем побайтно. «Тоже от Apple» и «этот самый» — разные вещи,
+        # и вторая проверяется только так.
+        der = serialization.Encoding.DER
+        ours = chain[-1].public_bytes(encoding=der)
+        known = [x509.load_pem_x509_certificate(pem).public_bytes(encoding=der)
+                 for pem in _trusted_roots()]
+        if ours not in known:
+            raise BadTransaction("цепочка ведёт не к нашему корню")
+        for child, parent in zip(chain, chain[1:]):
+            _verify_signed_by(child, parent)
 
     leaf_key = chain[0].public_key()
     if not isinstance(leaf_key, ec.EllipticCurvePublicKey):
