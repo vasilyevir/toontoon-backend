@@ -2,8 +2,8 @@
 """Прогнать один и тот же стиль через несколько моделей и сложить рядом.
 
     PYTHONPATH=. .venv/bin/python scripts/compare_providers.py \
-        --styles golden_hour,cartoon_3d --tier cheap --sources 3 --budget 3
-    PYTHONPATH=. .venv/bin/python scripts/compare_providers.py --styles cartoon_3d \
+        --styles golden_hour,anime_look --tier cheap --sources 3 --budget 3
+    PYTHONPATH=. .venv/bin/python scripts/compare_providers.py --styles anime_look \
         --providers openrouter:openai/gpt-image-2,openrouter:black-forest-labs/flux.2-pro
 
 Смысл в том, чтобы сравнение было замером, а не впечатлением: один промпт,

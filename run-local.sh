@@ -19,7 +19,11 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 PORT="${PORT:-8020}"
-BASE="http://localhost:${PORT}"
+# Перекрывается, как и всё остальное рядом. Нужно для отладки на устройстве:
+# ссылки на картинки строятся из PUBLIC_BASE_URL, и с localhost телефон их не
+# загрузит — сервер он найдёт, а картинки нет, и каталог будет пустой рамкой.
+#   BASE="http://$(ipconfig getifaddr en0):8020" ./run-local.sh
+BASE="${BASE:-http://localhost:${PORT}}"
 
 export PUBLIC_BASE_URL="$BASE"
 export FRONTEND_URL="${FRONTEND_URL:-http://localhost:3000}"
