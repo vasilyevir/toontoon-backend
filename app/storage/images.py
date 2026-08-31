@@ -25,6 +25,25 @@ from app.config import settings
 # Pillow refuses absurd images by default; keep that guard rail.
 Image.MAX_IMAGE_PIXELS = 64_000_000
 
+# Чем именно разрешено разбирать присланные байты.
+#
+# Список типов в роутере загрузки не ограничивает НИЧЕГО: он смотрит на
+# `content_type`, то есть на заголовок, который пишет клиент, а декодер Pillow
+# выбирает по содержимому. Проверено: TIFF, BMP, TGA, PPM, SGI, DDS и ICNS
+# спокойно разбирались, будучи объявлены как `image/png`. Всего в досягаемости
+# оказывался сорок один декодер — а именно в них и живут дыры Pillow: PSD,
+# JPEG2000, FITS, `raw`-кодек.
+#
+# Поэтому формат называется здесь, при чтении, и передаётся в КАЖДЫЙ
+# `Image.open` этого модуля. Список важнее обновления библиотеки: обновление
+# чинит известные дыры в сорока одном декодере, а это убирает тридцать семь
+# декодеров из досягаемости целиком, вместе с теми дырами, о которых ещё никто
+# не знает.
+#
+# Ровно те же четыре типа, что принимает роутер, — но теперь это утверждение
+# проверяется, а не подразумевается (tests/test_upload_formats.py).
+ALLOWED_FORMATS = ["PNG", "JPEG", "WEBP", "GIF"]
+
 
 @dataclass(slots=True)
 class ProcessedImage:
@@ -48,7 +67,7 @@ def preview(data: bytes, *, side: int = 384) -> bytes:
     платим мы за каждый. Снимок с телефона на четыре мегапикселя стоил бы здесь
     в разы дороже ответа, который он даёт.
     """
-    with Image.open(io.BytesIO(data)) as img:
+    with Image.open(io.BytesIO(data), formats=ALLOWED_FORMATS) as img:
         img = _apply_orientation(img).convert("RGB")
         img.thumbnail((side, side))
         out = io.BytesIO()
@@ -62,7 +81,7 @@ def process(data: bytes, *, make_thumbnail: bool = True) -> ProcessedImage:
     Returns the cleaned bytes — metadata removed, orientation applied — plus the
     dimensions, content hash and an optional thumbnail.
     """
-    with Image.open(io.BytesIO(data)) as img:
+    with Image.open(io.BytesIO(data), formats=ALLOWED_FORMATS) as img:
         # Apply the EXIF orientation flag before dropping EXIF, otherwise photos
         # taken sideways stay sideways forever.
         img = _apply_orientation(img)
@@ -138,7 +157,7 @@ def aspect_of(data: bytes) -> Optional[str]:
     форму по нечитаемому файлу хуже, чем не угадывать вовсе.
     """
     try:
-        with Image.open(io.BytesIO(data)) as img:
+        with Image.open(io.BytesIO(data), formats=ALLOWED_FORMATS) as img:
             img = _apply_orientation(img)
             width, height = img.size
     except Exception:  # noqa: BLE001 — форма необязательна, кадр обязателен
@@ -152,7 +171,7 @@ def aspect_of(data: bytes) -> Optional[str]:
 def has_metadata(data: bytes) -> bool:
     """Test helper: does this image still carry EXIF? Used to prove the strip."""
     try:
-        with Image.open(io.BytesIO(data)) as img:
+        with Image.open(io.BytesIO(data), formats=ALLOWED_FORMATS) as img:
             return bool(img.getexif())
     except Exception:  # noqa: BLE001
         return False
