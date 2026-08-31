@@ -1,0 +1,11 @@
+{
+  "title": "Sunbeam Nap",
+  "description": "Asleep in the one warm patch on the floor.",
+  "cost": 10,
+  "is_home": false,
+  "is_shot": true,
+  "sort_order": 43,
+  "subject": "pet",
+  "anchor": "realistic",
+  "sample_source": "an ordinary casual smartphone snapshot of a domestic cat lying on a sofa at home, flat indoor light, cushions behind, slightly blurry amateur framing"
+}

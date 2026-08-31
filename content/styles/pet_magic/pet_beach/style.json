@@ -1,0 +1,11 @@
+{
+  "title": "Beach Day",
+  "description": "Wet sand, low sun, and fur going everywhere.",
+  "cost": 10,
+  "is_home": false,
+  "is_shot": true,
+  "sort_order": 42,
+  "subject": "pet",
+  "anchor": "realistic",
+  "sample_source": "an ordinary casual smartphone snapshot of a small dog standing on a kitchen floor, flat ceiling light, chair legs behind, amateur framing"
+}

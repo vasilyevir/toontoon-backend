@@ -1,0 +1,10 @@
+{
+  "title": "Party Flash",
+  "description": "A living room at midnight, one hard flash, everyone blurred but you.",
+  "cost": 10,
+  "is_home": false,
+  "is_shot": true,
+  "sort_order": 6,
+  "anchor": "realistic",
+  "sample_source": "an ordinary casual smartphone snapshot of a person indoors, flat overhead light, plain clothes, amateur framing"
+}

@@ -1,0 +1,10 @@
+{
+  "title": "White Suit",
+  "description": "White on white, head to toe: the brightest card in a catalogue of dark ones.",
+  "cost": 10,
+  "is_home": false,
+  "is_shot": true,
+  "sort_order": 10,
+  "anchor": "realistic",
+  "sample_source": "an ordinary casual smartphone snapshot of a person indoors, flat overhead light, plain clothes, amateur framing"
+}

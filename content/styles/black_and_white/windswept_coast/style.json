@@ -1,0 +1,10 @@
+{
+  "title": "Windswept Coast",
+  "description": "Wind, cliffs, a wool coat — weather doing the work.",
+  "cost": 10,
+  "is_home": false,
+  "is_shot": true,
+  "sort_order": 70,
+  "anchor": "realistic",
+  "sample_source": "an ordinary casual smartphone snapshot of a person indoors, flat overhead light, plain clothes, amateur framing"
+}

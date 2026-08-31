@@ -1,0 +1,10 @@
+{
+  "title": "Beach Sunset",
+  "description": "Golden hour on the sand, drawn — warm light, open shirt, palms behind.",
+  "cost": 20,
+  "is_home": false,
+  "is_shot": true,
+  "sort_order": 31,
+  "anchor": "semi_real_3d",
+  "sample_source": "an ordinary casual smartphone snapshot of a person indoors, flat overhead light, plain clothes, amateur framing"
+}

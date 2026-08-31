@@ -1,0 +1,11 @@
+{
+  "title": "Oil Portrait",
+  "description": "Your pet, hung in a hall of ancestors.",
+  "cost": 20,
+  "is_home": false,
+  "is_shot": true,
+  "sort_order": 40,
+  "subject": "pet",
+  "anchor": "painted",
+  "sample_source": "an ordinary casual smartphone snapshot of a domestic cat lying on a sofa at home, flat indoor light, cushions behind, slightly blurry amateur framing"
+}
