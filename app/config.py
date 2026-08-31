@@ -26,10 +26,38 @@ class Settings(BaseSettings):
     # request that isn't signed by the app, so enable ONLY once mobile is verified
     # and web/webhooks are excluded or also signing. Values must match the app's
     # Config.xcconfig (APP_KEY / APP_SECRET).
+    # Переставлять ли витрину под человека: направления, отмеченные ♥ в
+    # онбординге, всплывают наверх.
+    #
+    # Выключено намеренно. Порядок разделов выставлен вручную и рассчитан на
+    # первое впечатление: сильное сверху, редкое внизу. Персонализация его
+    # переворачивала — отметивший шесть направлений видел их первыми, и
+    # заданный порядок работал только для хвоста. Вернуть — поставить `true`,
+    # ничего больше.
+    personalise_catalogue: bool = False
+
+    # Разделы, скрытые с витрины. Стили остаются в базе и доступны по прямой
+    # ссылке — прячется только лента на главной.
+    #
+    # Скрытием, а не удалением: в Fantasy Mode и Family Fun по три стиля со
+    # старыми примерами, снятыми не под нынешнюю модель. Показывать их рядом с
+    # переснятыми — сравнение не в нашу пользу. Вернуть — убрать из списка.
+    hidden_categories: str = "fantasy_mode,family_fun"
+
+    @property
+    def hidden_category_list(self) -> list[str]:
+        return [c.strip() for c in self.hidden_categories.split(",") if c.strip()]
+
     app_key: str = ""
     app_secret: str = ""
     app_key_required: bool = False
     app_sig_max_skew_seconds: int = 300
+
+    # Сторожевой опрос: /health/pulse отдаёт диагноз и 503, когда нехорошо, —
+    # чтобы любой бесплатный аптайм-монитор поднял тревогу сам, без настройки.
+    # Пусто = ручки нет вовсе (404). Так по умолчанию: числа о выручке и
+    # отказах не должны утечь оттого, что кто-то забыл закрыть служебный путь.
+    watchdog_token: str = ""
     # Paths under /api that are NEVER signature-checked (server-to-server or
     # signed-over-empty-body): uploads (multipart) + webhooks (external callers).
     app_key_exempt_prefixes: str = "/api/uploads,/api/webhooks"

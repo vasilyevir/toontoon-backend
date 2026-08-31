@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import shutil
+import subprocess
 import sys
 
 sys.path.insert(0, ".")
@@ -25,10 +27,56 @@ from sqlalchemy import text                             # noqa: E402
 from app.config import settings                         # noqa: E402
 from app.db import session_scope                        # noqa: E402
 from app.db.session import connect, disconnect          # noqa: E402
+from app.services import diagnosis                      # noqa: E402
 
 
 def rule(title: str) -> None:
     print(f"\n{title}\n{'─' * len(title)}")
+
+
+async def pulse(notify: bool) -> int:
+    """Один вопрос — всё ли в порядке — и код возврата вместо чтения.
+
+    Отдельно от сводки, потому что сводку читает человек, а это — расписание.
+    Ноль значит «спокойно», единица — «иди посмотри», и cron с launchd умеют
+    отличать одно от другого без нашего участия.
+
+    Тот же самый диагноз, что отдаёт /health/pulse. Нарочно тот же: сводка,
+    которая расходится с ручкой, годится только на то, чтобы спорить с ней.
+    """
+    await connect()
+    try:
+        async with session_scope() as s:
+            d = await diagnosis.diagnose(s)
+    finally:
+        await disconnect()
+
+    if d.ok:
+        print("Спокойно. " + ", ".join(f"{k}: {v}" for k, v in d.facts.items()))
+        return 0
+
+    print("Нехорошо:")
+    for why in d.reasons:
+        print(f"  • {why}")
+    if notify:
+        _knock("Toontoon: нехорошо", "; ".join(d.reasons))
+    return 1
+
+
+def _knock(title: str, body: str) -> None:
+    """Постучаться в macOS, пока сервер не выставлен наружу.
+
+    До кластера снаружи его не опросить ничем, и до тех пор единственный
+    способ, которым отказ находит нас сам, — уведомление на той же машине.
+    Когда появится домен, эту роль заберёт аптайм-монитор через /health/pulse,
+    и стук останется для локальных прогонов.
+    """
+    if not (osa := shutil.which("osascript")):
+        return
+    safe = body.replace('"', "'")[:200]
+    subprocess.run([osa, "-e",
+                    f'display notification "{safe}" with title "{title}" sound name "Basso"'],
+                   check=False)
 
 
 async def main(days: int) -> int:
@@ -150,4 +198,9 @@ async def economics(s, days: int) -> None:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--days", type=int, default=7, help="за сколько дней смотреть")
-    raise SystemExit(asyncio.run(main(ap.parse_args().days)))
+    ap.add_argument("--pulse", action="store_true",
+                    help="только диагноз; код возврата 1, когда нехорошо")
+    ap.add_argument("--notify", action="store_true",
+                    help="с --pulse: постучаться уведомлением macOS")
+    a = ap.parse_args()
+    raise SystemExit(asyncio.run(pulse(a.notify) if a.pulse else main(a.days)))

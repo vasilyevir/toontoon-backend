@@ -164,6 +164,36 @@ async def ensure_weekly_quota(
     return result
 
 
+async def pending_daily_reward(
+    session: AsyncSession, user_id: str, *, today: Optional[date] = None
+) -> tuple[int, int]:
+    """Сколько дадут сегодня и каким днём это будет — не выдавая.
+
+    Нужно затем, чтобы кнопка «Claim» на экране награды не была декорацией.
+    Пока клиент забирал награду при запуске, нажимать было не за что: монеты
+    уже лежали на балансе, а кнопка только закрывала окно. Подарок, который
+    надо взять, ощущается иначе, чем подарок, который выдали молча.
+
+    Возвращает `(0, 0)`, если сегодня уже забрали: это и есть признак «показывать
+    нечего». Считает по тем же правилам, что и выдача, — иначе экран пообещает
+    одно, а начислится другое.
+    """
+    schedule = settings.daily_reward_list
+    if not schedule:
+        return 0, 0
+
+    today = today or datetime.now(timezone.utc).date()
+    wallet = await ensure(session, user_id)
+    if wallet.last_reward_date == today:
+        return 0, 0
+
+    consecutive = wallet.last_reward_date == today - timedelta(days=1)
+    streak = (wallet.reward_streak + 1) if consecutive else 1
+    if streak > len(schedule):
+        streak = 1
+    return schedule[streak - 1], streak
+
+
 async def claim_daily_reward(
     session: AsyncSession, user_id: str, *, today: Optional[date] = None
 ) -> tuple[Balance, int]:

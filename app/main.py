@@ -2,17 +2,19 @@
 from __future__ import annotations
 
 import logging
+import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app import db, storage
 from app.config import settings
 from app.middleware.app_key import AppKeyMiddleware
 from app.redis_client import connect, disconnect
-from app.services import wallet
+from app.services import diagnosis, wallet
 from app.routers import (
     favorites,
     guided,
@@ -64,6 +66,25 @@ def warn_about_debug_flags() -> None:
         )
 
 
+def warn_if_nobody_is_watching() -> None:
+    """Сказать вслух, что за сервисом никто не следит.
+
+    Предупреждением, а не ошибкой, и отдельно от опасных флагов: те отдают
+    чужой аккаунт, а это — упущение. Кричать о нём тем же голосом значит
+    приучить читать «ошибку» на старте как норму, и тогда настоящая потеряется
+    среди привычных.
+
+    Сказать всё же надо: без сторожа отказ находят по жалобе человека, а
+    жалуется меньшинство — остальные просто удаляют приложение.
+    """
+    if settings.debug or settings.watchdog_token:
+        return
+    logging.getLogger("toontoon.watchdog").warning(
+        "WATCHDOG_TOKEN не задан: /health/pulse выключен, и об отказах никто "
+        "не узнает, пока не придёт посмотреть."
+    )
+
+
 async def settle_unpaid_refunds() -> None:
     """Вернуть деньги за работы, которым их не вернула фоновая задача.
 
@@ -109,6 +130,7 @@ async def lifespan(app: FastAPI):
             "Object storage unavailable (%s). Start it with: docker start toontoon-minio", exc
         )
     warn_about_debug_flags()
+    warn_if_nobody_is_watching()
     await settle_unpaid_refunds()
 
     yield
@@ -161,4 +183,36 @@ app.include_router(events.router)
 
 @app.get("/health", tags=["meta"])
 async def health() -> dict:
+    """Жив ли процесс. Ничего больше.
+
+    Нарочно не знает ни про базу, ни про отказы: эту ручку опрашивает
+    балансировщик, и «невозвращённый TOONTOON» не повод выкинуть из ротации
+    работающий сервис. Диагноз — рядом, отдельным путём.
+    """
     return {"status": "ok", "app": settings.app_name}
+
+
+@app.get("/health/pulse", tags=["meta"])
+async def pulse(token: str = "") -> JSONResponse:
+    """Диагноз для сторожевого сервиса: 200 — всё в порядке, 503 — нет.
+
+    Код ответа, а не тело, потому что тревогу должен поднимать любой
+    бесплатный аптайм-монитор из коробки, без разбора JSON и без настройки
+    правил. Тело — для человека, который придёт по ссылке из письма.
+
+    Без токена ручки нет вовсе, и неверный токен отвечает тем же 404: иначе
+    ответ сам сообщал бы, что за этим путём что-то есть.
+    """
+    good = settings.watchdog_token
+    # В байтах, а не в строках: compare_digest на не-ASCII бросает
+    # TypeError, и токен русскими буквами ронял бы ручку пятисоткой.
+    if not good or not secrets.compare_digest(token.encode(), good.encode()):
+        raise HTTPException(status_code=404)
+
+    async with db.session_scope() as session:
+        d = await diagnosis.diagnose(session)
+
+    if not d.ok:
+        logging.getLogger("toontoon.watchdog").warning(
+            "сторожу отвечено «нехорошо»: %s", "; ".join(d.reasons))
+    return JSONResponse(d.as_dict(), status_code=200 if d.ok else 503)
