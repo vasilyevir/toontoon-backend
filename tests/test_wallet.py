@@ -8,11 +8,12 @@
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from app.config import settings
 from app.db import models as m
@@ -244,3 +245,81 @@ async def test_guest_transfer_is_trimmed_by_cap(db):
     await session.execute(delete(m.WalletLedger).where(m.WalletLedger.user_id == guest.id))
     await session.execute(delete(m.WalletBalance).where(m.WalletBalance.user_id == guest.id))
     await session.execute(delete(m.User).where(m.User.id == guest.id))
+
+
+async def test_concurrent_spends_cannot_outspend_the_balance():
+    """Пять одновременных списаний на балансе, которого хватает на одно.
+
+    Это тот самый случай, который аудит нашёл живым: остаток читался,
+    проверялся и записывался абсолютным значением без блокировки строки, и
+    пять запросов, пришедших разом, получали пять кадров по цене одного.
+    Журнал после этого показывал −60 при балансе 0, то есть переставал
+    сходиться с остатком — а на нём держится вся разборка жалоб про деньги.
+
+    Тест идёт против настоящего PostgreSQL и своими сессиями на каждое
+    списание: у каждой своя транзакция, как у пяти параллельных запросов.
+    На поддельной базе он не проверяет ничего — блокировки там нет.
+
+    Соединения открываются ЗАРАНЕЕ, и это не украшение. На холодном пуле
+    задачи выстраиваются в очередь за подключением, проходит одна, и тест
+    зеленеет даже на сломанном коде — именно так первая проба аудита едва не
+    объявила дыру несуществующей.
+    """
+    from sqlalchemy import text
+
+    await connect()
+    factory = get_factory()
+    async with factory() as setup:
+        user = m.User(kind="guest")
+        setup.add(user)
+        await setup.flush()
+        uid = user.id
+        await wallet_repo.grant(setup, uid, amount=15, bucket="free", reason="signup",
+                                idempotency_key=f"race:{uid}")
+        await setup.commit()
+
+    sessions = [factory() for _ in range(5)]
+    for s in sessions:
+        await s.execute(text("SELECT 1"))  # соединение в руках до старта
+
+    async def spend_one(s, tag):
+        try:
+            await wallet_repo.spend(s, uid, cost=15, reason="generation",
+                                    ref_id=f"pay_{tag}", idempotency_key=f"spend:pay_{tag}")
+            await s.commit()
+            return True
+        except wallet_repo.InsufficientFunds:
+            await s.rollback()
+            return False
+
+    go = asyncio.Event()
+
+    async def worker(s, tag):
+        await go.wait()
+        return await spend_one(s, tag)
+
+    tasks = [asyncio.create_task(worker(sessions[i], f"{uid}_{i}")) for i in range(5)]
+    await asyncio.sleep(0.05)
+    go.set()
+    results = await asyncio.gather(*tasks)
+    for s in sessions:
+        await s.close()
+
+    async with factory() as check:
+        balance = await wallet_repo.balance(check, uid)
+        rows = (await check.scalars(
+            select(m.WalletLedger).where(m.WalletLedger.user_id == uid))).all()
+
+        assert sum(results) == 1, (
+            f"пятнадцати монет хватает на один кадр, а списаний прошло {sum(results)}"
+        )
+        assert balance.free == 0
+        # Главная гарантия файла: остаток — это сумма журнала. Гонка ломала
+        # именно её, и проверять надо её, а не только число списаний.
+        assert sum(r.delta for r in rows) == balance.total
+
+        await check.execute(delete(m.WalletLedger).where(m.WalletLedger.user_id == uid))
+        await check.execute(delete(m.WalletBalance).where(m.WalletBalance.user_id == uid))
+        await check.execute(delete(m.User).where(m.User.id == uid))
+        await check.commit()
+    await disconnect()

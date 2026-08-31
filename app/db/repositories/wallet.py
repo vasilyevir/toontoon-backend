@@ -38,8 +38,35 @@ class Balance:
         return self.free + self.sub
 
 
-async def ensure(session: AsyncSession, user_id: str) -> m.WalletBalance:
-    wallet = await session.get(m.WalletBalance, user_id)
+async def ensure(
+    session: AsyncSession, user_id: str, *, for_update: bool = False
+) -> m.WalletBalance:
+    """Кошелёк человека, при надобности — под блокировкой.
+
+    `for_update` обязателен везде, где прочитанное число потом записывается
+    обратно. Без него два одновременных запроса читают один и тот же остаток и
+    оба записывают результат СВОЕГО вычитания: списание уходит одно, кадров
+    выдаётся столько, сколько запросов пришло разом. Проверено — на балансе в
+    пятнадцать монет при цене пятнадцать проходили все пять.
+
+    Блокировка снимается вместе с транзакцией, а второй запрос после неё
+    перечитывает строку заново и видит уже новый остаток.
+
+    Запросом, а не `session.get(..., with_for_update=True)`: `get` сперва
+    смотрит в карту объектов сессии, и на строке, прочитанной этим же запросом
+    раньше, вернул бы её из памяти — без похода в базу, то есть и без
+    блокировки. `populate_existing` заставляет перечитать поля даже у уже
+    загруженной строки.
+    """
+    if for_update:
+        wallet = await session.scalar(
+            select(m.WalletBalance)
+            .where(m.WalletBalance.user_id == user_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    else:
+        wallet = await session.get(m.WalletBalance, user_id)
     if wallet is None:
         wallet = m.WalletBalance(user_id=user_id)
         session.add(wallet)
@@ -71,7 +98,7 @@ async def grant(
     if idempotency_key and await _already_applied(session, idempotency_key):
         return await balance(session, user_id)
 
-    wallet = await ensure(session, user_id)
+    wallet = await ensure(session, user_id, for_update=True)
     if bucket == "sub":
         wallet.sub_balance += amount
         after = wallet.sub_balance
@@ -111,7 +138,7 @@ async def reset_subscription_quota(
     if await _already_applied(session, idempotency_key):
         return await balance(session, user_id)
 
-    wallet = await ensure(session, user_id)
+    wallet = await ensure(session, user_id, for_update=True)
     delta = quota - wallet.sub_balance
     wallet.sub_balance = quota
     session.add(
@@ -212,7 +239,7 @@ async def claim_daily_reward(
         return await balance(session, user_id), 0
 
     today = today or datetime.now(timezone.utc).date()
-    wallet = await ensure(session, user_id)
+    wallet = await ensure(session, user_id, for_update=True)
 
     if wallet.last_reward_date == today:
         return Balance(free=wallet.free_balance, sub=wallet.sub_balance), 0
@@ -262,7 +289,7 @@ async def spend(
     if cost <= 0:
         return await balance(session, user_id)
 
-    wallet = await ensure(session, user_id)
+    wallet = await ensure(session, user_id, for_update=True)
     if wallet.sub_balance + wallet.free_balance < cost:
         raise InsufficientFunds(f"need {cost}, have {wallet.sub_balance + wallet.free_balance}")
 
@@ -312,6 +339,15 @@ async def transfer_guest_balance(
     already = await _already_applied(session, f"merge:{target_id}")
     if already:
         return 0
+
+    # Оба кошелька под блокировку, и обязательно в одном и том же порядке —
+    # по возрастанию идентификатора. Порядок здесь не педантизм: перенос
+    # трогает две строки сразу, и два встречных слияния, взявшие их в разном
+    # порядке, встали бы намертво друг против друга. Общее правило снимает это
+    # целиком, не заставляя рассуждать, бывают ли встречные слияния.
+    first, second = sorted((guest_id, target_id))
+    await ensure(session, first, for_update=True)
+    await ensure(session, second, for_update=True)
 
     guest_wallet = await session.get(m.WalletBalance, guest_id)
     if guest_wallet is None or guest_wallet.free_balance <= 0:

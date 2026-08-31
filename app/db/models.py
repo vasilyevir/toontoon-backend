@@ -22,6 +22,7 @@ from typing import Optional
 
 from sqlalchemy import (
     BigInteger,
+    CheckConstraint,
     Float,
     Boolean,
     Date,
@@ -161,6 +162,15 @@ class WalletBalance(Base):
     reward_streak: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=_now, onupdate=_now, nullable=False
+    )
+
+    # Отрицательный остаток невозможен по смыслу, значит запрещать его должна
+    # база. Списание берёт строку под блокировку (`wallet.ensure(for_update)`),
+    # но блокировку в новом пути однажды забудут — а это стоит под всеми
+    # путями сразу.
+    __table_args__ = (
+        CheckConstraint("free_balance >= 0", name="ck_wallet_free_not_negative"),
+        CheckConstraint("sub_balance >= 0", name="ck_wallet_sub_not_negative"),
     )
 
 
