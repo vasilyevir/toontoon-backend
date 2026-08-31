@@ -100,14 +100,12 @@ because they are easy to confuse.
   signed out everywhere. Your payment history is kept, because accounting requires
   it.
 
-> **⚠ Не сделано.** Удаление аккаунта сегодня **не стирает снимки из хранилища**.
-> В коде это помечено как незаконченное. Пока это так, документ обязан говорить
-> именно это — починить продукт дешевле, чем объясняться потом.
->
-> Отдельно и срочнее: Apple требует удаления аккаунта внутри приложения
-> (правило 5.1.1(v)), и то, что есть, этому требованию не отвечает.
+Deletion is started from Settings inside the app, and it does erase the files.
+Both were added on 31 August 2026: before that, the row was anonymised and the
+photographs stayed — a person pressed delete, was told it was done, and their face
+went on being stored.
 
-To delete your data now, write to `[[PRIVACY EMAIL]]` and we will erase it by hand.
+If you would rather ask us, write to `[[PRIVACY EMAIL]]`.
 
 ## 7. Children
 

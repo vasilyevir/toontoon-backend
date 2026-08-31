@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.cookies import clear_session_cookie
+from app.db.repositories import media as media_repo
 from app.db.repositories import users as users_repo
 from app.db.session import get_session as get_db_session
 from app.deps import Context, required_context
@@ -50,10 +51,15 @@ async def delete_profile(
     history points at. So the person disappears — email, name and avatar are
     cleared, the session is killed — while the bookkeeping stays intact (CH-15).
 
-    Erasing the person's files from storage belongs here too and is wired up
-    together with the media migration.
+    Файлы стираются здесь же. До 31 августа 2026 не стирались: строка
+    обезличивалась, а снимки оставались лежать в хранилище. Человек нажимал
+    «удалить», ему отвечали «готово», и его лицо продолжало храниться у нас.
     """
     user, session = ctx
+    # Сперва файлы, потом обезличивание. Обратный порядок опаснее: если стирание
+    # упадёт на середине, у нас останется безымянная строка и чьи-то снимки,
+    # которые уже не привязать к человеку и не найти по запросу.
+    стёрто = await media_repo.erase_everything_of(db, user.id)
     row = await users_repo.get(db, user.id)
     if row is not None:
         row.email = None
@@ -64,4 +70,4 @@ async def delete_profile(
         await db.flush()
     await auth_service.delete_session(session.sid)
     clear_session_cookie(response)
-    return {"ok": True}
+    return {"ok": True, "files_erased": стёрто}

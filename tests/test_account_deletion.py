@@ -22,6 +22,7 @@ from app import redis_client
 from app.db import models as m
 from app.db.repositories import wallet as wallet_repo
 from app.models.session import Session
+from app.storage import get_storage, make_key
 from app.routers import profile as profile_router
 
 
@@ -74,6 +75,36 @@ async def test_deleting_an_account_erases_who_the_person_was(человек_с_�
     assert строка.name is None, "имя осталось"
     assert строка.avatar_key is None, "картинка осталась"
     assert строка.deleted_at is not None, "строка не помечена удалённой"
+
+
+async def test_the_photographs_are_erased_from_storage(человек_с_историей):
+    """Главное обещание удаления: снимков человека больше нет.
+
+    До 31 августа 2026 они оставались. Строка обезличивалась, ответ приходил
+    «готово», а лицо продолжало лежать в хранилище — то есть ответ был ложью.
+
+    Проверяется и байтами, и строкой: файл должен исчезнуть из хранилища, а
+    запись — получить отметку об удалении. Строку не удаляем: на неё ссылаются
+    работы, а на них книга проводок.
+    """
+    session, user, сессия = человек_с_историей
+    storage = get_storage()
+
+    ключ = make_key(user_id=user.id, kind="upload", ext="jpg")
+    await storage.put(ключ, b"\xff\xd8\xff" + b"0" * 900, content_type="image/jpeg")
+    session.add(m.MediaAsset(user_id=user.id, kind="upload", storage_key=ключ,
+                             mime="image/jpeg", bytes=903))
+    await session.flush()
+    assert await storage.exists(ключ), "снимок не положился — тест бессмыслен"
+
+    await profile_router.delete_profile(
+        response=ОтветЗаглушка(), ctx=(user, сессия), db=session, session_cookie=None)
+    await session.flush()
+
+    assert not await storage.exists(ключ), "снимок остался в хранилище после удаления аккаунта"
+    строка = (await session.execute(
+        select(m.MediaAsset).where(m.MediaAsset.user_id == user.id))).scalar_one()
+    assert строка.deleted_at is not None, "запись о снимке не помечена удалённой"
 
 
 async def test_the_ledger_survives_because_accounting_needs_it(человек_с_историей):

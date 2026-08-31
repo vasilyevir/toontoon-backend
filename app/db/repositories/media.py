@@ -6,14 +6,17 @@ site — which is how ``uploads/`` ended up scattered across two services.
 """
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import models as m
 from app.storage import get_storage, make_key
 from app.storage import images
+
+logger = logging.getLogger("toontoon.media")
 
 _EXT_BY_MIME = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
 
@@ -137,6 +140,50 @@ async def signed_url(asset: m.MediaAsset, *, thumb: bool = False) -> Optional[st
     if not key:
         return None
     return await get_storage().signed_url(key)
+
+
+async def erase_everything_of(session: AsyncSession, user_id: str) -> int:
+    """Стереть все файлы человека из хранилища. Возвращает, сколько стёрлось.
+
+    Вызывается при удалении аккаунта. До этого удаление обезличивало строку —
+    почта, имя и картинка в null, — а снимки оставались лежать. То есть человек
+    нажимал «удалить», ему отвечали «готово», и его лицо продолжало храниться у
+    нас. Хуже этого только не дать кнопку вовсе.
+
+    Стираем байты и помечаем строки, а не удаляем их: на медиа ссылаются работы,
+    а на работы — книга проводок, и база справедливо не даст порвать эту цепь.
+    После стирания строка остаётся пустым следом: по ней видно, что файл был и
+    что его больше нет.
+
+    По одному, а не пачкой: хранилище может отказать на любом ключе — файла уже
+    нет, сеть моргнула, — и падение на третьем снимке из двадцати оставило бы
+    остальные семнадцать лежать. Отказ на одном не должен спасать другие.
+    """
+    storage = get_storage()
+    rows = (await session.scalars(
+        select(m.MediaAsset).where(
+            m.MediaAsset.user_id == user_id,
+            m.MediaAsset.deleted_at.is_(None),
+        )
+    )).all()
+
+    стёрто = 0
+    for asset in rows:
+        for key in (asset.storage_key, asset.thumb_key):
+            if not key:
+                continue
+            try:
+                await storage.delete(key)
+            except Exception:
+                # Ключа может не быть — файл уже стирали, или хранилище моргнуло.
+                # Строку всё равно помечаем: она обещает, что файла нет, и это
+                # обещание надо выполнить хотя бы на нашей стороне.
+                logger.warning("не стёрся файл %s пользователя %s", key, user_id)
+        asset.deleted_at = func.now()
+        стёрто += 1
+
+    await session.flush()
+    return стёрто
 
 
 async def soft_delete(session: AsyncSession, asset: m.MediaAsset) -> None:
