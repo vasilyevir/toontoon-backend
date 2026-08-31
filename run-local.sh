@@ -38,4 +38,7 @@ export APPLE_BUNDLE_ID="${APPLE_BUNDLE_ID:-ai.toontoon.ios}"
 export APP_KEY_REQUIRED="${APP_KEY_REQUIRED:-false}"
 export DEBUG=true
 
-exec .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port "$PORT" --reload
+# --no-proxy-headers: тем же, чем в Dockerfile. Разбор X-Forwarded-For у
+# uvicorn включён по умолчанию и переписывает request.client.host, из-за
+# чего ограничители снова начинают верить заголовку запроса.
+exec .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port "$PORT" --reload --no-proxy-headers

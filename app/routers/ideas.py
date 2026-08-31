@@ -26,7 +26,7 @@ from app.db.repositories import generations as generations_repo
 from app.db.repositories import profiles as profiles_repo
 from app.storage import get_storage
 from app.db.session import get_session as get_db_session
-from app.deps import Context, required_context
+from app.deps import Context, costs_money, required_context
 from app.services import gpt as gpt_service
 
 router = APIRouter(prefix="/api", tags=["ideas"])
@@ -41,7 +41,7 @@ class IdeasResponse(BaseModel):
 
 @router.get("/ideas/starters", response_model=IdeasResponse)
 async def starters(
-    ctx: Context = Depends(required_context),
+    ctx: Context = Depends(costs_money),
     db: AsyncSession = Depends(get_db_session),
 ) -> IdeasResponse:
     """С чего начать, когда ещё ничего нет.
@@ -71,7 +71,7 @@ async def starters(
 @router.get("/media/{media_id}/ideas", response_model=IdeasResponse)
 async def photo_ideas(
     media_id: str,
-    ctx: Context = Depends(required_context),
+    ctx: Context = Depends(costs_money),
     db: AsyncSession = Depends(get_db_session),
 ) -> IdeasResponse:
     """Что можно сделать со снимком, который человек только что приложил.
@@ -94,7 +94,7 @@ async def photo_ideas(
 @router.get("/generations/{gen_id}/ideas", response_model=IdeasResponse)
 async def ideas(
     gen_id: str,
-    ctx: Context = Depends(required_context),
+    ctx: Context = Depends(costs_money),
     db: AsyncSession = Depends(get_db_session),
 ) -> IdeasResponse:
     """Четыре правки к этому кадру, каждая — готовая фраза.

@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import MediaAsset
 from app.db.repositories import profiles as profiles_repo
 from app.db.session import get_session as get_db_session
-from app.deps import Context, required_context
+from app.deps import Context, costs_money, required_context
 from app.services import gpt as gpt_service
 from app.storage import get_storage
 
@@ -81,7 +81,7 @@ async def list_profiles(
 @router.post("", response_model=ProfileView)
 async def create_profile(
     body: CreateRequest,
-    ctx: Context = Depends(required_context),
+    ctx: Context = Depends(costs_money),
     db: AsyncSession = Depends(get_db_session),
 ) -> ProfileView:
     """Завести профиль: себя, партнёра, ребёнка, питомца."""
@@ -118,7 +118,7 @@ class UpdateRequest(BaseModel):
 async def update_profile(
     profile_id: str,
     body: UpdateRequest,
-    ctx: Context = Depends(required_context),
+    ctx: Context = Depends(costs_money),
     db: AsyncSession = Depends(get_db_session),
 ) -> ProfileView:
     """Переименовать профиль или поменять его набор снимков.
@@ -228,7 +228,7 @@ class ReviewResponse(BaseModel):
 @router.post("/review", response_model=ReviewResponse)
 async def review(
     body: ReviewRequest,
-    ctx: Context = Depends(required_context),
+    ctx: Context = Depends(costs_money),
     db: AsyncSession = Depends(get_db_session),
 ) -> ReviewResponse:
     """Что из набора годится и какого снимка не хватает.

@@ -38,12 +38,9 @@ class EventBatch(BaseModel):
     anon_id: Optional[str] = Field(default=None, max_length=64)
 
 
-def _client_ip(request: Request) -> str:
-    return (
-        request.headers.get("x-real-ip")
-        or (request.headers.get("x-forwarded-for", "").split(",")[0].strip())
-        or (request.client.host if request.client else "unknown")
-    )
+# Общий разбор — тот же, что в аутентификации. Своя копия здесь врала так же:
+# адрес брался из заголовка, который пишет отправитель.
+_client_ip = rate_limit.client_ip
 
 
 @router.post("/events")

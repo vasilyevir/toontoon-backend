@@ -14,19 +14,20 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal, Optional, Sequence
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.core import rate_limit
 from app.db import models as m
 from app.db.repositories import chat as chat_repo
 from app.db.repositories import state as state_repo
 from app.db.repositories import profiles as profiles_repo
 from app.db.session import get_session as get_db_session
 from app.storage import get_storage
-from app.deps import Context, optional_context, required_context
+from app.deps import Context, costs_money, optional_context, required_context
 from app.services import conversation
 from app.services import gpt as gpt_service
 
@@ -179,6 +180,7 @@ def _serialize(row: m.ChatMessage, result_media_id: Optional[str]) -> StoredMess
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     body: ChatRequest,
+    request: Request,
     ctx: Optional[Context] = Depends(optional_context),
     db: AsyncSession = Depends(get_db_session),
 ) -> ChatResponse:
@@ -190,6 +192,21 @@ async def chat(
     """
     if not body.message.strip():
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Say something first.")
+
+    # Счётчик здесь свой, а не общей зависимостью `costs_money`: та требует
+    # сессию, а эта ручка работает и без неё — и именно поэтому ограничитель ей
+    # нужнее всех остальных. Без сессии запрос всё равно доходит до модели
+    # (ниже), то есть до правки за неё платил кто угодно, ни разу не
+    # представившись.
+    #
+    # Считаем по человеку, когда он известен, и по адресу, когда нет. Адрес
+    # теперь берётся у прокси, которому мы верим, а не из заголовка запроса, —
+    # иначе счётчик снимался бы одной строкой.
+    кто = f"model:{ctx[0].id}" if ctx else f"model:ip:{rate_limit.client_ip(request)}"
+    allowed, _remaining = await rate_limit.hit(кто, settings.model_calls_per_hour, 3600)
+    if not allowed:
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS,
+                            detail="Слишком часто. Попробуйте через несколько минут.")
 
     if ctx is None:
         # Без сессии мы ничего не разбирали, и «готово» тут означало бы
@@ -450,7 +467,7 @@ class AttachmentResponse(BaseModel):
 @router.post("/chat/attachment", response_model=AttachmentResponse)
 async def attachment(
     body: AttachmentRequest,
-    ctx: Context = Depends(required_context),
+    ctx: Context = Depends(costs_money),
     db: AsyncSession = Depends(get_db_session),
 ) -> AttachmentResponse:
     """Снимок кладётся в переписку и сразу получает ответ — четыре идеи.

@@ -16,6 +16,7 @@ from typing import Optional
 from fastapi import Cookie, Depends, Header, HTTPException, status
 
 from app.config import settings
+from app.core import rate_limit
 from app.db import models as db_models
 from app.db.repositories import users as users_repo
 from app.db.session import session_scope
@@ -69,6 +70,33 @@ optional_context = _build_optional_context()
 async def required_context(ctx: Optional[Context] = Depends(optional_context)) -> Context:
     if ctx is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    return ctx
+
+
+async def costs_money(ctx: Context = Depends(required_context)) -> Context:
+    """То же, что `required_context`, но со счётчиком: ручка платит за модель.
+
+    Зависимостью, а не строкой в каждой ручке. Строку в новой ручке забудут —
+    и забыли: разговор, зрение по снимку, разбор набора фотографий и идеи к
+    кадру не имели ограничителя вовсе, хотя каждый вызов там стоит денег.
+    Разбор набора — до пятнадцати картинок в зрение за один запрос.
+
+    Само по себе это было бы полбеды, но гостей заводили без счёта, а значит
+    и бесплатных аккаунтов было сколько угодно. Ограничитель здесь считает по
+    человеку; тому, что человек стоит дороже одного запроса, служит счётчик на
+    заведении гостя.
+
+    Возвращает тот же `Context`, поэтому в ручке меняется одно слово.
+    """
+    user, _ = ctx
+    allowed, _remaining = await rate_limit.hit(
+        f"model:{user.id}", settings.model_calls_per_hour, 3600
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Слишком часто. Попробуйте через несколько минут.",
+        )
     return ctx
 
 

@@ -65,6 +65,7 @@ async def _merge_guest(db: AsyncSession, ctx: Optional[Context], target_id: str)
 
 @router.post("/guest", response_model=AuthResult, status_code=status.HTTP_201_CREATED)
 async def create_guest(
+    request: Request,
     response: Response,
     db: AsyncSession = Depends(get_db_session),
 ) -> AuthResult:
@@ -77,7 +78,24 @@ async def create_guest(
 
     Unlike every other identity in this file, a guest lives in PostgreSQL: this
     is the first route on the new storage.
+
+    Счётчик здесь потому, что ручка раздаёт деньги, не спрашивая, кто пришёл.
+    Каждый гость получает `signup_toontoon_balance` монет, и без счётчика
+    двадцать запросов подряд заводили двадцать аккаунтов с шестьюстами монетами
+    на них — сорок генераций из двадцати запросов, за наш счёт.
+
+    Это полумера, и честно называть её так. Настоящий замок — App Attest,
+    подтверждение, что запрос пришёл из нашего приложения на живом устройстве;
+    ключ приложения (`app_key_required`) закроет большую часть раньше. Счётчик
+    останавливает скрипт с одной машины, но не сеть машин.
     """
+    allowed, _remaining = await rate_limit.hit(
+        f"guest:ip:{rate_limit.client_ip(request)}", settings.guests_per_hour, 3600
+    )
+    if not allowed:
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS,
+                            detail="Too many attempts, try later")
+
     user = await users_repo.create_guest(db)
     await wallet_repo.grant(
         db,
@@ -167,13 +185,14 @@ async def magic_link_verify_json(
 # ─── Email + password (v1.5) ────────────────────────────────────────────────
 
 
-def _client_ip(request: Request) -> str:
-    # nginx sets X-Real-IP / X-Forwarded-For; fall back to the socket peer.
-    return (
-        request.headers.get("x-real-ip")
-        or (request.headers.get("x-forwarded-for", "").split(",")[0].strip())
-        or (request.client.host if request.client else "unknown")
-    )
+# Кто прислал запрос — общим разбором в `app.core.rate_limit`.
+#
+# Раньше здесь стояла своя копия: «взять X-Real-IP, иначе первый элемент
+# X-Forwarded-For». Оба заголовка пишет кто угодно, и проверка на живом сервере
+# показала, что ограничители по адресу снимались подменой заголовка целиком —
+# четырнадцать запросов из четырнадцати проходили. Такая же копия жила в
+# роутере событий и врала ровно так же.
+_client_ip = rate_limit.client_ip
 
 
 @router.post("/register", response_model=AuthResult, status_code=status.HTTP_201_CREATED)
