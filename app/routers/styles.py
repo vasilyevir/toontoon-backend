@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.db import models as m
 from app.db.repositories import styles as styles_repo
 from app.db.session import get_session as get_db_session
@@ -30,6 +31,7 @@ router = APIRouter(prefix="/api", tags=["catalog"])
 # Titles are English: the interface ships in English (CH-12).
 CATEGORY_TITLES = {
     "ai_photo_studio": "AI Photo Studio",
+    "black_and_white": "Black & White",
     "glow_up": "Editorial Glow-Up",
     "paparazzi_flash": "Paparazzi Flash",
     "polaroid_reunion": "Polaroid Reunion",
@@ -51,6 +53,12 @@ class StyleOut(BaseModel):
     # What the launch screen must ask for. The client builds the screen from
     # this, which is what lets a new operation ship without a new screen (CH-21).
     input_spec: dict
+    #: Кого рисуем: «person» или «pet». Пусто — человека.
+    #:
+    #: Наружу вынесено затем, что от этого зависит не только промпт, но и экран:
+    #: у стиля про животное профиль человека бесполезен, и предлагать «Generate
+    #: with profile» значит обещать кадр с чужим лицом вместо своей собаки.
+    subject: Optional[str] = None
     cost: int
     examples: list[str] = []
 
@@ -73,6 +81,7 @@ def _style_out(row: m.Style) -> StyleOut:
         category=row.category,
         operation=row.operation,
         input_spec=row.input_spec or {},
+        subject=(row.prompt_template or {}).get("subject"),
         cost=row.cost,
         # Примеры каталога отдаёт свой публичный маршрут, а не /api/media:
         # там проверка владельца, а у витринной картинки владельца нет и быть
@@ -102,11 +111,20 @@ async def list_styles(
 ) -> list[CategoryOut]:
     """The whole catalogue, grouped by direction.
 
-    Directions marked ♥ during onboarding come first; inside a direction the
-    order is the one we set by hand.
+    Порядок разделов — тот, что выставлен вручную в `CATEGORIES`, и он один
+    для всех. Внутри раздела — тоже заданный.
+
+    Персонализация (♥ из онбординга наверх) написана и лежит рядом, но
+    выключена флагом `personalise_catalogue`. Она переворачивала верх витрины:
+    человек, отметивший шесть направлений из одиннадцати, видел первыми их, и
+    выстроенный порядок начинал работать только с седьмой ленты. Пока задача —
+    первое впечатление, а оно должно быть одинаковым и предсказуемым.
     """
-    liked = await _liked_categories(db, ctx)
-    ordering = [c for c in CATEGORIES if c in liked] + [c for c in CATEGORIES if c not in liked]
+    # Скрытые разделы не попадают в витрину вовсе: ни лентой, ни заголовком.
+    ordering = [c for c in CATEGORIES if c not in settings.hidden_category_list]
+    if settings.personalise_catalogue:
+        liked = await _liked_categories(db, ctx)
+        ordering = ([c for c in ordering if c in liked] + [c for c in ordering if c not in liked])
 
     result: list[CategoryOut] = []
     for category in ordering:
@@ -127,8 +145,13 @@ async def home_styles(
     db: AsyncSession = Depends(get_db_session),
     limit: int = Query(default=8, ge=1, le=24),
 ) -> list[StyleOut]:
-    """The showcase: a few strong examples, not a grid of everything (CH-14)."""
-    liked = await _liked_categories(db, ctx)
+    """The showcase: a few strong examples, not a grid of everything (CH-14).
+
+    Ранжирование под человека — тем же флагом, что и порядок разделов: иначе
+    ленты шли бы одинаково у всех, а витрина над ними — по-разному, и первое
+    впечатление опять зависело бы от ответов в онбординге.
+    """
+    liked = await _liked_categories(db, ctx) if settings.personalise_catalogue else []
     rows = await styles_repo.list_styles(db, home_only=True, limit=limit * 3)
     ranked = styles_repo.rank_for(rows, liked)[:limit]
     return [_style_out(r) for r in ranked]

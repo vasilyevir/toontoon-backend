@@ -30,12 +30,20 @@ router = APIRouter(prefix="/api/onboarding", tags=["onboarding"])
 # значит рассказывать не с того места.
 CATEGORIES = (
     "ai_photo_studio",
-    "glow_up",
-    "paparazzi_flash",
-    "polaroid_reunion",
-    "artistic_touch",
+    # Монохром сразу за студией: восемь тёмных карточек подряд — единственное
+    # пятно в цветной решётке, и заметен раздел ровно тем, что не похож на
+    # соседей. Ниже по списку это преимущество пропадает.
+    "black_and_white",
     "cartoon_me",
     "lifestyle_travel",
+    "glow_up",
+    # Между пятым и шестым на главной вклинивается лента «Today in Shots» —
+    # она не раздел каталога, и порядок её вставки задан в приложении.
+    "artistic_touch",
+    "paparazzi_flash",
+    # Хвост: разделы, для которых пока нет ни свежих примеров, ни спроса. Их
+    # порядок между собой значения не имеет — до них долистывают редко.
+    "polaroid_reunion",
     "fantasy_mode",
     "pet_magic",
     "family_fun",
