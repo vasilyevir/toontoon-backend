@@ -166,14 +166,64 @@ def apple_like(monkeypatch):
     return chain, leaf_key
 
 
-def test_a_good_receipt_is_accepted(apple_like):
-    """Целая цепочка, верная подпись, наш bundleId — чек проходит."""
+@pytest.fixture
+def как_в_проде(monkeypatch):
+    """Прод-настройки принудительно.
+
+    Без этой фикстуры тесты наследуют `.env` разработчика, где `DEBUG=true` и
+    `ACCEPT_STOREKIT_TEST_ROOT=true`, — а оба флага снимают проверку
+    происхождения чека целиком. Зелёный тест тогда доказывает только то, что
+    на машине разработчика проверка выключена, и молчит ровно о том, ради чего
+    написан.
+    """
+    monkeypatch.setattr("app.config.settings.debug", False, raising=False)
+    monkeypatch.setattr("app.config.settings.accept_storekit_test_root", False,
+                        raising=False)
+
+
+def test_a_good_receipt_is_accepted(apple_like, как_в_проде):
+    """Целая цепочка, верная подпись, наш bundleId, покупка настоящая."""
     chain, leaf_key = apple_like
     payload = {"originalTransactionId": "1000000123456789",
                "productId": "week", "bundleId": "ai.toontoon.ios",
-               "environment": "Sandbox"}
+               "environment": "Production"}
     got = app_store.verify_transaction(_signed(payload, chain, leaf_key))
     assert got["originalTransactionId"] == "1000000123456789"
+
+
+@pytest.mark.parametrize("environment", ["Sandbox", "Xcode", "", None])
+def test_a_receipt_that_is_not_from_the_store_is_refused(apple_like, как_в_проде, environment):
+    """Чек песочницы подписан ТЕМ ЖЕ корнем Apple, и цепочка у него безупречная.
+
+    Отличает его единственное поле, и до правки оно читалось, клалось в базу и
+    не проверялось нигде. Покупка в песочнице бесплатна: подписку себе выписывал
+    любой, у кого есть сборка из TestFlight или пересобранный IPA.
+
+    Пустое поле — тоже отказ. Это граница, за которой деньги, и «непонятно,
+    откуда чек» здесь означает «не принимаю», а не «наверное, настоящий».
+    """
+    chain, leaf_key = apple_like
+    payload = {"originalTransactionId": "1000000123456789",
+               "productId": "week", "bundleId": "ai.toontoon.ios"}
+    if environment is not None:
+        payload["environment"] = environment
+    with pytest.raises(app_store.BadTransaction):
+        app_store.verify_transaction(_signed(payload, chain, leaf_key))
+
+
+def test_an_unset_bundle_id_refuses_everything(apple_like, как_в_проде, monkeypatch):
+    """Незаданная настройка — причина не пустить, а не причина пустить всех.
+
+    Раньше сверка приложения стояла под `if wanted and ...`: пустой
+    APPLE_BUNDLE_ID ОТКЛЮЧАЛ её целиком, и забытая переменная окружения
+    открывала дверь покупке из любого приложения App Store.
+    """
+    chain, leaf_key = apple_like
+    monkeypatch.setattr("app.config.settings.apple_bundle_id", "", raising=False)
+    payload = {"originalTransactionId": "1", "bundleId": "ai.toontoon.ios",
+               "environment": "Production"}
+    with pytest.raises(app_store.BadTransaction):
+        app_store.verify_transaction(_signed(payload, chain, leaf_key))
 
 
 def test_a_tampered_payload_breaks_the_signature(apple_like):

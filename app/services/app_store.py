@@ -231,16 +231,50 @@ def _check_bundle(payload: dict, where: str) -> None:
 
     Чужая программа подписана тем же корнем Apple, и цепочка у неё безупречная.
     Без этой сверки её покупка открывала бы дверь сюда.
+
+    Незаданный `apple_bundle_id` — отказ, а не разрешение. Раньше здесь стояло
+    `if wanted and ...`: пустая настройка ОТКЛЮЧАЛА проверку целиком, то есть
+    забытая переменная окружения открывала дверь любой покупке из любого
+    приложения App Store. Отсутствие настройки — причина не пустить, а не
+    причина пустить всех.
     """
     wanted = (settings.apple_bundle_id or "").strip()
-    if wanted and payload.get("bundleId") != wanted:
+    if not wanted:
+        raise BadTransaction(
+            "APPLE_BUNDLE_ID не задан: сверить приложение не с чем, "
+            f"{where} не принимается")
+    if payload.get("bundleId") != wanted:
         raise BadTransaction(f"{where} от другого приложения: {payload.get('bundleId')}")
 
 
+def _check_environment(payload: dict, where: str) -> None:
+    """Настоящая ли это покупка или из песочницы.
+
+    Чеки песочницы подписаны ТЕМ ЖЕ корнем Apple, и цепочка у них безупречная —
+    отличает их единственное поле. Поле это читалось и клалось в базу, но не
+    проверялось нигде: покупка в песочнице бесплатна, и подписку себе выписывал
+    любой, у кого есть сборка из TestFlight или пересобранный IPA.
+
+    Принимается только явное `production`. Пустое поле — тоже отказ: это
+    граница, за которой деньги, и «не знаю, откуда чек» здесь означает «не
+    принимаю», а не «наверное, настоящий».
+
+    `accept_storekit_test_root` снимает проверку целиком — тот флаг и так
+    означает «принимаю чеки, выписанные кем угодно с Xcode», и в проде он
+    обязан быть выключен (о чём кричит проверка при старте).
+    """
+    if settings.accept_storekit_test_root or settings.debug:
+        return
+    env = str(payload.get("environment") or "").strip().lower()
+    if env != "production":
+        raise BadTransaction(f"{where} не из App Store, а из {env or 'неизвестно откуда'}")
+
+
 def verify_transaction(signed: str, *, now: datetime | None = None) -> dict:
-    """Чек о покупке: подпись, наше приложение, имя человека внутри."""
+    """Чек о покупке: подпись, наше приложение, настоящая покупка, имя внутри."""
     payload = verify_jws(signed, now=now)
     _check_bundle(payload, "чек")
+    _check_environment(payload, "чек")
     if not payload.get("originalTransactionId"):
         raise BadTransaction("в чеке нет originalTransactionId")
     return payload
@@ -261,6 +295,9 @@ def verify_notification(signed: str, *, now: datetime | None = None) -> dict:
     outer = verify_jws(signed, now=now)
     data = outer.get("data") or {}
     _check_bundle(data, "уведомление")
+    # Уведомления о песочнице Apple шлёт на тот же адрес. Применять их к
+    # настоящим подпискам нельзя ровно по той же причине, что и чеки.
+    _check_environment(data, "уведомление")
 
     inner = data.get("signedTransactionInfo")
     if not inner:

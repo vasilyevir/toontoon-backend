@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import models as m
@@ -26,14 +26,61 @@ def _moment(value) -> Optional[datetime]:
 
 
 def _fields(payload: dict) -> dict:
+    """Что чек рассказывает о себе. Без состояния — его решает не наличие чека.
+
+    Раньше здесь стояло `"status": "active"` жёстко, и это была дыра: чек
+    предъявляется при каждом запуске приложения, а `refresh` раскладывал эти
+    поля по строке подписки. Значит человек, которому вернули деньги, показывал
+    сохранённую строку JWS ещё раз — и подписка снова становилась действующей.
+    Отозвать чек нельзя, он у него на руках навсегда.
+    """
     return {
         "product_id": str(payload.get("productId") or ""),
-        "status": "active",
         "current_period_start": _moment(payload.get("purchaseDate")),
         "current_period_end": _moment(payload.get("expiresDate")),
         "environment": str(payload.get("environment") or "").lower() or None,
         "raw_payload": payload,
     }
+
+
+def status_from_receipt(payload: dict, *, now: Optional[datetime] = None) -> str:
+    """Что чек говорит о своей покупке сам.
+
+    Три состояния, и все три написаны в самом чеке:
+
+    * `revocationDate` — деньги вернули, Apple помечает это прямо в транзакции;
+    * `expiresDate` в прошлом — срок вышел;
+    * иначе действует.
+
+    Раньше не проверялось ни то, ни другое: `current_period_end` писался в базу
+    и не читался нигде во всём коде, поэтому чек из августа 2025-го давал
+    действующую подписку год спустя.
+    """
+    now = now or datetime.now(timezone.utc)
+    if payload.get("revocationDate") or payload.get("revocationReason") is not None:
+        return "refunded"
+    ends = _moment(payload.get("expiresDate"))
+    if ends is not None and ends <= now:
+        return "expired"
+    return "active"
+
+
+def _tells_us_something_new(payload: dict, row: m.Subscription) -> bool:
+    """Новее ли этот чек того, что уже записано.
+
+    Вопрос ровно один: продлил ли человек покупку с прошлого раза. Если срок в
+    чеке не дальше того, что у нас записано, — это повтор уже известного, и
+    трогать по нему состояние нельзя: именно так возврат и отменялся.
+
+    А вот честное продление или новая подписка после возврата приносят срок
+    дальше прежнего — и такой чек законно возвращает человеку доступ. Подделать
+    его нельзя: тело подписано Apple.
+    """
+    fresh = _moment(payload.get("expiresDate")) or _moment(payload.get("purchaseDate"))
+    if fresh is None:
+        return False
+    known = row.current_period_end or row.current_period_start
+    return known is None or fresh > known
 
 
 async def get_by_original_transaction(
@@ -52,6 +99,7 @@ async def bind(session: AsyncSession, *, user_id: str, payload: dict) -> m.Subsc
         original_transaction_id=str(payload["originalTransactionId"]),
         # Отсчёт недельной квоты — от покупки, а не от продления в App Store.
         quota_anchor_at=_moment(payload.get("purchaseDate")) or datetime.now(timezone.utc),
+        status=status_from_receipt(payload),
         **_fields(payload),
     )
     session.add(row)
@@ -59,10 +107,24 @@ async def bind(session: AsyncSession, *, user_id: str, payload: dict) -> m.Subsc
     return row
 
 
-async def refresh(session: AsyncSession, row: m.Subscription, *, payload: dict) -> m.Subscription:
-    """Тот же владелец, свежий чек: обновить сроки и состояние."""
+async def refresh(
+    session: AsyncSession, row: m.Subscription, *, payload: dict,
+    now: Optional[datetime] = None,
+) -> m.Subscription:
+    """Тот же владелец предъявил чек: обновить сроки, если он новее.
+
+    Предъявление — обычное дело, а не событие: приложение показывает чек при
+    каждом запуске, чтобы узнать человека. Значит эта функция обязана уметь
+    отличать «продлил» от «показал то же самое», иначе повтор старой строки
+    отменяет возврат денег.
+
+    Повтор известного не меняет ничего — даже сроков: они уже записаны.
+    """
+    if not _tells_us_something_new(payload, row):
+        return row
     for field, value in _fields(payload).items():
         setattr(row, field, value)
+    row.status = status_from_receipt(payload, now=now)
     await session.flush()
     return row
 
@@ -72,13 +134,35 @@ async def rebind(
 ) -> m.Subscription:
     """Владелец удалён — покупка снова ничья и достаётся тому, кто её принёс."""
     row.user_id = user_id
-    return await refresh(session, row, payload=payload)
+    await refresh(session, row, payload=payload)
+    # Свой flush: чек мог оказаться не новее, и тогда `refresh` ничего не
+    # записал — а смену владельца сохранить надо в любом случае.
+    await session.flush()
+    return row
 
 
 async def active_for_user(session: AsyncSession, user_id: str) -> Optional[m.Subscription]:
+    """Действующая подписка — и «действующая» значит в том числе «не истёкшая».
+
+    Одного `status` мало: он ставится по чеку и по уведомлениям, а между
+    уведомлениями срок кончается сам. Пока проверки не было,
+    `current_period_end` писался в базу и не читался никем, и просроченная
+    подписка оставалась действующей вечно.
+
+    Платящих это не запирает: приложение показывает свежий чек при каждом
+    запуске (`Purchases.restore` по `currentEntitlements`), и продление
+    отодвигает срок раньше, чем человек его заметит.
+    """
     return await session.scalar(
         select(m.Subscription)
-        .where(m.Subscription.user_id == user_id, m.Subscription.status == "active")
+        .where(
+            m.Subscription.user_id == user_id,
+            m.Subscription.status == "active",
+            or_(
+                m.Subscription.current_period_end.is_(None),
+                m.Subscription.current_period_end > func.now(),
+            ),
+        )
         .order_by(m.Subscription.created_at.desc())
     )
 
