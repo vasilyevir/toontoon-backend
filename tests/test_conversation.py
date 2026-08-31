@@ -236,7 +236,7 @@ def test_a_request_with_nothing_to_draw_is_refused():
 
     assert _has_subject(GenerateRequest(prompt="постер в стиле аниме"))
     assert _has_subject(GenerateRequest(tile_id="tile_1"))
-    assert _has_subject(GenerateRequest(style_id="anime_look"))
+    assert _has_subject(GenerateRequest(style_id="comic_panel"))
 
 
 def test_the_model_is_told_the_photo_is_here():
