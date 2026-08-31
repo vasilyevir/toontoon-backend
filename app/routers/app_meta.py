@@ -27,6 +27,7 @@ from app.db.repositories import subscriptions as subscriptions_repo
 from app.db.repositories import styles as styles_repo
 from app.routers import chat as chat_router
 from app.routers import styles as styles_router
+from app.db.repositories import wallet as wallet_repo
 from app.services import wallet
 
 router = APIRouter(prefix="/api/app", tags=["app"])
@@ -58,6 +59,9 @@ class BootstrapResponse(BaseModel):
     # Знать это надо первому же экрану: карточка в настройках либо продаёт, либо
     # говорит, что уже куплено, и выбрать между этим можно только зная ответ.
     subscription: Optional[dict]
+    #: Награда, которую сегодня ещё не забрали: `{amount, streak}`. Пусто —
+    #: показывать нечего. Выдаётся по `POST /api/billing/rewards/daily`.
+    daily_reward: Optional[dict]
     # Заказы, которые сейчас в пути. Обычно пусто; непусто ровно тогда, когда
     # человек закрыл приложение, не дождавшись кадра, — и без этого списка
     # вернувшемуся нечем показать, что работа идёт.
@@ -114,6 +118,7 @@ async def bootstrap(
     messages: list[dict] = []
     pending: list[dict] = []
     subscription: Optional[dict] = None
+    daily_reward: Optional[dict] = None
     if ctx is not None:
         u, session = ctx
         user = PublicUser.from_row(u, provider=session.provider)
@@ -124,6 +129,12 @@ async def bootstrap(
         # идентификатором работы, и показать его было нечем.
         messages = [msg.model_dump(mode="json") for msg in
                     await chat_router.serialize_thread(db, rows)]
+        # Ждёт ли награда — спрашиваем, не выдавая: выдача происходит по
+        # нажатию «Claim», иначе кнопка была бы декорацией.
+        amount, streak = await wallet_repo.pending_daily_reward(db, u.id)
+        if amount:
+            daily_reward = {"amount": amount, "streak": streak}
+
         active = await subscriptions_repo.active_for_user(db, u.id)
         if active is not None:
             plan = await plans_repo.get_by_product(db, active.product_id)
@@ -154,6 +165,7 @@ async def bootstrap(
         messages=messages,
         pending=pending,
         subscription=subscription,
+        daily_reward=daily_reward,
         config=AppConfig(
             image_toontoon_cost=settings.image_toontoon_cost,
             video_toontoon_cost=settings.video_toontoon_cost,
