@@ -72,12 +72,39 @@ async def upload(
     them. On the way in the metadata is stripped (phone photos carry the GPS
     coordinates of where they were taken) and the same picture uploaded twice
     is stored once.
+
+    Тип из заголовка проверяется по-прежнему, но полагаться на него нельзя:
+    его пишет клиент, а декодер выбирается по содержимому. Настоящую границу
+    держит `images.ALLOWED_FORMATS` при разборе — там названы те же четыре
+    формата, и совпадение двух списков проверяется тестом.
     """
+    user, _ = ctx
+
+    allowed, _remaining = await rate_limit.hit(
+        f"upload:{user.id}", settings.uploads_per_hour, 3600
+    )
+    if not allowed:
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS,
+                            detail="Too many uploads, try later")
+
     if file.content_type not in _ALLOWED_IMAGE_TYPES:
         raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Unsupported image type")
 
-    user, _ = ctx
-    data = await file.read()
+    # Потолок ДО чтения: тело уезжает в память целиком, и без него запрос на
+    # полгигабайта — это полгигабайта памяти пода, ещё до того как его увидит
+    # разбор картинки.
+    #
+    # Заголовку про длину верим ровно настолько, чтобы отказать раньше чтения;
+    # соврать в нём можно, поэтому ниже стоит вторая проверка — уже по факту.
+    заявлено = file.size if file.size is not None else None
+    if заявлено is not None and заявлено > settings.max_upload_bytes:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                            detail=f"Файл больше {settings.max_upload_mb} МБ")
+
+    data = await file.read(settings.max_upload_bytes + 1)
+    if len(data) > settings.max_upload_bytes:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                            detail=f"Файл больше {settings.max_upload_mb} МБ")
     try:
         asset = await media_repo.save_image(db, user_id=user.id, kind="upload", data=data)
     except Exception as exc:  # noqa: BLE001 — a broken image is a client error

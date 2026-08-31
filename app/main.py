@@ -143,6 +143,13 @@ app = FastAPI(
     version="1.0.0",
     description="Identity, wallet and AI content generation for TOONTOON.",
     lifespan=lifespan,
+    # Описание API наружу не отдаём. `/openapi.json` перечисляет все ручки со
+    # схемами тел — то есть выдаёт готовую карту поверхности всякому, кто
+    # спросит. Разработчику оно нужно, публике — нет, и включается вместе с
+    # `DEBUG`, а не забывается вместе с ним.
+    docs_url="/docs" if settings.debug else None,
+    redoc_url="/redoc" if settings.debug else None,
+    openapi_url="/openapi.json" if settings.debug else None,
 )
 
 app.add_middleware(
