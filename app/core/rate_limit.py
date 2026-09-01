@@ -38,6 +38,31 @@ def client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+async def claim(key: str, ttl_seconds: int) -> bool:
+    """Занять место под ключом. `False` — оно уже занято.
+
+    Не счётчик, а замок: счётчик отвечает «сколько раз за час», а здесь вопрос
+    другой — «идёт ли это прямо сейчас». Двойное нажатие укладывается в один час
+    любого счётчика и всё равно списывает дважды.
+
+    `SET NX EX` одной командой: проверка и занятие должны быть неделимы, иначе
+    два запроса успеют проверить раньше, чем любой из них займёт, — и замок
+    повторит ровно ту гонку, ради которой поставлен.
+
+    Срок жизни обязателен. Держатель замка может не дожить до его снятия —
+    выкатка, OOM, перезапуск пода, — и тогда без срока человек остался бы
+    заперт навсегда.
+    """
+    redis = get_client()
+    return bool(await redis.set(f"lock:{key}", "1", ex=ttl_seconds, nx=True))
+
+
+async def let_go(key: str) -> None:
+    """Снять замок. Снимать чужой нечем: ключ у каждого свой."""
+    redis = get_client()
+    await redis.delete(f"lock:{key}")
+
+
 async def hit(key: str, limit: int, window_seconds: int) -> tuple[bool, int]:
     """Register one hit against ``key``.
 

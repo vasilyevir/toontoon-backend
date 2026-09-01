@@ -500,7 +500,29 @@ class Generation(Base):
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
+    # Чем приложение отличает «нажал второй раз» от «послал ту же просьбу
+    # заново». Ключ рождается в момент, когда человек решился, и переживает
+    # повтор запроса; сервер по нему отдаёт тот же заказ, а не заводит второй.
+    #
+    # Нужно потому, что кадр рисуется в фоне, а запрос возвращается сразу.
+    # Приложение, не дождавшееся ответа на плохой связи, повторяет — и до этого
+    # ключа повтор был неотличим от нового заказа и стоил ещё пятнадцать монет.
+    # Замок «одна работа за раз» этого не ловит: он живёт три секунды, пока идёт
+    # запрос, а повтор приходит минутой позже.
+    idempotency_key: Mapped[Optional[str]] = mapped_column(String(64))
+
     __table_args__ = (
+        # Один ключ — один заказ, и это гарантия базы, а не намерение кода.
+        # Проверка «есть ли уже такой» и вставка идут двумя шагами, между
+        # которыми успевает влезть второй запрос; уникальный индекс закрывает
+        # именно эту щель.
+        Index(
+            "uq_generations_idempotency",
+            "user_id",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=idempotency_key.is_not(None),
+        ),
         Index(
             "ix_generations_user_created",
             "user_id",

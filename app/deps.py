@@ -12,7 +12,7 @@ Redis is for. Everything that must survive a restart moved.
 from __future__ import annotations
 
 from datetime import timezone
-from typing import Optional
+from typing import AsyncIterator, Optional
 
 from fastapi import Cookie, Depends, Header, HTTPException, status
 
@@ -125,6 +125,47 @@ async def costs_money(ctx: Context = Depends(required_context)) -> Context:
             detail="Слишком часто. Попробуйте через несколько минут.",
         )
     return ctx
+
+
+async def one_generation_at_a_time(
+    ctx: Context = Depends(required_context),
+) -> AsyncIterator[Context]:
+    """Не начинать вторую работу, пока идёт первая.
+
+    Двойное нажатие на «Generate» списывало дважды и рисовало два кадра.
+    Проверено: два одновременных резервирования от одного человека проходят оба
+    и уносят тридцать монет вместо пятнадцати. Блокировка строки кошелька,
+    поставленная от гонки в списании, здесь не помогает и не должна: два
+    списания по пятнадцать при балансе в сотню — это два ЗАКОННЫХ списания, и
+    кошелёк не может знать, что человек хотел один кадр.
+
+    Знать это может только тот, кто видит намерение, — то есть эта ручка.
+
+    Зависимостью с `yield`, а не `try/finally` внутри ручки: тело у неё
+    четыреста строк, и обернуть их значило бы сдвинуть все четыреста. Здесь
+    FastAPI сам снимает замок после ответа — и снимает его при любом исходе,
+    включая отказ на середине.
+
+    Замок один на человека, а не на просьбу. «Одна работа за раз» — то, как
+    приложение и так себя ведёт, и это единственное правило, при котором
+    повторное нажатие нельзя спутать с осознанным вторым заказом.
+
+    Что этого НЕ ловит: повтор после того, как первый запрос завершился, — на
+    плохой связи приложение может не дождаться ответа и послать заново. Против
+    этого ключ идемпотентности, он приходит от клиента и живёт в базе.
+    """
+    user, _ = ctx
+    ключ = f"gen:inflight:{user.id}"
+    if not await rate_limit.claim(ключ, settings.generation_lock_seconds):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Один кадр уже рисуется. Дождитесь его — деньги за второй "
+                   "списывать не будем.",
+        )
+    try:
+        yield ctx
+    finally:
+        await rate_limit.let_go(ключ)
 
 
 async def current_user(ctx: Context = Depends(required_context)) -> db_models.User:

@@ -27,6 +27,7 @@ async def create(
     request_params: Optional[dict] = None,
     source_media_id: Optional[str] = None,
     cost: int = 0,
+    idempotency_key: Optional[str] = None,
 ) -> m.Generation:
     generation = m.Generation(
         user_id=user_id,
@@ -39,6 +40,7 @@ async def create(
         request_params=request_params or {},
         source_media_id=source_media_id,
         cost=cost,
+        idempotency_key=idempotency_key,
     )
     session.add(generation)
     await session.flush()
@@ -224,5 +226,21 @@ async def ensure_share_id(session: AsyncSession, generation: m.Generation) -> st
 async def get_by_share_id(session: AsyncSession, share_id: str) -> Optional[m.Generation]:
     stmt = select(m.Generation).where(
         m.Generation.share_id == share_id, m.Generation.deleted_at.is_(None)
+    )
+    return await session.scalar(stmt)
+
+
+async def get_by_idempotency_key(
+    session: AsyncSession, *, user_id: str, key: str
+) -> Optional[m.Generation]:
+    """Заказ, который этот человек уже делал под этим ключом.
+
+    Удалённые тоже считаются: человек мог убрать кадр из истории, и заводить
+    вместо повтора новый заказ значило бы списать за него второй раз. Ключ
+    отвечает на вопрос «это уже заказывали», а не «это ещё показывается».
+    """
+    stmt = select(m.Generation).where(
+        m.Generation.user_id == user_id,
+        m.Generation.idempotency_key == key,
     )
     return await session.scalar(stmt)

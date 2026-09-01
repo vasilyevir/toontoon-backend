@@ -23,7 +23,7 @@ from app.db import models as m
 from app.db.models import MediaAsset
 from app.storage import get_storage
 from app.storage import images
-from app.deps import Context, required_context
+from app.deps import Context, one_generation_at_a_time, required_context
 from app.models.generation import (
     Generation,
     GenerateRequest,
@@ -117,7 +117,7 @@ async def upload(
 @router.post("/generate", response_model=GenerateResponse)
 async def generate(
     body: GenerateRequest,
-    ctx: Context = Depends(required_context),
+    ctx: Context = Depends(one_generation_at_a_time),
     db: AsyncSession = Depends(get_db_session),
 ) -> GenerateResponse:
     """Two-phase generation:
@@ -132,6 +132,31 @@ async def generate(
     allowed, _ = await rate_limit.hit(f"gen:{user.id}", settings.rate_limit_per_hour, 3600)
     if not allowed:
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, detail="Generation rate limit reached")
+
+    # Это уже заказывали? Тогда отдать тот же заказ, а не завести второй.
+    #
+    # Кадр рисуется в фоне, а запрос возвращается сразу — и приложение, не
+    # дождавшееся ответа на плохой связи, посылает то же самое заново. До ключа
+    # повтор был неотличим от нового заказа и стоил ещё пятнадцать монет; ровно
+    # об этом говорит комментарий у `image_job.schedule` ниже.
+    #
+    # ДО всех проверок и до кошелька: повтор не должен зависеть от того, что мы
+    # думаем про его содержимое сейчас. Заказ уже принят, отвечаем тем же.
+    if body.idempotency_key:
+        прежний = await generations_repo.get_by_idempotency_key(
+            db, user_id=user.id, key=body.idempotency_key)
+        if прежний is not None:
+            logger.info("Повтор заказа по ключу %s — отдаём прежний %s",
+                        body.idempotency_key, прежний.id)
+            balance = await wallet.get_balance(db, user.id)
+            return GenerateResponse(
+                id=прежний.id,
+                url="",
+                type=GenerationType((прежний.request_params or {}).get("type", "image")),
+                balance=balance.available,
+                prompt=прежний.prompt or "",
+                status=_как_состояние(прежний.status),
+            )
 
     tile = tiles_data.get_tile(body.tile_id) if body.tile_id else None
     if body.tile_id and tile is None:
@@ -402,6 +427,7 @@ async def generate(
         status="running",
         request_params={"payment_id": payment.payment_id, "type": gen_type.value},
         cost=cost,
+        idempotency_key=body.idempotency_key,
     )
     await db.commit()
 
@@ -776,6 +802,19 @@ async def generate(
         prompt=prompt,
         status=GenerationStatus.QUEUED,
     )
+
+
+def _как_состояние(status: str) -> GenerationStatus:
+    """Состояние строки — в то, что понимает приложение.
+
+    `queued` и `running` для него одно и то же: кадр ещё не готов, надо
+    спрашивать дальше. Разница между ними наша, внутренняя.
+    """
+    if status == "done":
+        return GenerationStatus.DONE
+    if status == "failed":
+        return GenerationStatus.FAILED
+    return GenerationStatus.QUEUED
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
