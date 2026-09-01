@@ -1,12 +1,20 @@
-"""User, session and magic-link persistence in Redis.
+"""Сессии и одноразовые токены в Redis.
 
-Key layout
-----------
-* ``user:{id}``                -> User JSON
-* ``user:email:{email}``       -> user id   (magic-link lookup)
-* ``session:{sid}``            -> Session JSON  (TTL = SESSION_TTL_DAYS)
-* ``magic:{token}``            -> email       (TTL = MAGIC_LINK_TTL_MINUTES)
-* ``user:generations:{id}``    -> list of generation ids (managed elsewhere)
+Личность живёт в PostgreSQL (`app/db/repositories/users.py`), здесь остаётся
+только то, у чего есть срок годности, — Redis для этого и нужен.
+
+Раскладка ключей
+----------------
+* ``session:{sid}``   -> Session JSON  (TTL = SESSION_TTL_DAYS)
+* ``magic:{token}``   -> email         (TTL = MAGIC_LINK_TTL_MINUTES)
+* ``reset:{token}``   -> email         (TTL = PASSWORD_RESET_TTL_MINUTES)
+
+Здесь же лежал ВТОРОЙ склад личностей: `user:{id}`, `user:email:{...}`,
+`user:google:{sub}` и девять функций вокруг них, включая заведение
+пользователей с начальным балансом. После переезда на PostgreSQL его не звал
+никто — ни одной строки во всём коде. Удалён: мёртвый код аутентификации
+опаснее обычного мёртвого кода, потому что выглядит рабочим и однажды его
+позовут обратно.
 """
 from __future__ import annotations
 
@@ -14,18 +22,10 @@ import time
 from typing import Optional
 
 from app.config import settings
-from app.core.security import new_id, new_token
+from app.core.security import new_token
 from app.models.session import Session
-from app.models.user import AuthProvider, User
+from app.models.user import AuthProvider
 from app.redis_client import get_client
-
-
-def _user_key(user_id: str) -> str:
-    return f"user:{user_id}"
-
-
-def _email_key(email: str) -> str:
-    return f"user:email:{email.lower()}"
 
 
 def _session_key(sid: str) -> str:
@@ -34,147 +34,6 @@ def _session_key(sid: str) -> str:
 
 def _magic_key(token: str) -> str:
     return f"magic:{token}"
-
-
-# ─── Users ────────────────────────────────────────────────────────────────────
-
-
-async def save_user(user: User) -> None:
-    redis = get_client()
-    await redis.set(_user_key(user.id), user.model_dump_json())
-    if user.email:
-        await redis.set(_email_key(user.email), user.id)
-
-
-async def get_user(user_id: str) -> Optional[User]:
-    redis = get_client()
-    raw = await redis.get(_user_key(user_id))
-    return User.model_validate_json(raw) if raw else None
-
-
-async def delete_user(user_id: str) -> None:
-    redis = get_client()
-    user = await get_user(user_id)
-    if user and user.email:
-        await redis.delete(_email_key(user.email))
-    await redis.delete(_user_key(user_id))
-
-
-async def get_or_create_magic_user(email: str) -> User:
-    """Find a magic-link user by email or create one with the signup balance."""
-    redis = get_client()
-    existing_id = await redis.get(_email_key(email))
-    if existing_id:
-        user = await get_user(existing_id)
-        if user:
-            return user
-
-    user = User(
-        id=new_id("usr_"),
-        provider=AuthProvider.MAGIC,
-        email=email,
-        name=email.split("@", 1)[0],
-        toontoon_balance=settings.signup_toontoon_balance,
-    )
-    await save_user(user)
-    return user
-
-
-async def get_user_by_email(email: str) -> Optional[User]:
-    """Look up a user by (case-insensitive) email, if any."""
-    redis = get_client()
-    existing_id = await redis.get(_email_key(email))
-    if not existing_id:
-        return None
-    return await get_user(existing_id)
-
-
-async def create_email_user(email: str, password_hash: str, name: str) -> User:
-    """Create a new email+password user with the signup TOONTOON balance."""
-    user = User(
-        id=new_id("usr_"),
-        provider=AuthProvider.EMAIL,
-        email=email,
-        name=name,
-        password_hash=password_hash,
-        toontoon_balance=settings.signup_toontoon_balance,
-    )
-    await save_user(user)
-    return user
-
-
-async def get_or_create_boostify_user(info: dict) -> User:
-    """Find/create a user from a Boostify userinfo payload."""
-    boostify_id = info["sub"]
-    redis = get_client()
-    existing_id = await redis.get(f"user:boostify:{boostify_id}")
-    if existing_id:
-        user = await get_user(existing_id)
-        if user:
-            return user
-
-    user = User(
-        id=new_id("usr_"),
-        provider=AuthProvider.BOOSTIFY,
-        email=info.get("email"),
-        name=info.get("name"),
-        avatar=info.get("avatar"),
-        boostify_user_id=boostify_id,
-    )
-    await save_user(user)
-    await redis.set(f"user:boostify:{boostify_id}", user.id)
-    return user
-
-
-async def get_or_create_google_user(info: dict) -> User:
-    """Find/create a user from a verified Google id_token payload."""
-    google_id = info["sub"]
-    redis = get_client()
-    existing_id = await redis.get(f"user:google:{google_id}")
-    if existing_id:
-        user = await get_user(existing_id)
-        if user:
-            return user
-
-    user = User(
-        id=new_id("usr_"),
-        provider=AuthProvider.GOOGLE,
-        email=info.get("email"),
-        name=info.get("name") or (info.get("email") or "Google user").split("@", 1)[0],
-        avatar=info.get("avatar"),
-        toontoon_balance=settings.signup_toontoon_balance,
-    )
-    await save_user(user)
-    await redis.set(f"user:google:{google_id}", user.id)
-    return user
-
-
-async def get_or_create_apple_user(info: dict) -> User:
-    """Find/create a user from a verified Apple identity_token payload.
-
-    Apple only ever sends the display name to the CLIENT on the very first
-    authorization (never to any server, and never again after) — the caller
-    passes it through via ``info["name"]`` if it has it.
-    """
-    apple_id = info["sub"]
-    redis = get_client()
-    existing_id = await redis.get(f"user:apple:{apple_id}")
-    if existing_id:
-        user = await get_user(existing_id)
-        if user:
-            return user
-
-    email = info.get("email")
-    user = User(
-        id=new_id("usr_"),
-        provider=AuthProvider.APPLE,
-        email=email,
-        name=info.get("name") or (email or "Apple user").split("@", 1)[0],
-        toontoon_balance=settings.signup_toontoon_balance,
-    )
-    await save_user(user)
-    await redis.set(f"user:apple:{apple_id}", user.id)
-    return user
 
 
 # ─── Magic-link tokens ──────────────────────────────────────────────────────
@@ -234,27 +93,6 @@ async def create_session_for_user_id(user_id: str, provider: AuthProvider) -> Se
     await redis.set(
         _session_key(session.sid), session.model_dump_json(), ex=settings.session_ttl_seconds
     )
-    return session
-
-
-async def create_session(
-    user: User,
-    *,
-    boostify_access_token: Optional[str] = None,
-    boostify_refresh_token: Optional[str] = None,
-    boostify_access_expires_at: Optional[float] = None,
-) -> Session:
-    redis = get_client()
-    session = Session(
-        sid=new_token(),
-        user_id=user.id,
-        provider=user.provider,
-        issued_at=time.time(),
-        boostify_access_token=boostify_access_token,
-        boostify_refresh_token=boostify_refresh_token,
-        boostify_access_expires_at=boostify_access_expires_at,
-    )
-    await redis.set(_session_key(session.sid), session.model_dump_json(), ex=settings.session_ttl_seconds)
     return session
 
 

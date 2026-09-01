@@ -435,13 +435,13 @@ class Settings(BaseSettings):
     # session token from the URL.
     app_deep_link_scheme: str = "toontoon"
 
-    # Boostyfi (OAuth + Wallet)
-    boostify_mock: bool = True
-    boostify_base_url: str = "https://api.boostyfi.com/api/v1"
-    boostify_client_id: str = "toontoon"
-    boostify_client_secret: str = "change-me"
-    boostify_redirect_uri: str = "http://localhost:8000/api/auth/boostify/callback"
-    boostify_webhook_secret: str = "change-me-too"
+    # Boostyfi убран целиком.
+    #
+    # Мобильный продукт покупает через App Store (CH-17), и ни один роутер уже
+    # не звал ни клиент, ни вебхук. Оставались настройки — с заглушками
+    # `change-me` и `change-me-too` в качестве секрета и секрета вебхука. Пустой
+    # мёртвый код с заглушечными секретами однажды подключают обратно вместе с
+    # заглушками, поэтому его нет.
 
     @property
     def cors_origin_list(self) -> list[str]:
