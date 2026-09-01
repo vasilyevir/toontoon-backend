@@ -158,41 +158,95 @@ async def stuck(s) -> None:
 
 async def providers(s, days: int) -> None:
     rule(f"Кто рисовал и почём (последние {days} дн.)")
+    # Цена берётся измеренная, а где её нет — из прайса строки реестра.
+    #
+    # OpenRouter сообщает цену в ответе, fal не сообщает вовсе. Пока считалась
+    # только измеренная, сводка занижала расход тем сильнее, чем больше работы
+    # уходило к fal, — и молча: прочерк в колонке выглядел как «дёшево».
+    #
+    # Колонка «откуда» показывает, чему верить: «факт» — сказал провайдер,
+    # «прайс» — взято из их прайс-листа и скидок не учитывает.
     rows = (await s.execute(text("""
-        SELECT provider_id, count(*) AS n,
-               round(avg(extract(epoch FROM finished_at - created_at))::numeric, 1) AS secs,
-               round(avg(provider_cost_usd)::numeric, 4) AS avg_usd,
-               round(sum(provider_cost_usd)::numeric, 2) AS sum_usd
-        FROM generations
-        WHERE status = 'done' AND created_at > now() - make_interval(days => :d)
-        GROUP BY provider_id ORDER BY n DESC
+        SELECT g.provider_id, count(*) AS n,
+               round(avg(extract(epoch FROM g.finished_at - g.created_at))::numeric, 1) AS secs,
+               round(avg(coalesce(
+                   g.provider_cost_usd,
+                   (p.cost_hint->>'usd_per_image')::float))::numeric, 4) AS avg_usd,
+               round(sum(coalesce(
+                   g.provider_cost_usd,
+                   (p.cost_hint->>'usd_per_image')::float))::numeric, 2) AS sum_usd,
+               count(*) FILTER (WHERE g.provider_cost_usd IS NULL
+                                  AND p.cost_hint->>'usd_per_image' IS NOT NULL) AS from_list,
+               count(*) FILTER (WHERE g.provider_cost_usd IS NULL
+                                  AND p.cost_hint->>'usd_per_image' IS NULL) AS unknown
+        FROM generations g
+        LEFT JOIN generation_providers p ON p.id = g.provider_id
+        WHERE g.status = 'done' AND g.created_at > now() - make_interval(days => :d)
+        GROUP BY g.provider_id ORDER BY n DESC
     """), {"d": days})).all()
     if not rows:
         print("  за этот срок никто ничего не нарисовал")
         return
-    print(f"  {'провайдер':<24}{'кадров':>8}{'секунд':>9}{'$/кадр':>10}{'$ всего':>10}")
-    for pid, n, secs, avg_usd, sum_usd in rows:
-        # Пусто там, где провайдер цену не сообщает: прочерк честнее нуля.
+    print(f"  {'провайдер':<24}{'кадров':>8}{'секунд':>9}{'$/кадр':>10}{'$ всего':>10}  откуда")
+    for pid, n, secs, avg_usd, sum_usd, from_list, unknown in rows:
+        # Три разных состояния, и путать их нельзя. «Прайс» значит, что число
+        # взято из прайс-листа; «нет цены» — что кадры не учтены ВООБЩЕ, и
+        # сумма занижена. Раньше подпись называла прайсом и то и другое, то
+        # есть врала ровно там, где заведена не врать.
+        части = []
+        if from_list: части.append(f"прайс {from_list}/{n}")
+        if unknown: части.append(f"нет цены {unknown}/{n}")
+        откуда = ", ".join(части) if части else "факт"
         print(f"  {(pid or '—'):<24}{n:>8}{(secs if secs is not None else '—'):>9}"
               f"{(avg_usd if avg_usd is not None else '—'):>10}"
-              f"{(sum_usd if sum_usd is not None else '—'):>10}")
+              f"{(sum_usd if sum_usd is not None else '—'):>10}  {откуда}")
 
 
 async def economics(s, days: int) -> None:
+    """Во что обошёлся один TOONTOON.
+
+    Здесь считалась только ИЗМЕРЕННАЯ цена, и это молча врало. Числитель брал
+    доллары лишь у тех провайдеров, кто их сообщает, а знаменатель — TOONTOON у
+    всех. Пока всё рисовал OpenRouter, разницы не было; с приходом fal, который
+    цену не сообщает вовсе, себестоимость поехала бы вниз тем сильнее, чем
+    больше работы к нему уходит. По этому числу ставят цену подписки.
+
+    Теперь недостающее добирается из прайса реестра, а доля прайса печатается
+    рядом: число без указания, из чего оно сложено, — это то же враньё, только
+    вежливое.
+    """
     row = (await s.execute(text("""
-        SELECT sum(cost) AS toontoon, sum(provider_cost_usd) AS usd
-        FROM generations
-        WHERE status = 'done' AND created_at > now() - make_interval(days => :d)
+        SELECT sum(g.cost) AS toontoon,
+               sum(coalesce(g.provider_cost_usd,
+                            (p.cost_hint->>'usd_per_image')::float)) AS usd,
+               sum(g.provider_cost_usd) AS measured,
+               count(*) AS n,
+               count(*) FILTER (WHERE g.provider_cost_usd IS NULL) AS from_list,
+               count(*) FILTER (WHERE g.provider_cost_usd IS NULL
+                                  AND p.cost_hint->>'usd_per_image' IS NULL) AS unknown
+        FROM generations g
+        LEFT JOIN generation_providers p ON p.id = g.provider_id
+        WHERE g.status = 'done' AND g.created_at > now() - make_interval(days => :d)
     """), {"d": days})).one()
-    toontoon, usd = row
+    toontoon, usd, measured, n, from_list, unknown = row
     if not toontoon or not usd:
         return
     rule("Себестоимость")
     print(f"  Взято с людей: {toontoon} TOONTOON")
-    print(f"  Заплачено провайдерам: ${usd:.2f}")
+    print(f"  Заплачено провайдерам: ${usd:.2f}", end="")
+    if from_list:
+        доля = (usd - (measured or 0)) / usd * 100
+        print(f"   (из них {доля:.0f}% по прайсу, не по факту)")
+    else:
+        print()
     # Ради этого числа всё и считается: цена подписки должна стоять выше него,
     # иначе каждый активный человек стоит нам денег.
     print(f"  Один TOONTOON обошёлся нам в ${usd / toontoon:.4f}")
+    if unknown:
+        # Молчать нельзя: эти кадры не попали в сумму ни фактом, ни прайсом,
+        # значит число занижено, и неизвестно насколько.
+        print(f"  ⚠ {unknown} из {n} кадров не учтены вовсе: у их исполнителя "
+              f"нет ни цены в ответе, ни прайса в реестре")
 
 
 if __name__ == "__main__":

@@ -127,14 +127,34 @@ LIMITS = {
     "fal_nano_edit": {"max_references": 4},
 }
 
+# Прайс исполнителя — на случай, когда он не сообщает цену сам.
+#
+# OpenRouter кладёт `usage.cost` прямо в ответ, и у его работ в базе стоит
+# ИЗМЕРЕННАЯ цена. fal её не отдаёт вовсе: только отдельный Usage API, к
+# которому наш ключ не допущен. Без этой строки сводка себестоимости делила бы
+# неполные доллары на полные TOONTOON и молча занижала расход — а по этому
+# числу ставят цену подписки.
+#
+# Число взято из их же прайса (GET /v1/models/pricing), а не выдумано. Это
+# по-прежнему ПРАЙС, а не факт: скидки сюда не входят, и часть отказов fal
+# тарифицирует. Поэтому оно живёт в `cost_hint` («ориентир»), а не в
+# `provider_cost_usd` («что стоило»), и сводка показывает, какая доля её числа
+# взята из прайса.
+COST_HINTS = {
+    "fal_nano": {"usd_per_image": 0.0398},
+    "fal_nano_edit": {"usd_per_image": 0.0398},
+}
+
 
 async def seed_providers() -> None:
     async with session_scope() as session:
         for pid, operations, model, priority, enabled in PROVIDERS:
             limits = LIMITS.get(pid)
+            hint = COST_HINTS.get(pid)
             stmt = insert(m.GenerationProvider).values(
                 id=pid, operations=operations, model=model,
                 priority=priority, is_enabled=enabled, limits=limits,
+                cost_hint=hint,
             )
             # `is_enabled` намеренно НЕ перезаписывается: включённость — это
             # рычаг на живом сервисе, и пересев его при каждом запуске, мы
@@ -142,7 +162,7 @@ async def seed_providers() -> None:
             stmt = stmt.on_conflict_do_update(
                 index_elements=[m.GenerationProvider.id],
                 set_={"operations": operations, "model": model,
-                      "priority": priority, "limits": limits},
+                      "priority": priority, "limits": limits, "cost_hint": hint},
             )
             await session.execute(stmt)
 
