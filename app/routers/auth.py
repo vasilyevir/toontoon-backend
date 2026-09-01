@@ -473,7 +473,13 @@ async def apple_auth(
     try:
         claims = await apple_oauth.verify_identity_token(body.identity_token)
     except apple_oauth.InvalidAppleToken as exc:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail=str(exc))
+        # В журнал — подробно, наружу — одним словом. Раньше отдавалось
+        # `str(exc)`, то есть подбирающему сообщали, что именно не сошлось:
+        # аудитория, издатель или срок. Разработчику это нужно, и он найдёт
+        # это в логе; тому, кто подбирает, — нет.
+        logger.warning("Apple identity_token не прошёл проверку: %s", exc)
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                            detail="This sign-in could not be verified") from exc
 
     user = await identity_service.get_or_create_oauth_user(
         db,

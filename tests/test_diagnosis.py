@@ -234,7 +234,7 @@ async def test_old_work_is_outside_the_day(база):
 async def test_without_a_token_the_endpoint_does_not_exist(monkeypatch):
     monkeypatch.setattr(settings, "watchdog_token", "")
     with pytest.raises(HTTPException) as beda:
-        await main.pulse(token="")
+        await main.pulse(token="", x_watchdog_token="")
     assert beda.value.status_code == 404
 
 
@@ -243,7 +243,7 @@ async def test_a_wrong_token_gets_the_same_404(monkeypatch):
     """Не 403: иначе ответ сам сообщал бы, что за этим путём что-то есть."""
     monkeypatch.setattr(settings, "watchdog_token", "правильный")
     with pytest.raises(HTTPException) as beda:
-        await main.pulse(token="подобранный")
+        await main.pulse(token="подобранный", x_watchdog_token="")
     assert beda.value.status_code == 404
 
 
@@ -255,7 +255,7 @@ async def test_trouble_answers_503(monkeypatch):
 
     await connect()
     try:
-        r = await main.pulse(token="ключ")
+        r = await main.pulse(token="ключ", x_watchdog_token="")
     finally:
         await disconnect()
     assert r.status_code == 503
@@ -269,7 +269,7 @@ async def test_calm_answers_200(monkeypatch):
 
     await connect()
     try:
-        r = await main.pulse(token="ключ")
+        r = await main.pulse(token="ключ", x_watchdog_token="")
     finally:
         await disconnect()
     assert r.status_code == 200
@@ -324,3 +324,32 @@ def test_a_local_run_is_not_nagged(caplog, monkeypatch):
     with caplog.at_level(logging.WARNING, logger="toontoon.watchdog"):
         main.warn_if_nobody_is_watching()
     assert not caplog.records
+
+
+@pytest.mark.asyncio
+async def test_the_token_may_come_in_a_header(monkeypatch):
+    """Заголовком — потому что адрес запроса оседает в журналах прокси.
+
+    Параметр в адресе тоже принимается: не всякий бесплатный монитор умеет
+    слать заголовки, и ломать наблюдение ради находки уровня Low было бы
+    плохой сделкой. Но заголовок обязан работать, иначе рекомендация в
+    документации — пустой звук.
+    """
+    monkeypatch.setattr(settings, "watchdog_token", "ключ")
+    monkeypatch.setattr(diagnosis, "diagnose", _подделка(ok=True))
+
+    await connect()
+    try:
+        r = await main.pulse(token="", x_watchdog_token="ключ")
+    finally:
+        await disconnect()
+    assert r.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_a_wrong_header_gets_the_same_404(monkeypatch):
+    """Неверный заголовок — тот же 404, что и неверный параметр."""
+    monkeypatch.setattr(settings, "watchdog_token", "правильный")
+    with pytest.raises(HTTPException) as beda:
+        await main.pulse(token="", x_watchdog_token="подобранный")
+    assert beda.value.status_code == 404

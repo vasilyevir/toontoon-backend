@@ -6,7 +6,7 @@ import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -200,7 +200,7 @@ async def health() -> dict:
 
 
 @app.get("/health/pulse", tags=["meta"])
-async def pulse(token: str = "") -> JSONResponse:
+async def pulse(token: str = "", x_watchdog_token: str = Header(default="")) -> JSONResponse:
     """Диагноз для сторожевого сервиса: 200 — всё в порядке, 503 — нет.
 
     Код ответа, а не тело, потому что тревогу должен поднимать любой
@@ -211,10 +211,23 @@ async def pulse(token: str = "") -> JSONResponse:
     ответ сам сообщал бы, что за этим путём что-то есть.
     """
     good = settings.watchdog_token
-    # В байтах, а не в строках: compare_digest на не-ASCII бросает
-    # TypeError, и токен русскими буквами ронял бы ручку пятисоткой.
-    if not good or not secrets.compare_digest(token.encode(), good.encode()):
+    # Заголовком предпочтительнее: query string попадает в журналы прокси и в
+    # историю запросов, то есть токен оседает там, где его никто не стирает.
+    # Запрос с параметром всё же принимается — не всякий бесплатный монитор
+    # умеет слать заголовки, а сломать наблюдение ради находки уровня Low было
+    # бы плохой сделкой. Использование параметра отмечается в журнале.
+    #
+    # В байтах, а не в строках: compare_digest на не-ASCII бросает TypeError,
+    # и токен русскими буквами ронял бы ручку пятисоткой.
+    if not good:
         raise HTTPException(status_code=404)
+    предъявлено = x_watchdog_token or token
+    if not secrets.compare_digest(предъявлено.encode(), good.encode()):
+        raise HTTPException(status_code=404)
+    if not x_watchdog_token and token:
+        logging.getLogger("toontoon.watchdog").info(
+            "сторож пришёл с токеном в адресе — лучше заголовком X-Watchdog-Token: "
+            "адрес оседает в журналах прокси")
 
     async with db.session_scope() as session:
         d = await diagnosis.diagnose(session)
