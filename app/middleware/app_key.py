@@ -2,13 +2,20 @@
 
 Canonical string (MUST byte-match the iOS client's APISecurity.decorate):
 
-    METHOD\nPATH\nTIMESTAMP\nsha256_hex(body)
+    METHOD\nPATH\nQUERY\nTIMESTAMP\nsha256_hex(body)
 
   * METHOD    — uppercase HTTP method (e.g. POST)
-  * PATH      — request path incl. the /api prefix, no query (e.g. /api/auth/login)
+  * PATH      — request path incl. the /api prefix (e.g. /api/auth/login)
+  * QUERY     — raw query string without "?", empty when there is none
   * TIMESTAMP — unix seconds as a string (X-Toontoon-Timestamp)
   * body      — raw request body (empty for GET; empty for multipart uploads,
                 which is why /api/uploads is exempt)
+
+QUERY появился здесь после аудита: без него подпись покрывала метод, путь,
+время и тело, а параметры — нет. В перехваченном запросе их можно было менять
+как угодно, и подпись оставалась верной; для ручек, у которых вся просьба
+лежит в параметрах, подписано было не то, что исполняется. Обе стороны меняются
+вместе — расхождение здесь означает, что приложение перестанет доходить.
 
 Signature = HMAC-SHA256(key=APP_SECRET, msg=canonical), lowercase hex, sent as
 X-Toontoon-Signature. The app-key is echoed in X-Toontoon-App-Key.
@@ -81,7 +88,15 @@ class AppKeyMiddleware:
         ts = headers.get("x-toontoon-timestamp")
         sig = headers.get("x-toontoon-signature")
 
-        if not app_key or not hmac.compare_digest(app_key, settings.app_key):
+        # В байтах, а не в строках. `compare_digest` на строках с не-ASCII
+        # бросает TypeError — то есть запрос с ключом из русских букв ронял бы
+        # проверку пятисоткой вместо честного 401, и сделать это мог кто угодно
+        # одним заголовком. Ту же ошибку уже чинили в `/health/pulse`; здесь она
+        # осталась, и нашлась она тестом, а не чтением.
+        if not app_key or not hmac.compare_digest(
+            app_key.encode("utf-8", "surrogateescape"),
+            settings.app_key.encode("utf-8", "surrogateescape"),
+        ):
             return "app key required"
         if not ts or not sig:
             return "request signature required"
@@ -93,9 +108,17 @@ class AppKeyMiddleware:
             return "stale request signature"
 
         body_hash = hashlib.sha256(body).hexdigest()
-        canonical = f"{scope['method']}\n{path}\n{ts}\n{body_hash}"
+        # Параметры адреса входят в подпись. Раньше не входили: подписывались
+        # метод, путь, время и тело — а `?limit=500&before=…` можно было менять
+        # в перехваченном запросе как угодно, подпись оставалась верной. Для
+        # ручек, у которых вся просьба лежит в параметрах, это означало, что
+        # подписано не то, что исполняется.
+        query = scope.get("query_string", b"").decode("latin-1")
+        canonical = f"{scope['method']}\n{path}\n{query}\n{ts}\n{body_hash}"
         expected = hmac.new(settings.app_secret.encode(), canonical.encode(), hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(expected, sig):
+        # Тоже в байтах: подпись приходит от клиента, и не-ASCII в ней — это
+        # заголовок, который пишет он, а не мы.
+        if not hmac.compare_digest(expected.encode(), sig.encode("utf-8", "surrogateescape")):
             return "invalid request signature"
         return None
 
