@@ -7,6 +7,7 @@ migration of half-built state.
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy import func, select, update
@@ -106,3 +107,49 @@ async def merge_guest_into(
         .values(merged_into_user_id=target_id, deleted_at=func.now())
     )
     await session.flush()
+
+
+async def abandoned_guests(
+    session: AsyncSession, *, older_than: timedelta, limit: int = 500
+) -> list[m.User]:
+    """Гости, которые не заходили дольше срока и у которых есть что стирать.
+
+    Гость — это человек, не оставивший нам ни почты, ни покупки: спросить его,
+    нужны ли ему ещё его снимки, невозможно. Поэтому у их фотографий есть срок,
+    и он здесь считается.
+
+    Кто НЕ попадает под уборку и почему:
+
+    * зарегистрированные — их данные их, и у них есть кнопка удаления;
+    * уже слитые в аккаунт (`merged_into_user_id`) — их снимки переехали к
+      живому человеку и стирать их значило бы стереть чужое;
+    * уже удалённые;
+    * те, у кого не осталось ни одного файла, — уборке там делать нечего, а
+      без этого условия запрос возвращал бы одних и тех же людей вечно.
+
+    Время берётся у базы: реплик несколько, часы у них расходятся, а решение о
+    чужих фотографиях не должно зависеть от того, где выполнился запрос.
+    """
+    db_now = await session.scalar(select(func.now()))
+    cutoff = (db_now or datetime.now(timezone.utc)) - older_than
+
+    есть_файлы = (
+        select(m.MediaAsset.id)
+        .where(m.MediaAsset.user_id == m.User.id, m.MediaAsset.deleted_at.is_(None))
+        .exists()
+    )
+    stmt = (
+        select(m.User)
+        .where(
+            m.User.kind == "guest",
+            m.User.deleted_at.is_(None),
+            m.User.merged_into_user_id.is_(None),
+            # Ни разу не заходившие считаются по дате заведения: `last_seen_at`
+            # ставится на первом же запросе, но пустым он остаться может.
+            func.coalesce(m.User.last_seen_at, m.User.created_at) < cutoff,
+            есть_файлы,
+        )
+        .order_by(func.coalesce(m.User.last_seen_at, m.User.created_at))
+        .limit(limit)
+    )
+    return list(await session.scalars(stmt))
