@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
 from app.db import models as m
@@ -157,7 +158,32 @@ async def _store_examples(style: StyleSource) -> list[str]:
     return keys
 
 
-async def apply(styles: list[StyleSource]) -> None:
+async def retire_missing(session, styles: list[StyleSource]) -> list[str]:
+    """Выключить стили, у которых больше нет папки в каталоге.
+
+    Без этого удаление не удаляло: папку убрали, а строка в базе осталась
+    включённой, и фильтр продолжал жить в приложении. Расхождение молчаливое —
+    в каталоге его уже нет, а на витрине он есть, и заметить это можно только
+    открыв приложение.
+
+    Выключаем, а не удаляем. На стиль ссылаются работы: строка отвечает на
+    вопрос «чем сделан вот этот кадр», и стереть её значит потерять ответ у
+    всех, кто этим стилем пользовался.
+    """
+    живые = {style.id for style in styles}
+    было = await session.scalars(
+        select(m.Style).where(m.Style.is_active.is_(True), m.Style.id.notin_(живые)))
+    ушедшие = []
+    for row in было:
+        row.is_active = False
+        row.is_home = False
+        row.is_shot = False
+        ушедшие.append(row.id)
+    await session.flush()
+    return ушедшие
+
+
+async def apply(styles: list[StyleSource]) -> list[str]:
     async with session_scope() as session:
         for style in styles:
             keys = await _store_examples(style)
@@ -209,6 +235,9 @@ async def apply(styles: list[StyleSource]) -> None:
             )
             await session.execute(stmt)
 
+        # После записи — убрать со сцены тех, чьих папок больше нет.
+        return await retire_missing(session, styles)
+
 
 def report(styles: list[StyleSource], problems: list[str]) -> None:
     for line in problems:
@@ -244,10 +273,12 @@ async def main() -> int:
 
     await connect()
     try:
-        await apply(styles)
+        ушедшие = await apply(styles)
     finally:
         await disconnect()
     print(f"\nЗаписано стилей: {len(styles)}.")
+    if ушедшие:
+        print(f"Выключено (папки больше нет): {', '.join(ушедшие)}")
     return 0
 
 
