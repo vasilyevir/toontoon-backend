@@ -4,15 +4,23 @@
 Тень названа явно и оставлена на фоне, а не убрана. Это она превращает круг
 из виньетки в источник: без тени свет выглядит дорисованным поверх.
 
-Круг обязан вмещать человека целиком, и это сказано отдельно. Первая версия
-просила «полный рост» и «чёрный костюм» на чёрном фоне — и модель честно всё
-исполнила: круг лёг на торс, а ноги в чёрном костюме за его краем растворились
-в чёрном фоне. Кадр выглядел обрезанным по колено, хотя обрезки не было.
-Найдено на живом снимке человека, а не на витрине.
+Круг обязан быть ВЫШЕ человека, и это единственное, что здесь добавлено к
+первоначальному тексту. Причина нашлась на живом снимке: исходная формулировка
+оказалась лотереей. Карточке выпал большой круг — фигура читалась целиком; тому,
+кто снимался с телефона, выпал маленький, круг лёг на торс, и ноги в чёрном
+костюме за его краем растворились в чёрном фоне. Кадр выглядел обрезанным по
+колено, хотя обрезки не было.
 
-Костюм поэтому тёмный, а не чёрный: у тёмного остаётся край, по которому
-силуэт читается даже там, где свет слабее.
+Лицо тоже названо явно. Без этого модель охотно уходит в чистый силуэт: очертания
+безупречны, а человека в кадре нет — для продукта, где люди приходят увидеть
+себя, это негодный кадр.
+
+Что НЕ надо делать, проверено и отвергнуто:
+* «круг пошире, ноги осветить» — модель размазывает свет тонким слоем, круг
+  становится тусклой лужей, контраст пропадает, и силуэт теряется целиком;
+* костюм посветлее — весь контраст здесь строится на тёмном против яркого;
+* «круг за края кадра», «человек крупнее» — получается чёрный силуэт без лица.
 
 ---
 
-the person in the photo standing inside a single hard circle of light on a black studio background, the circle of light wide enough to contain the whole figure from head to shoes with the legs and feet clearly lit and visible, sharp cast shadow on the wall behind, wearing a dark suit, hands in pockets, full body framing, high contrast, monochrome black and white, dramatic studio photography
+the person in the photo standing inside a single hard circle of light on a black studio background, the circle of light taller than the person so their legs and shoes stay inside it, their face clearly lit and recognisable, sharp cast shadow on the wall behind, wearing a black suit, hands in pockets, full body framing, high contrast, monochrome black and white, dramatic studio photography
