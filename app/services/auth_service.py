@@ -10,6 +10,7 @@ Key layout
 """
 from __future__ import annotations
 
+import time
 from typing import Optional
 
 from app.config import settings
@@ -228,7 +229,8 @@ async def create_session_for_user_id(user_id: str, provider: AuthProvider) -> Se
     is good at. Only the identity moved.
     """
     redis = get_client()
-    session = Session(sid=new_token(), user_id=user_id, provider=provider)
+    session = Session(sid=new_token(), user_id=user_id, provider=provider,
+                      issued_at=time.time())
     await redis.set(
         _session_key(session.sid), session.model_dump_json(), ex=settings.session_ttl_seconds
     )
@@ -247,6 +249,7 @@ async def create_session(
         sid=new_token(),
         user_id=user.id,
         provider=user.provider,
+        issued_at=time.time(),
         boostify_access_token=boostify_access_token,
         boostify_refresh_token=boostify_refresh_token,
         boostify_access_expires_at=boostify_access_expires_at,

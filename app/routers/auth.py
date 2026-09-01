@@ -17,7 +17,7 @@ from app.config import settings
 from app.cookies import clear_session_cookie, set_session_cookie
 from app.core import rate_limit
 from app.core.security import hash_password, new_token, verify_password
-from app.deps import Context, optional_context
+from app.deps import Context, optional_context, session_id_from
 from app.models.user import (
     AppleAuthRequest,
     AuthProvider,
@@ -34,6 +34,7 @@ from app.db.repositories import wallet as wallet_repo
 from app.db.session import get_session as get_db_session
 from app.redis_client import get_client
 from app.services import app_store, apple_oauth, auth_service, google_oauth, identity_service
+from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
@@ -374,6 +375,11 @@ async def reset_password(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="invalid_or_expired")
 
     user.password_hash = hash_password(body.new_password)
+    # И отозвать всё, что выдано раньше. Без этого смена пароля не выгоняла
+    # никого: сессии живут в Redis по тридцать дней и переживали её — человек,
+    # у которого увели аккаунт, менял пароль, а укравший оставался внутри ещё
+    # на месяц. Отметка сверяется в `deps` со временем выдачи сессии.
+    user.sessions_valid_from = func.now()
     await db.flush()
     return {"ok": True}
 
@@ -505,9 +511,9 @@ async def logout(
     session_cookie: Optional[str] = Cookie(default=None, alias=settings.session_cookie_name),
     authorization: Optional[str] = Header(default=None),
 ):
-    sid = session_cookie
-    if not sid and authorization and authorization.lower().startswith("bearer "):
-        sid = authorization[7:].strip()
+    # Тем же разбором, что и вход. Своя копия здесь читала кука-первой, то
+    # есть гасила не ту сессию, под которой человек работал.
+    sid = session_id_from(authorization, session_cookie)
     if sid:
         await auth_service.delete_session(sid)
     clear_session_cookie(response)

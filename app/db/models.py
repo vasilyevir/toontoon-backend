@@ -90,6 +90,20 @@ class User(Base):
     last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
+    # Сессии, выданные раньше этого момента, недействительны.
+    #
+    # Ставится при смене пароля. Раньше смена ничего не отзывала: сессии живут
+    # в Redis по тридцать дней и переживали её, то есть человек, у которого
+    # увели аккаунт, менял пароль — а укравший оставался внутри ещё на месяц.
+    # Ровно то, чего смена пароля не должна допускать.
+    #
+    # Отметкой времени, а не списком сессий. Список пришлось бы вести при
+    # каждом входе и выходе, он разъезжался бы с TTL Redis, и «выйти везде»
+    # зависело бы от того, ничего ли мы не забыли добавить. Отметка не может
+    # разъехаться: она сравнивается с временем выдачи, записанным в самой
+    # сессии.
+    sessions_valid_from: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
     # Set when a guest is merged into an account: the guest row stays as a trail
     # so a disputed merge can be reconstructed.
     merged_into_user_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id"))
