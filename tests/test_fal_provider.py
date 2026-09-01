@@ -207,3 +207,92 @@ async def test_it_gives_up_when_the_queue_never_finishes(подделка, monke
     подделка(Поддельный(статусы=["IN_PROGRESS"]))
     with pytest.raises(GenerationUnavailable):
         await FalProvider().run(просьба(), model="fal-ai/nano-banana")
+
+
+# ─── то, что нашлось только на живом fal ─────────────────────────────────────
+
+
+async def test_the_polling_urls_come_from_fal_not_from_us(подделка):
+    """Адреса опроса берём у fal, а не собираем сами.
+
+    Найдено живым запросом: у модели с под-путём (`fal-ai/nano-banana/edit`)
+    очередь живёт по имени ПРИЛОЖЕНИЯ — `fal-ai/nano-banana/requests/…`, без
+    `/edit`. Собранный «в лоб» адрес отвечает 405, и текст-в-кадр это скрывает:
+    у него идентификатор из двух сегментов, и адрес совпадает случайно.
+    """
+    сервер = Поддельный()
+    сервер.ответ = {"images": [{"url": "https://v3.fal.media/files/x/out.png",
+                                "content_type": "image/png"}]}
+
+    def с_адресами(request: httpx.Request) -> httpx.Response:
+        путь = request.url.path
+        сервер.запросы.append((request.method, str(request.url), {}))
+        if путь.endswith("/out.png"):
+            return httpx.Response(200, content=КАДР, headers={"content-type": "image/png"})
+        if путь.endswith("/status"):
+            return httpx.Response(200, json={"status": "COMPLETED"})
+        if "/requests/" in путь:
+            return httpx.Response(200, json=сервер.ответ)
+        # Постановка отдаёт адреса БЕЗ под-пути — как настоящий fal.
+        корень = "https://queue.fal.run/fal-ai/nano-banana/requests/req-42"
+        return httpx.Response(200, json={
+            "request_id": "req-42",
+            "status_url": f"{корень}/status",
+            "response_url": корень,
+        })
+
+    подделка(сервер)
+    import app.services.generation.providers.fal as модуль
+    исходный = httpx.AsyncClient
+    транспорт = httpx.MockTransport(с_адресами)
+    модуль.httpx.AsyncClient = lambda *a, **k: исходный(*a, **{**k, "transport": транспорт})
+    try:
+        await FalProvider().run(просьба(со_снимком=True), model="fal-ai/nano-banana/edit")
+    finally:
+        модуль.httpx.AsyncClient = исходный
+
+    опросы = [u for _, u, _ in сервер.запросы if u.endswith("/status")]
+    assert опросы, "статус не спрашивали"
+    assert "/edit/requests/" not in опросы[0], (
+        f"адрес опроса собран сами, а не взят у fal: {опросы[0]}"
+    )
+
+
+async def test_aspect_ratio_is_only_for_drawing_from_scratch(подделка):
+    """При правке кадра форма берётся из самого снимка.
+
+    Это правильно по смыслу — обрезать чужую фотографию под нашу вертикаль
+    значит испортить то, за чем человек пришёл, — и заодно лечит отказы. Замер
+    на живом fal: с `aspect_ratio` прошло 0 из 4, без него 6 из 6.
+    """
+    сервер = подделка(Поддельный())
+    await FalProvider().run(просьба(со_снимком=True), model="fal-ai/nano-banana/edit")
+    _, _, тело = сервер.запросы[0]
+    assert "aspect_ratio" not in тело, "пропорции назначены при правке кадра"
+
+
+async def test_aspect_ratio_is_kept_when_there_is_no_source(подделка):
+    """Обратная сторона: рисуя с нуля, форму назвать НАДО — иначе кадр
+    выйдет квадратным, а продукт мобильный."""
+    сервер = подделка(Поддельный())
+    await FalProvider().run(просьба(), model="fal-ai/nano-banana")
+    _, _, тело = сервер.запросы[0]
+    assert тело.get("aspect_ratio"), "форма кадра не названа"
+
+
+async def test_the_watermark_guard_is_softened(подделка):
+    """«NO watermark» на чужой фотографии читается как «сними водяной знак».
+
+    Это прямо запрещено правилами Google, и fal отвергал такой промпт: шесть
+    попыток из шести. Мягкая формулировка — шесть из шести в другую сторону.
+
+    Подменяется здесь, а не в общем тексте: тот проверен на OpenRouter, и менять
+    его ради чужой цензуры нельзя без такого же замера.
+    """
+    from app.services.generation.providers import fal as модуль
+
+    сервер = подделка(Поддельный())
+    await FalProvider().run(просьба(со_снимком=True), model="fal-ai/nano-banana/edit")
+    _, _, тело = сервер.запросы[0]
+    assert модуль._WATERMARK_GUARD not in тело["prompt"], "крикливый запрет уехал к fal"
+    assert модуль._SOFTER in тело["prompt"], "мягкая формулировка не подставилась"

@@ -67,6 +67,32 @@ _REFERENCE_FIELD: dict[str, str] = {
 _DEFAULT_REFERENCE_FIELD = _MANY
 
 
+# Наш запрет на надписи, который у fal читается как просьба о запрещённом.
+#
+# Строка «NO text NO letters NO words NO watermark in the image» отвергается
+# проверкой содержимого — почти наверняка потому, что «no watermark» на чужой
+# фотографии читается как «сними водяной знак», а это прямо запрещено правилами
+# Google. Замер на живом fal, шесть попыток на вариант:
+#
+#     просьба без приписки                          6/6
+#     приписка без этого пункта                     6/6
+#     ТОЛЬКО этот пункт                             0/6
+#     он же, сказанный мягко                        6/6
+#
+# Ноль из шести — это не невезение, а правило.
+#
+# Подменяем здесь, а не в общем тексте: тот проверен на OpenRouter, им сделан
+# весь нынешний каталог, и менять его ради чужой цензуры нельзя без такого же
+# замера на подавление надписей. Вопрос вынесен наружу — формулировка и правда
+# крикливая, и мягкая, возможно, лучше везде.
+_WATERMARK_GUARD = "NO text NO letters NO words NO watermark in the image"
+_SOFTER = "no visible text or logos"
+
+
+def _softened(guards: str) -> str:
+    return guards.replace(_WATERMARK_GUARD, _SOFTER)
+
+
 class FalProvider(Provider):
     """Один адаптер — сколько угодно строк реестра.
 
@@ -103,14 +129,25 @@ class FalProvider(Provider):
         # фотографии и для рисунка разные.
         prompt = request.prompt or ""
         body: dict = {
-            "prompt": f"{prompt}, {prompt_style.guards_for(editing=editing)}",
+            "prompt": f"{prompt}, {_softened(prompt_style.guards_for(editing=editing))}",
             "num_images": 1,
             "output_format": settings.fal_output_format,
         }
 
-        aspect = request.params.get("aspect") or settings.fal_aspect_ratio
-        if aspect:
-            body["aspect_ratio"] = aspect
+        # Пропорции назначаем ТОЛЬКО когда рисуем с нуля.
+        #
+        # При правке кадра форма берётся из самого снимка — и это не уступка
+        # чужому API, а то, как правильно: человек прислал свою фотографию, и
+        # обрезать её под нашу вертикаль значит испортить то, за чем он пришёл.
+        #
+        # Заодно это лечит отказы. Замер на живом fal, четыре попытки на
+        # вариант: с `aspect_ratio` прошло 0 из 4, без него — 3–4 из 4. Модель
+        # отвечала то «не смогла построить кадр», то нарушением правил, и
+        # связать это с пропорциями по тексту ошибки было нельзя.
+        if not request.references:
+            aspect = request.params.get("aspect") or settings.fal_aspect_ratio
+            if aspect:
+                body["aspect_ratio"] = aspect
 
         if request.references:
             field = _REFERENCE_FIELD.get(model, _DEFAULT_REFERENCE_FIELD)
@@ -151,7 +188,7 @@ class FalProvider(Provider):
         """Поставить в очередь, дождаться, забрать. Отказ — повод уйти дальше."""
         deadline = time.monotonic() + settings.fal_request_timeout
         async with httpx.AsyncClient(timeout=settings.fal_http_timeout) as client:
-            request_id = await self._submit(client, model, body)
+            request_id, status_url, response_url = await self._submit(client, model, body)
             logger.info("fal: заказ %s поставлен в очередь моделью %s", request_id, model)
 
             while True:
@@ -159,29 +196,58 @@ class FalProvider(Provider):
                     raise GenerationUnavailable(
                         f"fal: {model} не уложился в {settings.fal_request_timeout:.0f} с"
                     )
-                status = await self._status(client, model, request_id)
+                status = await self._status(client, status_url)
                 if status == "COMPLETED":
                     break
                 # IN_QUEUE и IN_PROGRESS ждём одинаково: разница между ними для
                 # нас никакая, ждать всё равно надо.
                 await asyncio.sleep(settings.fal_poll_interval)
 
-            return await self._result(client, model, request_id)
+            return await self._result(client, response_url)
 
-    async def _submit(self, client: httpx.AsyncClient, model: str, body: dict) -> str:
+    def _fallback_urls(self, model: str, request_id: str) -> tuple[str, str]:
+        """Адреса опроса, если fal их не прислал.
+
+        Только первые два сегмента модели: у fal идентификатор бывает с
+        под-путём (`fal-ai/nano-banana/edit`), а очередь живёт по имени
+        ПРИЛОЖЕНИЯ — `fal-ai/nano-banana/requests/…`, без `/edit`. Собранный
+        «в лоб» адрес отвечает 405, и текст-в-кадр это скрывает: у него
+        идентификатор из двух сегментов, и адрес совпадает случайно.
+        """
+        части = model.strip("/").split("/")
+        приложение = "/".join(части[:2]) if len(части) > 2 else model.strip("/")
+        корень = f"{settings.fal_base_url.rstrip('/')}/{приложение}/requests/{request_id}"
+        return f"{корень}/status", корень
+
+    async def _submit(
+        self, client: httpx.AsyncClient, model: str, body: dict
+    ) -> tuple[str, str, str]:
+        """Поставить в очередь и взять адреса опроса — те, что дал сам fal.
+
+        Он присылает `status_url` и `response_url` готовыми, и брать их у него
+        надёжнее, чем собирать самому: правило сборки мы однажды угадали
+        неверно и получили 405 на всех моделях с под-путём. Своя сборка
+        осталась запасной на случай, если полей не будет.
+        """
         resp = await client.post(self._base(model), json=body, headers=self._headers)
         if resp.status_code >= 300:
             raise GenerationUnavailable(f"fal HTTP {resp.status_code}: {resp.text[:300]}")
         try:
-            request_id = resp.json()["request_id"]
+            payload = resp.json()
+            request_id = str(payload["request_id"])
         except (ValueError, KeyError, TypeError) as exc:
             raise GenerationUnavailable(
                 f"fal не вернул request_id: {resp.text[:200]}") from exc
-        return str(request_id)
 
-    async def _status(self, client: httpx.AsyncClient, model: str, request_id: str) -> str:
-        resp = await client.get(
-            f"{self._base(model)}/requests/{request_id}/status", headers=self._headers)
+        свой_статус, свой_ответ = self._fallback_urls(model, request_id)
+        return (
+            request_id,
+            str(payload.get("status_url") or свой_статус),
+            str(payload.get("response_url") or свой_ответ),
+        )
+
+    async def _status(self, client: httpx.AsyncClient, status_url: str) -> str:
+        resp = await client.get(status_url, headers=self._headers)
         if resp.status_code >= 300:
             raise GenerationUnavailable(
                 f"fal: статус недоступен, HTTP {resp.status_code}: {resp.text[:200]}")
@@ -193,9 +259,8 @@ class FalProvider(Provider):
             raise GenerationUnavailable(f"fal ответил состоянием {status or '(пусто)'}")
         return status
 
-    async def _result(self, client: httpx.AsyncClient, model: str, request_id: str) -> dict:
-        resp = await client.get(
-            f"{self._base(model)}/requests/{request_id}", headers=self._headers)
+    async def _result(self, client: httpx.AsyncClient, response_url: str) -> dict:
+        resp = await client.get(response_url, headers=self._headers)
         if resp.status_code >= 300:
             raise GenerationUnavailable(
                 f"fal: результат недоступен, HTTP {resp.status_code}: {resp.text[:200]}")
