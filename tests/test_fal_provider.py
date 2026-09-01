@@ -330,3 +330,30 @@ async def test_a_price_is_never_guessed_from_a_pricelist(подделка):
     подделка(сервер)
     out = await FalProvider().run(просьба(), model="fal-ai/nano-banana")
     assert out.cost_usd is None, "цена подставлена из прайса, а не взята фактом"
+
+
+async def test_fal_is_told_not_to_keep_our_requests():
+    """Лица не должны месяц лежать в чужой истории.
+
+    По умолчанию fal хранит тела запросов и ответов ТРИДЦАТЬ ДНЕЙ, а в теле у
+    нас лицо человека, уехавшее base64. Без этого заголовка мы своими руками
+    отдаём на месяц то, ради чего здесь сделано всё остальное: закрытый бакет,
+    отдача через проверку владельца, срезание координат из EXIF, срок хранения,
+    стирание при удалении аккаунта.
+
+    Обещание «ваше лицо не разлетается» стоит ровно столько, сколько стоит
+    самое слабое звено.
+    """
+    h = FalProvider()._headers
+    assert h.get("X-Fal-Store-IO") == "0", "fal просят хранить наши запросы"
+
+
+async def test_the_frame_on_their_cdn_expires_quickly():
+    """Кадр забираем сразу — ссылка нужна на время скачивания, не дольше."""
+    import json as _json
+
+    h = FalProvider()._headers
+    сырое = h.get("X-Fal-Object-Lifecycle-Preference")
+    assert сырое, "срок жизни кадра на их CDN не назван"
+    срок = _json.loads(сырое)["expiration_duration_seconds"]
+    assert 0 < срок <= 3600, f"кадр живёт у них {срок} с — слишком долго"

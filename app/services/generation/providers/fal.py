@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
 import time
 from typing import Optional
@@ -204,6 +205,22 @@ class FalProvider(Provider):
         return {
             "Authorization": f"Key {settings.fal_api_key}",
             "Content-Type": "application/json",
+            # Не хранить у себя наши запросы. По умолчанию fal держит тела
+            # запросов и ответов ТРИДЦАТЬ ДНЕЙ — а в теле у нас лицо человека,
+            # уехавшее base64. То есть без этой строки мы месяц держим чужие
+            # лица на чужих серверах, в истории, доступной их админскому ключу.
+            #
+            # Это перечёркивало бы всё остальное, что здесь сделано ради этих
+            # снимков: закрытый бакет, отдача через проверку владельца, срезание
+            # координат из EXIF, срок хранения, стирание при удалении аккаунта.
+            # Обещание «ваше лицо не разлетается» стоит ровно столько, сколько
+            # стоит самое слабое звено.
+            "X-Fal-Store-IO": "0",
+            # И кадру на их CDN — короткий срок. Мы забираем его сразу; ссылка,
+            # живущая дольше, нужна только тому, кто её найдёт.
+            "X-Fal-Object-Lifecycle-Preference": json.dumps(
+                {"expiration_duration_seconds": settings.fal_media_ttl_seconds}
+            ),
         }
 
     def _base(self, model: str) -> str:
