@@ -22,6 +22,7 @@ from app.services.generation.operations import (
     Operation,
 )
 from app.services.generation.providers.base import Provider
+from app.services.generation.providers.fal import FalProvider
 from app.services.generation.providers.openai_images import OpenAIImagesProvider
 from app.services.generation.providers.openrouter import OpenRouterProvider
 
@@ -42,6 +43,10 @@ ADAPTERS: dict[str, Provider] = {
 # адаптер сама, а какая за ней модель, написано в колонке `model`.
 _OPENROUTER_PREFIX = "openrouter"
 
+# И то же самое для fal: тоже витрина, тоже один ключ на семейства моделей.
+# Строка `fal_nano`, `fal_flux`, `fal_seedream` получает адаптер сама.
+_FAL_PREFIX = "fal"
+
 
 def adapter_for(provider_id: str) -> Optional[Provider]:
     adapter = ADAPTERS.get(provider_id)
@@ -49,6 +54,8 @@ def adapter_for(provider_id: str) -> Optional[Provider]:
         return adapter
     if provider_id == _OPENROUTER_PREFIX or provider_id.startswith(f"{_OPENROUTER_PREFIX}_"):
         return OpenRouterProvider(provider_id)
+    if provider_id == _FAL_PREFIX or provider_id.startswith(f"{_FAL_PREFIX}_"):
+        return FalProvider(provider_id)
     return None
 
 

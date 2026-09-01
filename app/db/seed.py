@@ -102,22 +102,47 @@ async def seed_plans() -> None:
 #
 # Строка в базе не удаляется, а выключается: у неё есть история генераций,
 # и удалить её значило бы потерять ответ на вопрос «чем сделан вот этот кадр».
+#
+# fal.ai заведён впереди OpenRouter — это и есть «вместо». Но выключать
+# OpenRouter не нужно и не стоит: реестр умеет фолбэк, и отказ нового вендора
+# тогда не роняет генерацию, а уводит её к проверенному.
+#
+# Пустой FAL_API_KEY при этом означает не отказ, а неучастие: `available()`
+# вернёт False, реестр пройдёт мимо и даже не запишет это в причины. Поэтому
+# строки можно завести заранее — они включатся сами, когда появится ключ.
+#
+# Две строки, а не одна: у fal текст-в-кадр и правка кадра — РАЗНЫЕ модели,
+# и одной строкой они не покрываются.
 PROVIDERS = [
+    ("fal_nano", ["text_to_image"], "fal-ai/nano-banana", 0, True),
+    ("fal_nano_edit", ["image_to_image"], "fal-ai/nano-banana/edit", 0, True),
     ("openai_images", ["text_to_image"], "gpt-image-1", 10, True),
     ("pollinations", ["text_to_image"], "flux", 20, False),
 ]
+
+# Сколько снимков берёт строка. Реестр отсеивает по этому числу раньше, чем
+# запрос уйдёт: провайдер с одним референсом на парном кадре сделает вид, что
+# справился, — вернёт одного человека и незнакомца рядом.
+LIMITS = {
+    "fal_nano_edit": {"max_references": 4},
+}
 
 
 async def seed_providers() -> None:
     async with session_scope() as session:
         for pid, operations, model, priority, enabled in PROVIDERS:
+            limits = LIMITS.get(pid)
             stmt = insert(m.GenerationProvider).values(
                 id=pid, operations=operations, model=model,
-                priority=priority, is_enabled=enabled,
+                priority=priority, is_enabled=enabled, limits=limits,
             )
+            # `is_enabled` намеренно НЕ перезаписывается: включённость — это
+            # рычаг на живом сервисе, и пересев его при каждом запуске, мы
+            # отменяли бы решение, принятое руками в три часа ночи.
             stmt = stmt.on_conflict_do_update(
                 index_elements=[m.GenerationProvider.id],
-                set_={"operations": operations, "model": model, "priority": priority},
+                set_={"operations": operations, "model": model,
+                      "priority": priority, "limits": limits},
             )
             await session.execute(stmt)
 
