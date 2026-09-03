@@ -1,0 +1,87 @@
+# Прототип на одном VPS (TestFlight). Не прод: без реплик, без бэкапов по
+# расписанию, TLS — самоподписанный серт, который приложение принимает по пину.
+#
+#   docker compose --env-file .env.prod up -d --build
+#   docker compose --env-file .env.prod run --rm api alembic upgrade head
+#
+# nginx на хосте терминирует TLS и проксирует только /api/, /health, /terms,
+# /privacy на 127.0.0.1:8000 (deploy/vps/nginx-toontoon.conf). Кадры наружу не
+# торчат: их отдаёт /api/media/{id} после проверки владельца.
+services:
+  api:
+    build: ../..
+    restart: unless-stopped
+    env_file: [.env.prod]
+    environment:
+      WORKER_MODE: queue
+      DATABASE_URL: postgresql+asyncpg://toontoon:${POSTGRES_PASSWORD}@postgres:5432/toontoon
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_BACKEND: s3
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_BUCKET: toontoon
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+    ports: ["127.0.0.1:8000:8000"]
+    depends_on: [postgres, redis, minio]
+
+  worker:
+    build: ../..
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    env_file: [.env.prod]
+    environment:
+      WORKER_MODE: queue
+      WORKER_CONCURRENCY: "4"
+      DATABASE_URL: postgresql+asyncpg://toontoon:${POSTGRES_PASSWORD}@postgres:5432/toontoon
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_BACKEND: s3
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_BUCKET: toontoon
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+    depends_on: [postgres, redis, minio]
+
+  retention:
+    build: ../..
+    restart: unless-stopped
+    # Раз в сутки стирать снимки заброшенных гостей (см. scripts/retention.py).
+    command: ["sh", "-c", "while true; do python scripts/retention.py --apply; sleep 86400; done"]
+    env_file: [.env.prod]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://toontoon:${POSTGRES_PASSWORD}@postgres:5432/toontoon
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_BACKEND: s3
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_BUCKET: toontoon
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+    depends_on: [postgres, minio]
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: toontoon
+      POSTGRES_USER: toontoon
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes: [pgdata:/var/lib/postgresql/data]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "yes"]
+    volumes: [redisdata:/data]
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    restart: unless-stopped
+    command: ["server", "/data"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes: [miniodata:/data]
+
+volumes:
+  pgdata: {}
+  redisdata: {}
+  miniodata: {}

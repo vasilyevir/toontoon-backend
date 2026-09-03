@@ -266,7 +266,8 @@ def _check_environment(payload: dict, where: str) -> None:
     if settings.accept_storekit_test_root or settings.debug:
         return
     env = str(payload.get("environment") or "").strip().lower()
-    if env != "production":
+    allowed = {"production"} | ({"sandbox"} if settings.accept_sandbox_receipts else set())
+    if env not in allowed:
         raise BadTransaction(f"{where} не из App Store, а из {env or 'неизвестно откуда'}")
 
 

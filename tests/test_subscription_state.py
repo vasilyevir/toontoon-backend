@@ -158,3 +158,35 @@ async def test_a_receipt_that_already_expired_never_becomes_active(db):
                           payload=чек(кончается=СЕЙЧАС - timedelta(days=400)))
     assert row.status == "expired"
     assert await subs.active_for_user(session, uid) is None
+
+
+# ─── чеки из песочницы TestFlight ────────────────────────────────────────────
+
+def _env_check(monkeypatch, *, sandbox_ok: bool, env: str):
+    from app.services import app_store
+    from app.config import settings
+    monkeypatch.setattr(settings, "accept_storekit_test_root", False, raising=False)
+    monkeypatch.setattr(settings, "debug", False, raising=False)
+    monkeypatch.setattr(settings, "accept_sandbox_receipts", sandbox_ok, raising=False)
+    return lambda: app_store._check_environment({"environment": env}, "чек")
+
+
+def test_песочница_отвергается_по_умолчанию(monkeypatch):
+    import pytest
+    from app.services.app_store import BadTransaction
+    with pytest.raises(BadTransaction):
+        _env_check(monkeypatch, sandbox_ok=False, env="Sandbox")()
+
+
+def test_песочница_принимается_только_с_флагом(monkeypatch):
+    _env_check(monkeypatch, sandbox_ok=True, env="Sandbox")()      # не бросает
+    _env_check(monkeypatch, sandbox_ok=True, env="Production")()
+
+
+def test_флаг_песочницы_не_открывает_прочее(monkeypatch):
+    import pytest
+    from app.services.app_store import BadTransaction
+    with pytest.raises(BadTransaction):
+        _env_check(monkeypatch, sandbox_ok=True, env="Xcode")()
+    with pytest.raises(BadTransaction):
+        _env_check(monkeypatch, sandbox_ok=True, env="")()

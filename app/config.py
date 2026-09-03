@@ -568,6 +568,12 @@ class Settings(BaseSettings):
     # сертификат, выпишет себе подписку сам. Приложение при старте кричит, если
     # `debug` выключён, а это включено.
     accept_storekit_test_root: bool = False
+    # Принимать чеки из песочницы App Store — те, что выписывает TestFlight.
+    # Уже, чем accept_storekit_test_root: цепочка подписи по-прежнему обязана
+    # вести к настоящему корню Apple, отличается только поле environment.
+    # Для прототипа в TestFlight — единственный способ дать людям купить
+    # подписку; в проде — выключить: покупка в песочнице бесплатна.
+    accept_sandbox_receipts: bool = False
     apple_bundle_id: str = ""
     apple_service_id: str = ""
 

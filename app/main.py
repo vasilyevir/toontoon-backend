@@ -61,6 +61,13 @@ def warn_about_debug_flags() -> None:
             "ACCEPT_STOREKIT_TEST_ROOT=true при DEBUG=false: чеки, подписанные "
             "тестовым корнем Xcode, принимаются как настоящие. Выключите его."
         )
+    if settings.accept_sandbox_receipts and not settings.debug:
+        # Чек из песочницы — бесплатный. Для TestFlight это единственный путь к
+        # покупкам, для прода — открытая дверь.
+        log.error(
+            "ACCEPT_SANDBOX_RECEIPTS=true при DEBUG=false: подписка по чеку из "
+            "песочницы TestFlight принимается как настоящая. Только для прототипа."
+        )
     if settings.expose_dev_tokens and not settings.debug:
         # С этим флагом чужой пароль меняется одним запросом.
         log.error(
