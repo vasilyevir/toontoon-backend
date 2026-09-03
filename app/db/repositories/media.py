@@ -6,6 +6,8 @@ site — which is how ``uploads/`` ended up scattered across two services.
 """
 from __future__ import annotations
 
+import asyncio
+
 import logging
 from typing import Optional
 
@@ -98,7 +100,16 @@ async def save_image(
     second copy — people re-pick the same picture constantly, and each copy would
     be paid for in storage forever.
     """
-    processed = images.process(data, make_thumbnail=make_thumbnail)
+    # В поток, а не прямо здесь. Pillow — чистый CPU: разобрать PNG, снять
+    # метаданные, пережать, сделать миниатюру. На кадре в мегабайт это 875 мс,
+    # и всё это время цикл событий стоит колом — ни один запрос ни одного
+    # человека не обрабатывается: ни баланс, ни опрос готовности, ни /health.
+    # При десятках кадров в минуту сервер отвечает урывками, а k8s по
+    # молчащему /health перезапускает под вместе с чужими работами.
+    #
+    # `to_thread` уводит это в пул потоков: GIL Pillow отпускает на тяжёлых
+    # операциях, и цикл продолжает обслуживать остальных.
+    processed = await asyncio.to_thread(images.process, data, make_thumbnail=make_thumbnail)
 
     if kind == "upload":
         existing = await find_upload_by_hash(session, user_id, processed.sha256)

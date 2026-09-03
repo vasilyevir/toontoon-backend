@@ -48,10 +48,11 @@ async def create(
 
 
 async def get(
-    session: AsyncSession, generation_id: str, *, user_id: Optional[str] = None
+    session: AsyncSession, generation_id: str, *, user_id: Optional[str] = None,
+    include_deleted: bool = False,
 ) -> Optional[m.Generation]:
     generation = await session.get(m.Generation, generation_id)
-    if generation is None or generation.deleted_at is not None:
+    if generation is None or (generation.deleted_at is not None and not include_deleted):
         return None
     if user_id is not None and generation.user_id != user_id:
         return None
@@ -98,6 +99,11 @@ async def list_for_user(
 async def mark_done(
     session: AsyncSession, generation: m.Generation, *, result_media_id: str, prompt: Optional[str] = None
 ) -> m.Generation:
+    if generation.status == "failed":
+        # Сверка уже признала работу оборвавшейся и вернула деньги. Кадр,
+        # доделанный после этого, не превращает возврат в подарок дважды:
+        # состояние остаётся, звонящий сам решит, что делать с файлом.
+        return generation
     generation.status = "done"
     generation.result_media_id = result_media_id
     generation.finished_at = func.clock_timestamp()

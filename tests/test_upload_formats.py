@@ -63,3 +63,20 @@ def test_the_router_and_the_decoder_agree_on_the_list():
     assert из_роутера == из_разбора, (
         f"роутер пускает {sorted(из_роутера)}, а разбирается {sorted(из_разбора)}"
     )
+
+
+def test_a_bomb_that_fits_the_byte_cap_is_refused_before_decoding():
+    """PNG в 36 мегапикселей одного цвета весит килобайты, распакованный — сотни МБ.
+
+    Потолок в байтах его пропускает, порог Pillow между 1× и 2× только
+    предупреждает. Отказ обязан случиться по заголовку, до распаковки, —
+    иначе память уже съедена к моменту проверки.
+    """
+    buf = io.BytesIO()
+    Image.new("1", (6000, 6000)).save(buf, format="PNG")
+    assert len(buf.getvalue()) < 100_000, "образец должен быть маленьким, иначе тест не про то"
+    with pytest.raises(images.TooManyPixels):
+        images.process(buf.getvalue())
+    with pytest.raises(images.TooManyPixels):
+        images.preview(buf.getvalue())
+    assert images.aspect_of(buf.getvalue()) is None

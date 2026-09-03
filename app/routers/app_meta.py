@@ -68,6 +68,8 @@ class BootstrapResponse(BaseModel):
     pending: list[dict]
     config: AppConfig
 
+from app.routers.generations import _prompt_for_client
+
 
 def _pending(row) -> dict:
     """Заказ в пути — тем же именами полей, что и готовая работа.
@@ -81,7 +83,7 @@ def _pending(row) -> dict:
         "type": (row.request_params or {}).get("type", "image"),
         "operation": row.operation,
         "status": row.status,
-        "prompt": row.prompt,
+        "prompt": _prompt_for_client(row),
         "result_url": None,
         "thumbnail_url": None,
         "cost": row.cost,

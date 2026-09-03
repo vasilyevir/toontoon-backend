@@ -33,6 +33,18 @@ async def record_attachments(session: AsyncSession, *, user_id: str, media_ids: 
     """
     if not media_ids:
         return 0
+    # Только свои снимки. Байты чужого `med_…` через `/api/media` не отдаются,
+    # но и записывать чужой идентификатор в свою переписку незачем.
+    свои = set((await session.scalars(
+        select(m.MediaAsset.id).where(
+            m.MediaAsset.user_id == user_id,
+            m.MediaAsset.id.in_(media_ids),
+            m.MediaAsset.deleted_at.is_(None),
+        )
+    )).all())
+    media_ids = [i for i in media_ids if i in свои]
+    if not media_ids:
+        return 0
     seen = set((await session.scalars(
         select(m.ChatMessage.media_id).where(
             m.ChatMessage.user_id == user_id,

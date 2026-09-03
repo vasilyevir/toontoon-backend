@@ -87,7 +87,18 @@ design are ours. Nothing in these Terms transfers them to you.
 
 ## 7. What you must not do
 
-- Upload a photograph of another person without their agreement.
+- Upload a photograph of another person without their agreement. By uploading
+  a photograph with other people in it you confirm that each of them has
+  agreed to be restyled with the app.
+- Upload photographs of public figures — politicians, actors, musicians,
+  athletes, well-known influencers — or ask for their likeness. If you are a
+  public figure yourself, write to [[ПОЧТА ПОДДЕРЖКИ]]: after a check we can
+  unlock your own photographs.
+- Put a child into a picture of a body-focused or glamour kind. Children are
+  allowed only in studio, black-and-white, cartoon, polaroid, family and pet
+  styles, and never in swimwear, underwear or sexualised scenes.
+- Ask for realistic police, military or medical uniforms with insignia,
+  identity documents, weapons pointed at people, or drugs.
 - Make pictures of a real person that are intended to deceive — false
   endorsements, fabricated events, or anything presented as a real photograph of
   something that did not happen.

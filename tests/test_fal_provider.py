@@ -357,3 +357,210 @@ async def test_the_frame_on_their_cdn_expires_quickly():
     assert сырое, "срок жизни кадра на их CDN не назван"
     срок = _json.loads(сырое)["expiration_duration_seconds"]
     assert 0 < срок <= 3600, f"кадр живёт у них {срок} с — слишком долго"
+
+
+# ─── кадр приходит в ответе, а не ссылкой ────────────────────────────────────
+#
+# Хранилище fal оказалось единственным ненадёжным звеном пути. Заказ, ожидание
+# и результат отвечали за доли секунды, а `v3b.fal.media` отдавал первые
+# пятнадцать килобайт и замолкал — ровно начальное окно TCP. Одинаково на
+# HTTP/2 и HTTP/1.1, на IPv4 и IPv6: путь мёртв, протокол ни при чём.
+#
+# `sync_mode` убирает этот шаг совсем. Мы всё равно скачивали кадр немедленно,
+# держать его у них было незачем — а заодно готовое лицо перестало лежать на
+# чужом CDN даже по недолгой ссылке.
+
+async def test_просим_кадр_прямо_в_ответе(подделка):
+    """Без этого флага fal кладёт кадр на свой CDN и присылает адрес."""
+    сервер = подделка(Поддельный())
+    await FalProvider().run(просьба())
+    _, _, тело = сервер.запросы[0]
+    assert тело.get("sync_mode") is True
+
+
+async def test_кадр_из_ответа_разбирается_без_сети(подделка):
+    """`data:` в поле `url` — это сам кадр. Ходить за ним никуда не надо."""
+    картинка = b"\x89PNG\r\n\x1a\n" + b"inline-bytes"
+    сервер = подделка(Поддельный(ответ={"images": [{
+        "url": "data:image/png;base64," + base64.b64encode(картинка).decode(),
+        "content_type": "image/png"}]}))
+
+    out = await FalProvider().run(просьба())
+
+    assert out.data == картинка
+    assert out.mime == "image/png"
+    # Ни одного запроса к хранилищу: заказ, статус, результат — и всё.
+    адреса = [url for _, url, _ in сервер.запросы]
+    assert not [a for a in адреса if "fal.media" in a], f"полезли в хранилище: {адреса}"
+
+
+async def test_ссылка_всё_ещё_работает(подделка):
+    """Модель вправе не знать про `sync_mode` — тогда придёт адрес."""
+    сервер = подделка(Поддельный())
+    out = await FalProvider().run(просьба())
+    assert out.data == КАДР
+    assert [a for a in (u for _, u, _ in сервер.запросы) if "fal.media" in a]
+
+
+async def test_пустой_кадр_в_ответе_это_отказ(подделка):
+    """`data:image/png;base64,` без тела — не картинка, а беда."""
+    подделка(Поддельный(ответ={"images": [{"url": "data:image/png;base64,"}]}))
+    with pytest.raises(GenerationUnavailable):
+        await FalProvider().run(просьба())
+
+
+async def test_битая_строка_не_роняет_адаптер(подделка):
+    """Не base64 — отказ по-человечески, а не исключение из недр библиотеки."""
+    подделка(Поддельный(ответ={"images": [{"url": "data:image/png;base64,%%%не-base64%%%"}]}))
+    with pytest.raises(GenerationUnavailable):
+        await FalProvider().run(просьба())
+
+
+# ─── диалект gpt-image-2 ─────────────────────────────────────────────────────
+#
+# У fal один транспорт на все модели, а вход у каждой свой. nano-banana берёт
+# `aspect_ratio: "9:16"`; у gpt-image-2 такого поля нет вовсе — есть `image_size`
+# с пресетами и `quality`, где умолчание `high` вчетверо дороже `medium`.
+# Отправить ему тело от nano-banana значит либо получить отказ, либо заплатить
+# за `high`, не заметив.
+
+def _просьба_с_формой(aspect: str) -> GenerationRequest:
+    return GenerationRequest(operation=Operation.IMAGE_TO_IMAGE, prompt="маяк",
+                             image=b"face-bytes", image_mime="image/jpeg",
+                             params={"aspect": aspect})
+
+
+async def test_gpt_image_2_говорит_на_своём(подделка):
+    сервер = подделка(Поддельный())
+    await FalProvider().run(_просьба_с_формой("9:16"), model="openai/gpt-image-2/edit")
+    _, _, тело = сервер.запросы[0]
+    assert "aspect_ratio" not in тело, "у gpt-image-2 нет такого поля — отправлять нельзя"
+    # Не пресет, а числа OpenRouter: пресет давал 608×1088, на четверть мельче.
+    assert тело["image_size"] == {"width": 864, "height": 1536}
+    assert тело["quality"] == "medium", "умолчание fal — high, самый дорогой режим"
+    assert тело["sync_mode"] is True
+    assert тело["image_urls"] and тело["image_urls"][0].startswith("data:image/jpeg;base64,")
+
+
+async def test_незнакомая_форма_уходит_как_auto(подделка):
+    сервер = подделка(Поддельный())
+    await FalProvider().run(_просьба_с_формой("7:5"), model="openai/gpt-image-2/edit")
+    assert сервер.запросы[0][2]["image_size"] == "auto"
+
+
+async def test_nano_banana_не_задет_диалектом(подделка):
+    """Поведение по умолчанию — прежнее: все старые тесты писались под него."""
+    сервер = подделка(Поддельный())
+    await FalProvider().run(_просьба_с_формой("9:16"), model="fal-ai/nano-banana/edit")
+    _, _, тело = сервер.запросы[0]
+    assert тело["aspect_ratio"] == "9:16"
+    assert "quality" not in тело and "image_size" not in тело
+
+
+async def test_разрешение_пробрасывается_nano_pro(подделка):
+    сервер = подделка(Поддельный())
+    req = GenerationRequest(operation=Operation.IMAGE_TO_IMAGE, prompt="маяк",
+                            image=b"f", image_mime="image/jpeg",
+                            params={"aspect": "9:16", "resolution": "2K"})
+    await FalProvider().run(req, model="fal-ai/nano-banana-pro/edit")
+    тело = сервер.запросы[0][2]
+    assert тело["resolution"] == "2K" and тело["aspect_ratio"] == "9:16"
+
+
+async def test_явный_размер_и_качество_у_gpt_image_2(подделка):
+    сервер = подделка(Поддельный())
+    req = GenerationRequest(operation=Operation.IMAGE_TO_IMAGE, prompt="маяк",
+                            image=b"f", image_mime="image/jpeg",
+                            params={"aspect": "9:16", "quality": "high",
+                                    "size": {"width": 1152, "height": 1536}})
+    await FalProvider().run(req, model="openai/gpt-image-2/edit")
+    тело = сервер.запросы[0][2]
+    assert тело["quality"] == "high", "явное качество сильнее умолчания medium"
+    assert тело["image_size"] == {"width": 1152, "height": 1536}, "явный размер сильнее пресета"
+    assert "aspect_ratio" not in тело
+
+
+async def test_без_параметров_nano_pro_как_обычный(подделка):
+    """Ничего не просили — ничего лишнего не ушло: fal сам поставит 1K."""
+    сервер = подделка(Поддельный())
+    await FalProvider().run(_просьба_с_формой("9:16"), model="fal-ai/nano-banana-pro/edit")
+    тело = сервер.запросы[0][2]
+    assert "resolution" not in тело and тело["aspect_ratio"] == "9:16"
+
+
+@pytest.mark.parametrize("url", [
+    "http://v3b.fal.media/files/x/out.png",          # не https
+    "https://127.0.0.1:8080/internal/secret.png",    # свой узел
+    "https://evil.example/fal.media/out.png",        # похоже, но не то
+    "https://notfal.media/out.png",                  # суффикс без точки
+])
+async def test_a_frame_link_outside_fal_storage_is_not_fetched(url, monkeypatch):
+    """Ссылку на кадр присылает fal, но верить ей как своей нельзя: подмена
+    ответа или `FAL_BASE_URL` превращала докачку в запрос к любому адресу,
+    до которого дотягивается сервер. Отказ — до первого соединения."""
+    async def не_ходить(*a, **k):
+        raise AssertionError("соединение не должно открываться")
+    monkeypatch.setattr(httpx.AsyncClient, "get", не_ходить)
+    with pytest.raises(GenerationUnavailable):
+        await FalProvider()._download_in_pieces(url)
+
+
+async def test_polling_urls_from_a_foreign_host_are_replaced_by_our_own():
+    """В адреса опроса уходит ключ. Если fal (или тот, кто за него) прислал
+    чужой узел, берём свои собранные адреса — они всегда на `fal_base_url`."""
+    from app.services.generation.providers import fal as модуль
+    наш = httpx.URL(settings.fal_base_url).host
+    assert модуль._is_fal_host("v3b.fal.media") and модуль._is_fal_host("fal.media")
+    assert not модуль._is_fal_host("evil.example") and not модуль._is_fal_host(None)
+
+    class Ответ:
+        status_code = 200
+        text = ""
+        def json(self):
+            return {"request_id": "r1",
+                    "status_url": "https://attacker.example/status",
+                    "response_url": f"https://{наш}/fal-ai/nano-banana/requests/r1"}
+    class Клиент:
+        async def post(self, *a, **k):
+            return Ответ()
+    _, статус, ответ = await FalProvider()._submit(Клиент(), "fal-ai/nano-banana", {})
+    assert httpx.URL(статус).host == наш
+    assert httpx.URL(ответ).host == наш
+
+
+# ─── отказ по содержанию — окончательный ─────────────────────────────────────
+#
+# 422 у fal бывает двух сортов. «Поле не то» — наша ошибка, и её правильно
+# обойти другим исполнителем. «Модель не взялась за снимок» — решение, и
+# обходить его значит идти к тому, кто не проверяет. Проверено живьём: OpenAI
+# отклонил «сделай меня как Том Круз» за пять секунд, а nano-banana нарисовал.
+
+ОТКАЗ_FAL = ('{"detail":[{"loc":["body","prompt"],"msg":"The content could not be '
+             'processed because it contained material flagged by a content checker.",'
+             '"type":"content_policy_violation"}]}')
+
+
+async def test_422_по_содержанию_это_ContentRefused(подделка):
+    from app.services.generation.operations import ContentRefused
+    class Отказывающий(Поддельный):
+        def __call__(self, request):
+            if "/requests/" in request.url.path and not request.url.path.endswith("/status"):
+                return httpx.Response(422, text=ОТКАЗ_FAL)
+            return super().__call__(request)
+    подделка(Отказывающий())
+    with pytest.raises(ContentRefused):
+        await FalProvider().run(просьба(со_снимком=True), model="openai/gpt-image-2/edit")
+
+
+async def test_обычная_422_остаётся_обходимой(подделка):
+    """«Поле не то» — не отказ по содержанию: цепочка вправе пробовать дальше."""
+    from app.services.generation.operations import ContentRefused
+    class Кривой(Поддельный):
+        def __call__(self, request):
+            if "/requests/" in request.url.path and not request.url.path.endswith("/status"):
+                return httpx.Response(422, text='{"detail":"image_size: unexpected value"}')
+            return super().__call__(request)
+    подделка(Кривой())
+    with pytest.raises(GenerationUnavailable) as e:
+        await FalProvider().run(просьба(со_снимком=True), model="openai/gpt-image-2/edit")
+    assert not isinstance(e.value, ContentRefused)

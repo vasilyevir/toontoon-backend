@@ -166,6 +166,10 @@ class OpenRouterProvider(Provider):
         prompt = request.prompt or (prompt_style.RESTORE_PROMPT if restoring else "")
         body: dict = {
             "model": model,
+            # Витрина сама выбирает вендора; без этого поля вендор вправе
+            # оставить снимок себе для обучения. У fal то же самое закрыто
+            # заголовком `X-Fal-Store-IO`.
+            "provider": {"data_collection": "deny"},
             "prompt": prompt if restoring
                       else f"{prompt}, {prompt_style.guards_for(editing=editing)}",
             "n": 1,

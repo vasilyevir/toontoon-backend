@@ -45,6 +45,23 @@ Image.MAX_IMAGE_PIXELS = 64_000_000
 ALLOWED_FORMATS = ["PNG", "JPEG", "WEBP", "GIF"]
 
 
+class TooManyPixels(ValueError):
+    """Файл влезает в потолок байт, но распакованный не влезает в память."""
+
+
+def _guard_pixels(img: "Image.Image") -> None:
+    """Отказать до распаковки.
+
+    `Image.open` ленивый: он читает заголовок и знает размер, не разбирая
+    пиксели. Проверка здесь стоит ничего; проверка после `convert` — уже
+    после того, как память съедена. Порог Pillow (`MAX_IMAGE_PIXELS`) сам по
+    себе не спасает: между 1× и 2× он только предупреждает.
+    """
+    width, height = img.size
+    if width * height > settings.max_image_pixels:
+        raise TooManyPixels(f"{width}x{height} exceeds {settings.max_image_pixels} pixels")
+
+
 @dataclass(slots=True)
 class ProcessedImage:
     data: bytes
@@ -68,6 +85,7 @@ def preview(data: bytes, *, side: int = 384) -> bytes:
     в разы дороже ответа, который он даёт.
     """
     with Image.open(io.BytesIO(data), formats=ALLOWED_FORMATS) as img:
+        _guard_pixels(img)
         img = _apply_orientation(img).convert("RGB")
         img.thumbnail((side, side))
         out = io.BytesIO()
@@ -82,6 +100,7 @@ def process(data: bytes, *, make_thumbnail: bool = True) -> ProcessedImage:
     dimensions, content hash and an optional thumbnail.
     """
     with Image.open(io.BytesIO(data), formats=ALLOWED_FORMATS) as img:
+        _guard_pixels(img)
         # Apply the EXIF orientation flag before dropping EXIF, otherwise photos
         # taken sideways stay sideways forever.
         img = _apply_orientation(img)
@@ -158,6 +177,7 @@ def aspect_of(data: bytes) -> Optional[str]:
     """
     try:
         with Image.open(io.BytesIO(data), formats=ALLOWED_FORMATS) as img:
+            _guard_pixels(img)
             img = _apply_orientation(img)
             width, height = img.size
     except Exception:  # noqa: BLE001 — форма необязательна, кадр обязателен

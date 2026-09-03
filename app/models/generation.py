@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
+from typing import Annotated, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 
 class GenerationType(str, Enum):
@@ -75,10 +75,14 @@ class GenerateRequest(BaseModel):
     """
 
     type: GenerationType = GenerationType.IMAGE
-    tile_id: Optional[str] = None
-    answers: dict[str, str] = Field(default_factory=dict)
-    prompt: Optional[str] = None
-    style: Optional[str] = None
+    tile_id: Optional[str] = Field(default=None, max_length=64)
+    # Потолки — не про вкус: без них в модель (и в разбор регулярками в цикле
+    # событий) уезжало тело любого размера до `proxy-body-size`, а разбор
+    # слотов идёт ДО резервирования монет — то есть бесплатно.
+    answers: dict[str, Annotated[str, StringConstraints(max_length=500)]] = Field(
+        default_factory=dict, max_length=32)
+    prompt: Optional[str] = Field(default=None, max_length=2000)
+    style: Optional[str] = Field(default=None, max_length=64)
     # Зачем человек пришёл: «poster», «card», «portrait», «product». Отдельно от
     # стиля, потому что это разные вопросы к одному запросу: назначение решает,
     # кто исполнитель (буквы умеет не всякий), а стиль — как это нарисовано.
@@ -88,7 +92,7 @@ class GenerateRequest(BaseModel):
     # умолчанию — то есть человек выбирал технику, а она никуда не доезжала.
     # Старые сборки продолжают слать назначение в `style`, и маршрут по-прежнему
     # смотрит в оба поля.
-    intent: Optional[str] = None
+    intent: Optional[str] = Field(default=None, max_length=64)
     # Стиль из каталога: «нажал на пример — подставил своё фото». Промпт тогда
     # берётся из строки стиля, а не сочиняется: витрина показывает конкретный
     # результат, и получить его можно только тем же текстом, которым он сделан.

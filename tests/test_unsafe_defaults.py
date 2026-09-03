@@ -41,30 +41,53 @@ def test_the_startup_checks_are_armed_by_default():
     assert bare().debug is False
 
 
-@pytest.mark.parametrize("flag", ["expose_dev_tokens", "accept_storekit_test_root"])
+# Правильно настроенный прод: то, что проверка при старте считает тишиной.
+ТИХИЙ_ПРОД = {
+    "debug": False,
+    "expose_dev_tokens": False,
+    "accept_storekit_test_root": False,
+    "app_key_required": True,
+    "session_cookie_secure": True,
+    "use_fake_redis": False,
+    "storage_backend": "s3",
+    "database_echo": False,
+}
+
+# Каждый флаг чек-листа релиза — и значение, в котором его «забыли».
+ЗАБЫТЫЕ = {
+    "expose_dev_tokens": True,
+    "accept_storekit_test_root": True,
+    "app_key_required": False,
+    "session_cookie_secure": False,
+    "use_fake_redis": True,
+    "storage_backend": "local",
+    "database_echo": True,
+}
+
+
+def _настроить(monkeypatch, **как):
+    from app import main
+    for имя, значение in {**ТИХИЙ_ПРОД, **как}.items():
+        monkeypatch.setattr(main.settings, имя, значение)
+    return main
+
+
+@pytest.mark.parametrize("flag", sorted(ЗАБЫТЫЕ))
 def test_leaving_a_debug_flag_on_in_production_is_shouted_about(flag, caplog, monkeypatch):
     """Умолчание ловит забывчивость, проверка при старте — намеренность.
 
-    Ошибки разные, и закрывать их должно разное: одно не заменяет другое.
+    Зовётся настоящая `warn_about_debug_flags`, а не её пересказ. Гасим все
+    флаги и зажигаем один: иначе тест меряет не то, что называет.
 
-    Зовётся настоящая `warn_about_debug_flags`, а не её пересказ. Тест, который
-    повторяет проверку своими словами, продолжает проходить и после того, как
-    проверку удалили из приложения, — то есть охраняет собственный текст.
+    До 2 сентября 2026 проверка охраняла два флага из четырёх в чек-листе
+    релиза, а куку без `Secure` не охранял никто.
     """
-    from app import main
-
-    # Гасим все флаги и зажигаем один: иначе тест меряет не то, что называет.
-    # Он уже соврал однажды — на машине, где в `.env` включили второй флаг,
-    # первой записью в журнале оказалась чужая, и проверка упала, хотя
-    # проверяемое работало.
-    monkeypatch.setattr(main.settings, "debug", False)
-    for other in ("expose_dev_tokens", "accept_storekit_test_root"):
-        monkeypatch.setattr(main.settings, other, other == flag)
+    main = _настроить(monkeypatch, **{flag: ЗАБЫТЫЕ[flag]})
 
     with caplog.at_level(logging.ERROR, logger="toontoon"):
         main.warn_about_debug_flags()
 
-    assert caplog.records, f"{flag}=true при DEBUG=false прошло молча"
+    assert caplog.records, f"{flag}={ЗАБЫТЫЕ[flag]} при DEBUG=false прошло молча"
     assert any(flag.upper() in r.message for r in caplog.records), \
         f"крикнули, но не про {flag}: {[r.message for r in caplog.records]}"
     assert len(caplog.records) == 1, "зажгли один флаг, а криков больше одного"
@@ -72,11 +95,7 @@ def test_leaving_a_debug_flag_on_in_production_is_shouted_about(flag, caplog, mo
 
 def test_a_correctly_configured_production_start_is_quiet(caplog, monkeypatch):
     """Иначе предыдущий тест проходил бы и у функции, которая кричит всегда."""
-    from app import main
-
-    monkeypatch.setattr(main.settings, "debug", False)
-    monkeypatch.setattr(main.settings, "expose_dev_tokens", False)
-    monkeypatch.setattr(main.settings, "accept_storekit_test_root", False)
+    main = _настроить(monkeypatch)
 
     with caplog.at_level(logging.ERROR, logger="toontoon"):
         main.warn_about_debug_flags()
@@ -86,11 +105,7 @@ def test_a_correctly_configured_production_start_is_quiet(caplog, monkeypatch):
 
 def test_a_developer_machine_is_not_nagged(caplog, monkeypatch):
     """С DEBUG=true флаги включены осознанно — крик здесь был бы шумом."""
-    from app import main
-
-    monkeypatch.setattr(main.settings, "debug", True)
-    monkeypatch.setattr(main.settings, "expose_dev_tokens", True)
-    monkeypatch.setattr(main.settings, "accept_storekit_test_root", True)
+    main = _настроить(monkeypatch, debug=True, **ЗАБЫТЫЕ)
 
     with caplog.at_level(logging.ERROR, logger="toontoon"):
         main.warn_about_debug_flags()

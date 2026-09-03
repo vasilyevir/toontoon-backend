@@ -200,10 +200,13 @@ async def daily_shots(
     count: int = Query(default=6, ge=1, le=12),
 ) -> list[StyleOut]:
     """Today's set. Same for everyone, reproducible for any past date."""
-    target = (
-        datetime.strptime(day, "%Y-%m-%d").date()
-        if day
-        else datetime.now(timezone.utc).date()
-    )
+    try:
+        target = (
+            datetime.strptime(day, "%Y-%m-%d").date()
+            if day
+            else datetime.now(timezone.utc).date()
+        )
+    except ValueError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="day must be YYYY-MM-DD") from None
     rows = await styles_repo.daily_shots(db, target, count=count)
     return [_style_out(r) for r in rows]

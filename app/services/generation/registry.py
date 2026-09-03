@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import models as m
 from app.services.generation.operations import (
+    ContentRefused,
     GenerationRequest,
     GenerationResult,
     GenerationUnavailable,
@@ -134,6 +135,16 @@ async def run(
             f"No provider enabled for {request.operation.value}"
         )
 
+    return await _run_through(options, request)
+
+
+async def _run_through(options, request: GenerationRequest):
+    """Пройти по кандидатам до первого кадра.
+
+    Вынесено из `run` отдельной функцией, чтобы правило «отказ по содержанию
+    окончателен» проверялось тестом на ЭТОМ коде, а не на пересказе: список
+    кандидатов приходит готовым, база не нужна.
+    """
     # Причины падений копятся все, а не только последняя.
     #
     # Раньше в отказе оставалась одна — от последнего кандидата, — и по записи
@@ -150,6 +161,13 @@ async def run(
             # адаптер обслуживает несколько поколений вендора, и какое из них
             # работает на этом потоке — данные, а не релиз.
             result = await _attempt(row.id, adapter, request, row.model)
+        except ContentRefused as exc:
+            # Отказ по содержанию — окончательный. Следующий в очереди может
+            # не проверять содержимое вовсе, и «попробовать его» значит
+            # обойти чужую модерацию нашими руками. Человек получит честное
+            # «модель не взялась за этот снимок», монеты вернутся.
+            logger.info("Provider %s refused %s by content: %r", row.id, request.operation.value, exc)
+            raise
         except Exception as exc:  # noqa: BLE001 — any failure means "next one"
             failures.append(f"{row.id}: {exc!r}")
             logger.warning("Provider %s failed on %s: %r", row.id, request.operation.value, exc)

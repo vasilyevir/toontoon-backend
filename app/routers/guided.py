@@ -13,7 +13,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
-from app.deps import Context, required_context
+from app.deps import Context, costs_money, required_context
 from app.services import conversation, gpt
 
 router = APIRouter(prefix="/api/guided", tags=["guided"])
@@ -33,7 +33,7 @@ class ParseResponse(BaseModel):
 @router.post("/parse")
 async def parse(
     body: ParseRequest,
-    _: Context = Depends(required_context),
+    _: Context = Depends(costs_money),
 ) -> ParseResponse:
     """Что из незаполненного человек уже сказал.
 

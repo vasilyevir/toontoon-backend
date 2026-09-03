@@ -22,6 +22,62 @@ from app.deps import Context, required_context
 router = APIRouter(prefix="/api", tags=["generations"])
 
 
+# Внутренняя причина отказа → то, что не стыдно показать человеку.
+#
+# Наружу нельзя отдавать `row.error` как есть: там имена провайдеров, адреса
+# их хранилищ и типы исключений. Это и подсказка тому, кто ищет наши слабые
+# места, и бессмыслица для того, кто просто хотел картинку.
+#
+# Но и молчать нельзя, а молчали мы именно так: приложение получало
+# `status: failed` и ничего больше. Человек видел, что не вышло, и не знал ни
+# почему, ни вернулись ли монеты. Про монеты вопрос первый, и ответ на него
+# входит в каждую строку ниже: за неудачу мы не берём — списание
+# откатывается, а если откатить не вышло, доплачивает сверка при следующем
+# запуске (`settle_unpaid_refunds`).
+#
+# Разбор по подстроке, а не по коду ошибки, потому что кода у нас нет: причина
+# приходит текстом из разных мест. Совпадений мало и они широкие намеренно —
+# лучше показать общую фразу, чем угадать неверную.
+_ОТКАЗЫ: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("safety", "content policy", "content_policy", "content checker", "не взялась",
+      "refus", "blocked", "moderation"),
+     "The model wouldn't work with this photo. "
+     "Your TOONTOON weren't charged — try a different shot."),
+    (("промпт собрать нечем", "translation", "перевод недоступен"),
+     "We couldn't put the request together. Your TOONTOON weren't charged."),
+    (("all providers failed", "unavailable", "timeout", "readtimeout",
+      "insufficient credits", "http 402", "http 5"),
+     "Our drawing service didn't answer. "
+     "Your TOONTOON weren't charged — try again in a minute."),
+)
+
+_ОТКАЗ_ПО_УМОЛЧАНИЮ = (
+    "Something went wrong on our side. Your TOONTOON weren't charged."
+)
+
+
+def failure_text(error: Optional[str]) -> str:
+    """Человеческая причина отказа. Никогда не возвращает внутренний текст."""
+    низом = (error or "").lower()
+    for приметы, ответ in _ОТКАЗЫ:
+        if any(п in низом for п in приметы):
+            return ответ
+    return _ОТКАЗ_ПО_УМОЛЧАНИЮ
+
+
+def _prompt_for_client(row: m.Generation) -> Optional[str]:
+    """Что показать человеку как «его просьбу».
+
+    Для работы по стилю из каталога `row.prompt` — это текст стиля, написанный
+    руками и уходящий в модель; это продукт, а не просьба человека, и любому
+    гостю через историю он не нужен. Показываем то, что человек сказал сам.
+    """
+    if not row.style_id:
+        return row.prompt
+    params = row.request_params or {}
+    return params.get("refine_note") or params.get("said") or None
+
+
 def _serialize(row: m.Generation) -> dict:
     """Media is exposed as API links, never as storage paths.
 
@@ -35,13 +91,16 @@ def _serialize(row: m.Generation) -> dict:
         "type": (row.request_params or {}).get("type", "image"),
         "operation": row.operation,
         "status": row.status,
-        "prompt": row.prompt,
+        "prompt": _prompt_for_client(row),
         "result_url": result,
         "thumbnail_url": thumb,
         "cost": row.cost,
         "style_id": row.style_id,
         "share_id": row.share_id,
         "created_at": row.created_at.isoformat(),
+        # Только у неудачных: у остальных поле молчит, чтобы клиенту не
+        # приходилось гадать, показывать его или нет.
+        "failure": failure_text(row.error) if row.status == "failed" else None,
     }
 
 
@@ -112,10 +171,44 @@ async def share_generation(
     return {"share_id": share_id, "share_url": f"{settings.frontend_url}/s/{share_id}"}
 
 
+@router.delete("/generations/{gen_id}/share")
+async def unshare_generation(
+    gen_id: str,
+    ctx: Context = Depends(required_context),
+    db: AsyncSession = Depends(get_db_session),
+) -> dict:
+    """Отозвать публичную ссылку. Работа остаётся, ссылка перестаёт открываться."""
+    user, _ = ctx
+    row = await generations_repo.get(db, gen_id, user_id=user.id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Not found")
+    row.share_id = None
+    await db.flush()
+    return {"ok": True}
+
+
+def _serialize_public(row: m.Generation) -> dict:
+    """То, что видит человек по ссылке, — и ничего сверх картинки.
+
+    Внутренний `_serialize` отдаёт промпт, а в промпте по замыслу стоят имена
+    из профилей: дети, партнёры. Публичная ссылка на это права не даёт. Ни
+    `id` работы, ни цена, ни текст отказа наружу тоже не нужны.
+    """
+    result = f"/api/media/{row.result_media_id}" if row.result_media_id else None
+    thumb = f"/api/media/{row.result_media_id}?thumb=true" if row.result_media_id else None
+    return {
+        "type": (row.request_params or {}).get("type", "image"),
+        "result_url": result,
+        "thumbnail_url": thumb,
+        "style_id": row.style_id,
+        "created_at": row.created_at.isoformat(),
+    }
+
+
 @router.get("/share/{share_id}", tags=["public"])
 async def get_shared(share_id: str, db: AsyncSession = Depends(get_db_session)) -> dict:
     """Public view of a deliberately shared work. Everything else stays private."""
     row = await generations_repo.get_by_share_id(db, share_id)
-    if row is None:
+    if row is None or row.status != "done" or not row.result_media_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Not found")
-    return _serialize(row)
+    return _serialize_public(row)

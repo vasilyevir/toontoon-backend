@@ -156,44 +156,112 @@ async def stuck(s) -> None:
     print("  Разобрать: PYTHONPATH=. .venv/bin/python scripts/settle_refunds.py")
 
 
-async def providers(s, days: int) -> None:
-    rule(f"Кто рисовал и почём (последние {days} дн.)")
-    # Цена берётся измеренная, а где её нет — из прайса строки реестра.
-    #
-    # OpenRouter сообщает цену в ответе, fal не сообщает вовсе. Пока считалась
-    # только измеренная, сводка занижала расход тем сильнее, чем больше работы
-    # уходило к fal, — и молча: прочерк в колонке выглядел как «дёшево».
-    #
-    # Колонка «откуда» показывает, чему верить: «факт» — сказал провайдер,
-    # «прайс» — взято из их прайс-листа и скидок не учитывает.
-    rows = (await s.execute(text("""
+
+# Запросы вынесены сюда, а не оставлены внутри печатающих функций, чтобы тест
+# мог выполнить ИМЕННО ИХ. Проверка, пересказывающая запрос своими словами,
+# продолжает проходить и после того, как настоящий запрос сломали, — а этот
+# считает себестоимость, по которой ставят цену подписки.
+#
+# Лестница источников в обоих одна и та же: измеренная цена → медиана
+# собственных замеров этого же провайдера за тот же срок → прайс реестра.
+PROVIDER_COSTS_SQL = """
+        WITH measured AS (
+            SELECT provider_id,
+                   percentile_cont(0.5) WITHIN GROUP (ORDER BY provider_cost_usd) AS usd
+              FROM generations
+             WHERE status = 'done' AND provider_cost_usd IS NOT NULL
+               AND created_at > now() - make_interval(days => :d)
+             GROUP BY provider_id
+        )
         SELECT g.provider_id, count(*) AS n,
                round(avg(extract(epoch FROM g.finished_at - g.created_at))::numeric, 1) AS secs,
                round(avg(coalesce(
-                   g.provider_cost_usd,
+                   g.provider_cost_usd, m.usd,
                    (p.cost_hint->>'usd_per_image')::float))::numeric, 4) AS avg_usd,
                round(sum(coalesce(
-                   g.provider_cost_usd,
+                   g.provider_cost_usd, m.usd,
                    (p.cost_hint->>'usd_per_image')::float))::numeric, 2) AS sum_usd,
                count(*) FILTER (WHERE g.provider_cost_usd IS NULL
+                                  AND m.usd IS NOT NULL) AS from_median,
+               count(*) FILTER (WHERE g.provider_cost_usd IS NULL
+                                  AND m.usd IS NULL
                                   AND p.cost_hint->>'usd_per_image' IS NOT NULL) AS from_list,
                count(*) FILTER (WHERE g.provider_cost_usd IS NULL
+                                  AND m.usd IS NULL
                                   AND p.cost_hint->>'usd_per_image' IS NULL) AS unknown
         FROM generations g
         LEFT JOIN generation_providers p ON p.id = g.provider_id
+        LEFT JOIN measured m ON m.provider_id = g.provider_id
         WHERE g.status = 'done' AND g.created_at > now() - make_interval(days => :d)
         GROUP BY g.provider_id ORDER BY n DESC
-    """), {"d": days})).all()
+"""
+
+ECONOMICS_SQL = """
+        WITH measured AS (
+            SELECT provider_id,
+                   percentile_cont(0.5) WITHIN GROUP (ORDER BY provider_cost_usd) AS usd
+              FROM generations
+             WHERE status = 'done' AND provider_cost_usd IS NOT NULL
+               AND created_at > now() - make_interval(days => :d)
+             GROUP BY provider_id
+        )
+        SELECT sum(g.cost) AS toontoon,
+               sum(coalesce(g.provider_cost_usd, m.usd,
+                            (p.cost_hint->>'usd_per_image')::float)) AS usd,
+               sum(g.provider_cost_usd) AS measured,
+               count(*) AS n,
+               count(*) FILTER (WHERE g.provider_cost_usd IS NULL) AS guessed,
+               count(*) FILTER (WHERE g.provider_cost_usd IS NULL
+                                  AND m.usd IS NULL
+                                  AND p.cost_hint->>'usd_per_image' IS NULL) AS unknown
+        FROM generations g
+        LEFT JOIN generation_providers p ON p.id = g.provider_id
+        LEFT JOIN measured m ON m.provider_id = g.provider_id
+        WHERE g.status = 'done' AND g.created_at > now() - make_interval(days => :d)
+"""
+
+
+async def providers(s, days: int) -> None:
+    rule(f"Кто рисовал и почём (последние {days} дн.)")
+    # Цена берётся измеренная; где её нет — по медиане СОБСТВЕННЫХ замеров
+    # этого же провайдера за тот же срок; и только если замеров нет вовсе —
+    # из прайса строки реестра.
+    #
+    # Медиана появилась здесь потому, что одиночное число — не цена, а нижняя
+    # граница. Цена кадра гуляет ВТРОЕ внутри одной и той же модели: длина
+    # промпта и число референсов у живых запросов разные. Ориентиры в реестре
+    # и в docs/PROMPTING.md брались с одного лабораторного кадра — короткий
+    # промпт, один референс, — и легли ровно на дно этого разброса:
+    #
+    #     модель                     в доке    минимум   медиана   разброс
+    #     gpt-image-2                $0.042    $0.0334   $0.0667     3.3x
+    #     gemini-3.1-flash-image     $0.068    $0.0680   $0.2048     3.0x
+    #     gemini-3-pro-image         $0.137    $0.1349   $0.1379     2.1x
+    #
+    # Совпадение с минимумом, а не с медианой, видно по всем трём строкам
+    # разом. Значит любой такой ориентир занижает ПО ПОСТРОЕНИЮ, и тем
+    # сильнее, чем шире разброс у модели. У `openrouter_gpt` это стоило 37
+    # процентов расхода.
+    #
+    # Медиана собственного трафика ошибиться так не может: она сложена из тех
+    # самых запросов, которые считаем, и следует за ними сама. Прайс остаётся
+    # тем, чем и должен быть, — последней опорой для тех, кто цену не сообщает
+    # никогда (fal), а не первой.
+    #
+    # Колонка «откуда» показывает, чему верить: «факт» — сказал провайдер,
+    # «по замерам» — медиана его же кадров, «прайс» — прайс-лист без скидок.
+    rows = (await s.execute(text(PROVIDER_COSTS_SQL), {"d": days})).all()
     if not rows:
         print("  за этот срок никто ничего не нарисовал")
         return
     print(f"  {'провайдер':<24}{'кадров':>8}{'секунд':>9}{'$/кадр':>10}{'$ всего':>10}  откуда")
-    for pid, n, secs, avg_usd, sum_usd, from_list, unknown in rows:
+    for pid, n, secs, avg_usd, sum_usd, from_median, from_list, unknown in rows:
         # Три разных состояния, и путать их нельзя. «Прайс» значит, что число
         # взято из прайс-листа; «нет цены» — что кадры не учтены ВООБЩЕ, и
         # сумма занижена. Раньше подпись называла прайсом и то и другое, то
         # есть врала ровно там, где заведена не врать.
         части = []
+        if from_median: части.append(f"по замерам {from_median}/{n}")
         if from_list: части.append(f"прайс {from_list}/{n}")
         if unknown: части.append(f"нет цены {unknown}/{n}")
         откуда = ", ".join(части) if части else "факт"
@@ -211,32 +279,27 @@ async def economics(s, days: int) -> None:
     цену не сообщает вовсе, себестоимость поехала бы вниз тем сильнее, чем
     больше работы к нему уходит. По этому числу ставят цену подписки.
 
-    Теперь недостающее добирается из прайса реестра, а доля прайса печатается
-    рядом: число без указания, из чего оно сложено, — это то же враньё, только
-    вежливое.
+    Теперь недостающее добирается по лестнице: медиана собственных замеров
+    этого же провайдера за тот же срок, а если замеров нет вовсе — прайс
+    реестра. Доля неизмеренного печатается рядом: число без указания, из чего
+    оно сложено, — это то же враньё, только вежливое.
+
+    Порядок именно такой, потому что одиночный замер — это пол, а не цена:
+    внутри одной модели кадр стоит от $0.0334 до $0.1090. Ориентиры в реестре
+    брались с одного лабораторного кадра и легли на дно разброса, занижая
+    расход на треть. Медиана собственного трафика так ошибиться не может —
+    она сложена из тех же запросов, которые считаем.
     """
-    row = (await s.execute(text("""
-        SELECT sum(g.cost) AS toontoon,
-               sum(coalesce(g.provider_cost_usd,
-                            (p.cost_hint->>'usd_per_image')::float)) AS usd,
-               sum(g.provider_cost_usd) AS measured,
-               count(*) AS n,
-               count(*) FILTER (WHERE g.provider_cost_usd IS NULL) AS from_list,
-               count(*) FILTER (WHERE g.provider_cost_usd IS NULL
-                                  AND p.cost_hint->>'usd_per_image' IS NULL) AS unknown
-        FROM generations g
-        LEFT JOIN generation_providers p ON p.id = g.provider_id
-        WHERE g.status = 'done' AND g.created_at > now() - make_interval(days => :d)
-    """), {"d": days})).one()
-    toontoon, usd, measured, n, from_list, unknown = row
+    row = (await s.execute(text(ECONOMICS_SQL), {"d": days})).one()
+    toontoon, usd, measured, n, guessed, unknown = row
     if not toontoon or not usd:
         return
     rule("Себестоимость")
     print(f"  Взято с людей: {toontoon} TOONTOON")
     print(f"  Заплачено провайдерам: ${usd:.2f}", end="")
-    if from_list:
+    if guessed:
         доля = (usd - (measured or 0)) / usd * 100
-        print(f"   (из них {доля:.0f}% по прайсу, не по факту)")
+        print(f"   (из них {доля:.0f}% оценкой, не по факту)")
     else:
         print()
     # Ради этого числа всё и считается: цена подписки должна стоять выше него,

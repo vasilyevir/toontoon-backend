@@ -60,6 +60,7 @@ async def delete_profile(
     # упадёт на середине, у нас останется безымянная строка и чьи-то снимки,
     # которые уже не привязать к человеку и не найти по запросу.
     стёрто = await media_repo.erase_everything_of(db, user.id)
+    await users_repo.forget_everything_of(db, user.id)
     row = await users_repo.get(db, user.id)
     if row is not None:
         row.email = None

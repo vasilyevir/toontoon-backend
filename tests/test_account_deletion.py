@@ -123,3 +123,34 @@ async def test_the_ledger_survives_because_accounting_needs_it(человек_с
     проводки = (await session.execute(
         select(m.WalletLedger).where(m.WalletLedger.user_id == user.id))).scalars().all()
     assert проводки, "книга проводок исчезла вместе с человеком"
+
+
+async def test_deleting_an_account_erases_prompts_names_and_links(человек_с_историей):
+    """Файлы стирались, а тексты — нет: промпт с именами из профилей, переписка,
+    имя профиля и публичная ссылка переживали «удалить аккаунт». Ссылка при
+    этом продолжала открываться и отдавать промпт без сессии.
+    """
+    session, user, сессия = человек_с_историей
+    работа = m.Generation(user_id=user.id, operation="text_to_image", status="done",
+                          prompt="Маша (дочь) на пляже", request_params={"answers": {"кто": "Маша"}},
+                          share_id="shr_test_" + user.id[-6:], error="fal: x")
+    профиль = m.PersonProfile(user_id=user.id, name="Маша (дочь)", media_ids=["med_1"],
+                              reference_ids=["med_1"])
+    реплика = m.ChatMessage(user_id=user.id, role="user", content="сделай меня как модель")
+    session.add_all([работа, профиль, реплика])
+    await session.flush()
+    try:
+        await profile_router.delete_profile(
+            response=ОтветЗаглушка(), ctx=(user, сессия), db=session, session_cookie=None)
+        await session.flush()
+        await session.refresh(работа)
+        await session.refresh(профиль)
+
+        assert работа.prompt is None and работа.share_id is None and работа.error is None
+        assert работа.request_params == {}
+        assert профиль.name == "" and профиль.media_ids == [] and профиль.deleted_at is not None
+        assert (await session.execute(
+            select(m.ChatMessage).where(m.ChatMessage.user_id == user.id))).scalars().all() == []
+    finally:
+        await session.execute(delete(m.Generation).where(m.Generation.user_id == user.id))
+        await session.flush()

@@ -125,13 +125,25 @@ async def create_guest(
 
 
 @router.post("/magic-link")
-async def magic_link(body: MagicLinkRequest):
+async def magic_link(body: MagicLinkRequest, request: Request):
     """Issue a magic-link token.
 
     Email is NOT actually sent — the dev link is returned directly in the JSON
     response (temporary, until real email delivery is wired up).
+
+    Под теми же счётчиками, что и сброс пароля. Без них эта ручка была
+    единственным входом без лимита: `verify` заводит аккаунт с бонусом, и в
+    dev-режиме, где ссылка приходит в ответе, это был конвейер монет в обход
+    лимита на гостей. С почтой это станет бомбёжкой чужого ящика.
     """
-    token = await auth_service.create_magic_token(str(body.email))
+    email = str(body.email).strip().lower()
+    ip = rate_limit.client_ip(request)
+    ok_email, _ = await rate_limit.hit(f"magic:email:{email}", 3, 900)
+    ok_ip, _ = await rate_limit.hit(f"magic:ip:{ip}", 10, 3600)
+    if not (ok_email and ok_ip):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many attempts, try later")
+
+    token = await auth_service.create_magic_token(email)
     result: dict = {"ok": True}
     if settings.expose_dev_tokens:
         result["devLink"] = f"/api/auth/verify?token={token}"

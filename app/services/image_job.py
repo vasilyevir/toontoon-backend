@@ -29,7 +29,7 @@ from app.db.repositories import generations as generations_repo
 from app.db.repositories import media as media_repo
 from app.db.session import session_scope
 from app.models.payment import Payment, PaymentStatus
-from app.services import prompt_style, wallet
+from app.services import policy, prompt_style, wallet
 from app.services import gpt as gpt_service
 from app.services import generation as generation_core
 
@@ -176,9 +176,20 @@ async def run_image_job(
             asset = await media_repo.save_image(
                 db, user_id=user_id, kind="generation", data=result.data)
 
-            record = await generations_repo.get(db, gen_id, user_id=user_id)
+            # И удалённую тоже: человек стёр работу, пока она рисовалась. Без
+            # `include_deleted` запись оставалась `running`, сверка признавала
+            # её оборвавшейся и возвращала деньги — а кадр провайдеру мы уже
+            # оплатили. Тридцать таких кругов в час на человека.
+            record = await generations_repo.get(db, gen_id, user_id=user_id, include_deleted=True)
             if record is None:
                 logger.warning("Работа %s исчезла, пока рисовался кадр", gen_id)
+                await media_repo.soft_delete(db, asset)
+                return
+            if record.status == "failed":
+                # Сверка опередила: деньги уже возвращены. Кадр никому не
+                # нужен, стираем — иначе это возврат плюс картинка.
+                logger.warning("Работа %s уже признана неудачей — кадр стирается", gen_id)
+                await media_repo.soft_delete(db, asset)
                 return
             record.provider_id = result.provider_id
             record.provider_model = result.model
@@ -191,6 +202,12 @@ async def run_image_job(
                 }
             await generations_repo.mark_done(db, record, result_media_id=asset.id,
                                              prompt=prompt)
+            if record.deleted_at is not None:
+                # Удалил, пока рисовалось. Работа закрыта (деньги за неё
+                # взяты честно — кадр был сделан), а файл стирается, как при
+                # любом удалении.
+                await media_repo.soft_delete(db, asset)
+                return
 
             # В переписку попадает только то, что из неё и вышло. Кадр с
             # карточки на главной там был бы репликой без вопроса.
@@ -202,6 +219,13 @@ async def run_image_job(
                                             generation_id=gen_id)
     except Exception as exc:  # noqa: BLE001 — задача обязана дожить до возврата денег
         logger.exception("Кадр %s не получился", gen_id)
+        if policy.looks_like_moderation(repr(exc)):
+            # Отказ модерации провайдера — в тот же счётчик, что и наши: кто
+            # упорно пробует запрещённое, не должен жечь наш ключ.
+            try:
+                await policy.note_refusal(user_id)
+            except Exception:  # noqa: BLE001 — счётчик не важнее возврата
+                logger.warning("Не записался отказ модерации для %s", user_id)
         try:
             async with session_scope() as db:
                 await wallet.cancel(db, user_id, payment)

@@ -182,7 +182,7 @@
       "Body_upload_api_uploads_post": {
         "properties": {
           "file": {
-            "format": "binary",
+            "contentMediaType": "application/octet-stream",
             "title": "File",
             "type": "string"
           }
@@ -208,6 +208,17 @@
           "config": {
             "$ref": "#/components/schemas/AppConfig"
           },
+          "daily_reward": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Daily Reward"
+          },
           "home_styles": {
             "items": {
               "type": "object"
@@ -222,12 +233,30 @@
             "title": "Messages",
             "type": "array"
           },
+          "pending": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Pending",
+            "type": "array"
+          },
           "shots": {
             "items": {
               "type": "object"
             },
             "title": "Shots",
             "type": "array"
+          },
+          "subscription": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subscription"
           },
           "user": {
             "anyOf": [
@@ -246,6 +275,9 @@
           "home_styles",
           "shots",
           "messages",
+          "subscription",
+          "daily_reward",
+          "pending",
           "config"
         ],
         "title": "BootstrapResponse",
@@ -303,14 +335,19 @@
         "properties": {
           "answers": {
             "additionalProperties": {
+              "maxLength": 300,
               "type": "string"
             },
             "maxProperties": 16,
+            "propertyNames": {
+              "maxLength": 32
+            },
             "title": "Answers",
             "type": "object"
           },
           "asked": {
             "items": {
+              "maxLength": 32,
               "type": "string"
             },
             "maxItems": 16,
@@ -327,6 +364,7 @@
           },
           "forget": {
             "items": {
+              "maxLength": 32,
               "type": "string"
             },
             "maxItems": 16,
@@ -452,6 +490,19 @@
             "default": {},
             "title": "Known",
             "type": "object"
+          },
+          "ready": {
+            "default": false,
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "roles": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "title": "Roles",
+            "type": "object"
           }
         },
         "title": "ChatState",
@@ -561,6 +612,7 @@
         "properties": {
           "forget": {
             "items": {
+              "maxLength": 32,
               "type": "string"
             },
             "maxItems": 16,
@@ -590,8 +642,10 @@
         "properties": {
           "answers": {
             "additionalProperties": {
+              "maxLength": 500,
               "type": "string"
             },
+            "maxProperties": 32,
             "title": "Answers",
             "type": "object"
           },
@@ -630,9 +684,22 @@
             "title": "From Chat",
             "type": "boolean"
           },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
           "intent": {
             "anyOf": [
               {
+                "maxLength": 64,
                 "type": "string"
               },
               {
@@ -678,6 +745,7 @@
           "prompt": {
             "anyOf": [
               {
+                "maxLength": 2000,
                 "type": "string"
               },
               {
@@ -716,6 +784,7 @@
           "style": {
             "anyOf": [
               {
+                "maxLength": 64,
                 "type": "string"
               },
               {
@@ -746,6 +815,7 @@
           "tile_id": {
             "anyOf": [
               {
+                "maxLength": 64,
                 "type": "string"
               },
               {
@@ -1439,6 +1509,27 @@
         "title": "RewardResult",
         "type": "object"
       },
+      "RolesRequest": {
+        "description": "Кто на приложенных снимках — ответ человека на «кто из них вы».\n\nРоль на каждый снимок: `person` или `style`. Порядок не важен, важна\nполнота: снимок, о котором не сказали, останется неразобранным.",
+        "properties": {
+          "label": {
+            "default": "",
+            "maxLength": 120,
+            "title": "Label",
+            "type": "string"
+          },
+          "roles": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "maxProperties": 8,
+            "title": "Roles",
+            "type": "object"
+          }
+        },
+        "title": "RolesRequest",
+        "type": "object"
+      },
       "StoredMessage": {
         "properties": {
           "attachment_url": {
@@ -1559,6 +1650,17 @@
             "title": "Operation",
             "type": "string"
           },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject"
+          },
           "title": {
             "title": "Title",
             "type": "string"
@@ -1655,6 +1757,13 @@
       },
       "ValidationError": {
         "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
           "loc": {
             "items": {
               "anyOf": [
@@ -1893,7 +2002,7 @@
     },
     "/api/auth/guest": {
       "post": {
-        "description": "Start an anonymous session on first launch.\n\nThe app calls this once and keeps the token in the Keychain. From here on a\nguest is an ordinary user: they have a balance, their generations are stored\nand their chat is kept — signing in later merges all of it into the account\ninstead of asking them to start over (CH-16).\n\nUnlike every other identity in this file, a guest lives in PostgreSQL: this\nis the first route on the new storage.",
+        "description": "Start an anonymous session on first launch.\n\nThe app calls this once and keeps the token in the Keychain. From here on a\nguest is an ordinary user: they have a balance, their generations are stored\nand their chat is kept — signing in later merges all of it into the account\ninstead of asking them to start over (CH-16).\n\nUnlike every other identity in this file, a guest lives in PostgreSQL: this\nis the first route on the new storage.\n\nСчётчик здесь потому, что ручка раздаёт деньги, не спрашивая, кто пришёл.\nКаждый гость получает `signup_toontoon_balance` монет, и без счётчика\nдвадцать запросов подряд заводили двадцать аккаунтов с шестьюстами монетами\nна них — сорок генераций из двадцати запросов, за наш счёт.\n\nЭто полумера, и честно называть её так. Настоящий замок — App Attest,\nподтверждение, что запрос пришёл из нашего приложения на живом устройстве;\nключ приложения (`app_key_required`) закроет большую часть раньше. Счётчик\nостанавливает скрипт с одной машины, но не сеть машин.",
         "operationId": "create_guest_api_auth_guest_post",
         "responses": {
           "201": {
@@ -1991,7 +2100,7 @@
     },
     "/api/auth/magic-link": {
       "post": {
-        "description": "Issue a magic-link token.\n\nEmail is NOT actually sent — the dev link is returned directly in the JSON\nresponse (temporary, until real email delivery is wired up).",
+        "description": "Issue a magic-link token.\n\nEmail is NOT actually sent — the dev link is returned directly in the JSON\nresponse (temporary, until real email delivery is wired up).\n\nПод теми же счётчиками, что и сброс пароля. Без них эта ручка была\nединственным входом без лимита: `verify` заводит аккаунт с бонусом, и в\ndev-режиме, где ссылка приходит в ответе, это был конвейер монет в обход\nлимита на гостей. С почтой это станет бомбёжкой чужого ящика.",
         "operationId": "magic_link_api_auth_magic_link_post",
         "requestBody": {
           "content": {
@@ -2285,7 +2394,7 @@
     },
     "/api/auth/profile": {
       "delete": {
-        "description": "Delete the account.\n\nThis is **anonymisation, not a DELETE**: the ledger references the user by\nforeign key and the database rightly refuses to erase a row that money\nhistory points at. So the person disappears — email, name and avatar are\ncleared, the session is killed — while the bookkeeping stays intact (CH-15).\n\nErasing the person's files from storage belongs here too and is wired up\ntogether with the media migration.",
+        "description": "Delete the account.\n\nThis is **anonymisation, not a DELETE**: the ledger references the user by\nforeign key and the database rightly refuses to erase a row that money\nhistory points at. So the person disappears — email, name and avatar are\ncleared, the session is killed — while the bookkeeping stays intact (CH-15).\n\nФайлы стираются здесь же. До 31 августа 2026 не стирались: строка\nобезличивалась, а снимки оставались лежать в хранилище. Человек нажимал\n«удалить», ему отвечали «готово», и его лицо продолжало храниться у нас.",
         "operationId": "delete_profile_api_auth_profile_delete",
         "parameters": [
           {
@@ -3114,6 +3223,82 @@
         ]
       }
     },
+    "/api/chat/roles": {
+      "post": {
+        "description": "Запомнить, кто из приложенных снимков человек, а кто образец.\n\nРешение принимал человек, а знало о нём только приложение. Закрыл и открыл\n— в переписке висит вопрос, ответа нет, вариантов нет, роли неизвестны:\nтупик, из которого выход один — начать заново. Причём сам вопрос заводили\nровно затем, чтобы не ошибиться чужим лицом в кадре.\n\nЗдесь же доделывается то, что не успело случиться из-за вопроса: разговор\nвозвращается с ним раньше, чем доходит до образца, — а образец отвечает за\nтехнику и цвета до конца просьбы, как если бы о них сказали словами.",
+        "operationId": "choose_roles_api_chat_roles_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "arteki-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Arteki-Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RolesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Choose Roles",
+        "tags": [
+          "chat"
+        ]
+      }
+    },
     "/api/chat/state": {
       "get": {
         "description": "Понятое — на холодный старт.\n\nБез этого приложение открывалось с пустой строкой понятого, а сервер в это\nвремя держал всю просьбу и собирал по ней кадр. Пустая строка читается как\n«нас забыли» — и это была бы та самая ложь, ради устранения которой строка\nи появилась.",
@@ -3185,6 +3370,22 @@
         "description": "Accept a batch of anonymous analytics events. Rate-limited per IP.",
         "operationId": "ingest_events_api_events_post",
         "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
           {
             "in": "cookie",
             "name": "arteki-session",
@@ -3870,6 +4071,80 @@
       }
     },
     "/api/generations/{gen_id}/share": {
+      "delete": {
+        "description": "Отозвать публичную ссылку. Работа остаётся, ссылка перестаёт открываться.",
+        "operationId": "unshare_generation_api_generations__gen_id__share_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "gen_id",
+            "required": true,
+            "schema": {
+              "title": "Gen Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "arteki-session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Arteki-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Unshare Generation Api Generations  Gen Id  Share Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Unshare Generation",
+        "tags": [
+          "generations"
+        ]
+      },
       "post": {
         "operationId": "share_generation_api_generations__gen_id__share_post",
         "parameters": [
@@ -5275,7 +5550,7 @@
     },
     "/api/styles": {
       "get": {
-        "description": "The whole catalogue, grouped by direction.\n\nDirections marked ♥ during onboarding come first; inside a direction the\norder is the one we set by hand.",
+        "description": "The whole catalogue, grouped by direction.\n\nПорядок разделов — тот, что выставлен вручную в `CATEGORIES`, и он один\nдля всех. Внутри раздела — тоже заданный.\n\nПерсонализация (♥ из онбординга наверх) написана и лежит рядом, но\nвыключена флагом `personalise_catalogue`. Она переворачивала верх витрины:\nчеловек, отметивший шесть направлений из одиннадцати, видел первыми их, и\nвыстроенный порядок начинал работать только с седьмой ленты. Пока задача —\nпервое впечатление, а оно должно быть одинаковым и предсказуемым.",
         "operationId": "list_styles_api_styles_get",
         "parameters": [
           {
@@ -5345,7 +5620,7 @@
     },
     "/api/styles/home": {
       "get": {
-        "description": "The showcase: a few strong examples, not a grid of everything (CH-14).",
+        "description": "The showcase: a few strong examples, not a grid of everything (CH-14).\n\nРанжирование под человека — тем же флагом, что и порядок разделов: иначе\nленты шли бы одинаково у всех, а витрина над ними — по-разному, и первое\nвпечатление опять зависело бы от ответов в онбординге.",
         "operationId": "home_styles_api_styles_home_get",
         "parameters": [
           {
@@ -5601,7 +5876,7 @@
     },
     "/api/uploads": {
       "post": {
-        "description": "Store a reference photo and return a handle usable as ``photo_url``.\n\nThe file goes into the private bucket, not into a served directory: these\nare photographs of people, and until now anyone with the link could open\nthem. On the way in the metadata is stripped (phone photos carry the GPS\ncoordinates of where they were taken) and the same picture uploaded twice\nis stored once.",
+        "description": "Store a reference photo and return a handle usable as ``photo_url``.\n\nThe file goes into the private bucket, not into a served directory: these\nare photographs of people, and until now anyone with the link could open\nthem. On the way in the metadata is stripped (phone photos carry the GPS\ncoordinates of where they were taken) and the same picture uploaded twice\nis stored once.\n\nТип из заголовка проверяется по-прежнему, но полагаться на него нельзя:\nего пишет клиент, а декодер выбирается по содержимому. Настоящую границу\nдержит `images.ALLOWED_FORMATS` при разборе — там названы те же четыре\nформата, и совпадение двух списков проверяется тестом.",
         "operationId": "upload_api_uploads_post",
         "parameters": [
           {
@@ -5718,6 +5993,7 @@
     },
     "/health": {
       "get": {
+        "description": "Жив ли процесс. Ничего больше.\n\nНарочно не знает ни про базу, ни про отказы: эту ручку опрашивает\nбалансировщик, и «невозвращённый TOONTOON» не повод выкинуть из ротации\nработающий сервис. Диагноз — рядом, отдельным путём.",
         "operationId": "health_health_get",
         "responses": {
           "200": {
@@ -5733,6 +6009,58 @@
           }
         },
         "summary": "Health",
+        "tags": [
+          "meta"
+        ]
+      }
+    },
+    "/health/pulse": {
+      "get": {
+        "description": "Диагноз для сторожевого сервиса: 200 — всё в порядке, 503 — нет.\n\nКод ответа, а не тело, потому что тревогу должен поднимать любой\nбесплатный аптайм-монитор из коробки, без разбора JSON и без настройки\nправил. Тело — для человека, который придёт по ссылке из письма.\n\nБез токена ручки нет вовсе, и неверный токен отвечает тем же 404: иначе\nответ сам сообщал бы, что за этим путём что-то есть.",
+        "operationId": "pulse_health_pulse_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "token",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Token",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-watchdog-token",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Watchdog-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Pulse",
         "tags": [
           "meta"
         ]

@@ -305,6 +305,7 @@ async def test_how_long_the_work_took_is_measured_not_guessed(unlucky):
     from app.db.repositories import generations as generations_repo
 
     session, user, gen, _ = unlucky
+    gen.status = "running"  # у неудавшейся `mark_done` ничего не меняет — см. тест ниже
     await session.execute(text("SELECT pg_sleep(1)"))
     await generations_repo.mark_done(session, gen, result_media_id=None)
     await session.flush()
@@ -313,3 +314,17 @@ async def test_how_long_the_work_took_is_measured_not_guessed(unlucky):
         func.extract("epoch", m.Generation.finished_at - m.Generation.created_at)
     ).where(m.Generation.id == gen.id))
     assert took >= 0.9, f"записано {took:.2f} сек на работу длиной в секунду"
+
+
+@pytest.mark.asyncio
+async def test_a_frame_finished_after_the_sweep_does_not_undo_the_refund(unlucky):
+    """Сверка признала работу оборвавшейся и вернула деньги. Если задача после
+    этого всё-таки доделала кадр, `done` превратил бы возврат в подарок:
+    деньги вернули, картинку тоже отдали. Состояние остаётся `failed`.
+    """
+    from app.db.repositories import generations as generations_repo
+
+    session, user, gen, _ = unlucky
+    assert gen.status == "failed"
+    await generations_repo.mark_done(session, gen, result_media_id=None)
+    assert gen.status == "failed" and gen.result_media_id is None

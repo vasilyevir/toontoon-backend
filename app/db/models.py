@@ -107,6 +107,11 @@ class User(Base):
     # Set when a guest is merged into an account: the guest row stays as a trail
     # so a disputed merge can be reconstructed.
     merged_into_user_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id"))
+    # Поддержка проверила, что это публичный человек и он сам. Только руками
+    # (scripts/verify_public_figure.py): снимок такого пользователя не
+    # сверяется с «похож на известного». Текст сверяется всегда.
+    verified_public_figure: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false")
 
     __table_args__ = (
         # Abandoned-guest cleanup scans by kind + last activity.
@@ -437,6 +442,9 @@ class MediaAsset(Base):
     width: Mapped[Optional[int]] = mapped_column(Integer)
     height: Mapped[Optional[int]] = mapped_column(Integer)
     content_hash: Mapped[Optional[str]] = mapped_column(String(64))  # sha256, dedups re-uploads
+    # Вердикт политики контента по снимку (app/services/policy.py): смотрели
+    # ли зрением и что увидели. Один раз на файл, а не на каждый кадр.
+    screening: Mapped[Optional[dict]] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=_now, nullable=False)
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 

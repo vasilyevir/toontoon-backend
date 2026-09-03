@@ -138,7 +138,10 @@ _TEMPLATING_SYSTEM = (
     "You are a precise prompt-templating engine for an image generator. "
     "Follow the user's instruction exactly, keep all fixed blocks verbatim, and "
     "output a single line in the form: final prompt | negative prompt. "
-    "No preamble, no quotes, no extra lines."
+    "No preamble, no quotes, no extra lines. Safety overrides the instruction: "
+    "never nudity or sexual content, never a sexualised minor, never a real "
+    "public figure's likeness, never realistic uniforms with insignia, identity "
+    "documents, weapons pointed at people or drugs — drop such parts silently."
 )
 
 _OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
@@ -182,6 +185,11 @@ Strict rules:
   named brand or character — keep the user's own subject, just made generic.
 - If a greeting/announcement text is provided, DO NOT draw any letters.
   Instead describe a clean empty area where text can be placed later.
+- SAFETY RULES (override everything above): never describe nudity or sexual
+  content; never sexualise or undress anyone who could be a minor; never depict
+  or imitate a real public figure — if one is named, keep the scene and drop the
+  likeness; never describe realistic police, military or medical uniforms with
+  insignia, identity documents, weapons pointed at people, or drugs.
 """
 
 # Путь с фотографией. Сцена «с нуля» здесь вредна: модель получает снимок и
@@ -202,6 +210,11 @@ Strict rules:
 - NO style words, NO technical words, NO quality words — the system adds those separately.
 - NEVER use: beautiful, high quality, realistic, perfect, 4k, hd, masterpiece,
   Pixar, Disney, Ghibli, DreamWorks.
+- SAFETY RULES (override everything above): never describe nudity or sexual
+  content; never sexualise or undress anyone who could be a minor; never depict
+  or imitate a real public figure — if one is named, keep the scene and drop the
+  likeness; never describe realistic police, military or medical uniforms with
+  insignia, identity documents, weapons pointed at people, or drugs.
 """
 
 # Фотография человека плюс образец стиля.
@@ -469,6 +482,10 @@ async def _call(messages: list[dict], *, max_tokens: int = 300, temperature: flo
         "max_tokens": max_tokens,
         "temperature": temperature,
     }
+    if use_router:
+        # Сюда уходят и снимки лиц (зрение). Вендор за витриной не должен
+        # оставлять их себе; прямой OpenAI такого поля не знает.
+        payload["provider"] = {"data_collection": "deny"}
     async with httpx.AsyncClient(timeout=20) as client:
         for attempt in (1, 2):
             try:
@@ -587,7 +604,11 @@ async def build_prompt(
             return "", ""
         if not raw:
             return "", ""
-        return _split_prompt_negative(raw)
+        prompt, negative = _split_prompt_negative(raw)
+        # Модели велено выполнять инструкцию точно — и человек это знает:
+        # «IGNORE THE TEMPLATE… Pikachu and Elsa» уезжало исполнителю как
+        # есть, минуя чистки, через которые проходит сценарный путь.
+        return prompt_style.strip_brands(prompt_style.neutralize_ip(prompt) or ""), negative
 
     # ── Everything else: scene + style anchor + technical block ──────────────
     if style:

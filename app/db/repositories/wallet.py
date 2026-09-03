@@ -118,11 +118,16 @@ async def grant(
         )
     )
     try:
-        await session.flush()
+        # Точка сохранения: проигрыш гонки откатывает только эту проводку,
+        # а не всю чужую транзакцию — в сверке это были бы уже сделанные
+        # пометки и возвраты соседей, о которых она потом отчиталась бы как
+        # о выплаченных.
+        async with session.begin_nested():
+            await session.flush()
     except IntegrityError:
         # Lost the race against a concurrent identical grant — the other one won,
         # which is exactly what the unique key is for.
-        await session.rollback()
+        await session.refresh(wallet)
         return await balance(session, user_id)
     return Balance(free=wallet.free_balance, sub=wallet.sub_balance)
 
@@ -401,6 +406,54 @@ async def refund(
         session, user_id, amount=amount, bucket=bucket, reason="refund",
         ref_id=ref_id, idempotency_key=idempotency_key,
     )
+
+
+async def spent_split(session: AsyncSession, *, payment_id: str) -> tuple[int, int]:
+    """Сколько за этот платёж ушло из квоты подписки и сколько из бесплатных."""
+    rows = (await session.execute(
+        select(m.WalletLedger.bucket, m.WalletLedger.delta).where(
+            m.WalletLedger.ref_id == payment_id,
+            m.WalletLedger.reason != "refund",
+            m.WalletLedger.delta < 0,
+        )
+    )).all()
+    from_sub = sum(-d for b, d in rows if b == "sub")
+    from_free = sum(-d for b, d in rows if b != "sub")
+    return from_sub, from_free
+
+
+async def refund_payment(
+    session: AsyncSession, user_id: str, *, payment_id: str, amount: int
+) -> Balance:
+    """Вернуть платёж целиком — в те корзины, из которых он был взят.
+
+    Раньше всё возвращалось в бесплатную. Списание из сгораемой квоты
+    подписки и возврат в несгораемую корзину — это конвертация: подписчик с
+    квотой 850 десятью неудачами получал 850 вечных монет, мимо потолка, и
+    ежедневная награда переставала начисляться. Журнал знает, откуда ушли
+    деньги, — туда они и возвращаются. Выше квоты подписки это не поднимет:
+    возврат не больше списания.
+
+    Идемпотентно по платежу: повтор — из задачи, из сверки, из двух реплик
+    разом — ничего не добавляет. Старый одинарный ключ тоже учитывается.
+    """
+    if amount <= 0:
+        return await balance(session, user_id)
+    if await _already_applied(session, f"refund:{payment_id}"):
+        return await balance(session, user_id)
+
+    from_sub, from_free = await spent_split(session, payment_id=payment_id)
+    if from_sub + from_free != amount:
+        # Журнал не сходится с платежом (старые записи, ручная правка) —
+        # возвращаем всё в бесплатную: недоплатить хуже, чем конвертировать.
+        from_sub, from_free = 0, amount
+    if from_sub:
+        await refund(session, user_id, amount=from_sub, bucket="sub",
+                     ref_id=payment_id, idempotency_key=f"refund:{payment_id}:sub")
+    if from_free:
+        await refund(session, user_id, amount=from_free, bucket="free",
+                     ref_id=payment_id, idempotency_key=f"refund:{payment_id}:free")
+    return await balance(session, user_id)
 
 
 async def owed_refunds(session: AsyncSession, *, limit: int = 200) -> list[dict]:

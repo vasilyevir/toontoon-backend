@@ -1,7 +1,9 @@
 """TOONTOON backend — FastAPI application entrypoint."""
 from __future__ import annotations
 
+import asyncio
 import logging
+import re
 import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -64,6 +66,26 @@ def warn_about_debug_flags() -> None:
             "EXPOSE_DEV_TOKENS=true при DEBUG=false: токены сброса пароля уходят "
             "в ответе API. Выключите его до публикации."
         )
+    if settings.debug:
+        return
+    # Ниже — то, что чек-лист релиза обещал ловить, а ловил только на словах:
+    # проверка охраняла два флага из четырёх, а пятый не охранял никто.
+    if not settings.app_key_required:
+        log.error(
+            "APP_KEY_REQUIRED=false при DEBUG=false: подпись запросов приложения "
+            "не проверяется, любой скрипт заводит гостей и тратит монеты."
+        )
+    if not settings.session_cookie_secure:
+        log.error(
+            "SESSION_COOKIE_SECURE=false при DEBUG=false: кука сессии уходит и по "
+            "http; с SameSite=None браузер её вовсе отбросит."
+        )
+    if settings.use_fake_redis:
+        log.error("USE_FAKE_REDIS=true при DEBUG=false: сессии и лимиты живут в памяти одного процесса.")
+    if settings.storage_backend != "s3":
+        log.error("STORAGE_BACKEND=%s при DEBUG=false: снимки лягут на диск пода.", settings.storage_backend)
+    if settings.database_echo:
+        log.error("DATABASE_ECHO=true при DEBUG=false: каждый SQL с данными людей уходит в журнал.")
 
 
 def warn_if_nobody_is_watching() -> None:
@@ -132,10 +154,28 @@ async def lifespan(app: FastAPI):
     warn_about_debug_flags()
     warn_if_nobody_is_watching()
     await settle_unpaid_refunds()
+    sweeper = asyncio.create_task(settle_periodically())
 
     yield
+    sweeper.cancel()
     await db.disconnect()
     await disconnect()
+
+
+async def settle_periodically() -> None:
+    """Та же сверка, по расписанию.
+
+    На старте она ловит то, что случилось, пока процесса не было. Но процесс
+    живёт неделями, и всё это время работа, у которой возврат не прошёл,
+    ждала следующей выкатки. Тридцать минут (`stale_generation_minutes`) плюс
+    пять — и деньги возвращаются, пока человек ещё помнит, за что платил.
+    """
+    interval = settings.refund_sweep_interval_seconds
+    if interval <= 0:
+        return
+    while True:
+        await asyncio.sleep(interval)
+        await settle_unpaid_refunds()
 
 
 app = FastAPI(
@@ -162,6 +202,40 @@ app.add_middleware(
 
 # Mobile app-key + HMAC verification. No-op unless settings.app_key_required.
 app.add_middleware(AppKeyMiddleware)
+
+
+@app.middleware("http")
+async def security_headers(request, call_next):
+    """Три заголовка, которых не было.
+
+    `/api/media` отдаёт присланные людьми байты с их же mime — без `nosniff`
+    браузер вправе угадать в них HTML. Остальные два — чтобы ответ API нельзя
+    было вложить в чужую страницу и чтобы ссылки на работы не утекали
+    через Referer. HSTS и CSP — на ingress, когда появится домен.
+    """
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    return response
+
+
+class _RedactTokens(logging.Filter):
+    """Одноразовые токены приходят в query string, а uvicorn пишет путь в
+    access-log целиком: ссылка входа и сброса пароля оседали в stdout пода.
+    Здесь они заменяются до записи."""
+    _pattern = re.compile(r"(token=)[^&\s\"']+")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.args and isinstance(record.args, tuple):
+            record.args = tuple(self._pattern.sub(r"\1[скрыто]", a) if isinstance(a, str) else a
+                                for a in record.args)
+        if isinstance(record.msg, str) and "token=" in record.msg:
+            record.msg = self._pattern.sub(r"\1[скрыто]", record.msg)
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(_RedactTokens())
 
 # The public /uploads mount is gone: it served every user's reference photos —
 # faces included — to anyone with a link. Media now goes through /api/media,

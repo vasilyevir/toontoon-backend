@@ -82,21 +82,13 @@ async def confirm(db: AsyncSession, payment: Payment) -> None:
 async def cancel(db: AsyncSession, user_id: str, payment: Payment) -> None:
     """Give the tokens back after a failed generation.
 
-    Refunds land in the free bucket. Returning them to the subscription bucket
-    could push it above the plan maximum, and the weekly reset would silently
-    eat the difference — the person would be refunded into a bucket that is
-    about to be wiped.
+    В те корзины, откуда взято. Возврат всего в бесплатную превращал
+    сгораемую квоту подписки в вечные монеты (см. `refund_payment`).
     """
     if payment.amount <= 0:
         return
-    await wallet_repo.refund(
-        db,
-        user_id,
-        amount=payment.amount,
-        bucket="free",
-        ref_id=payment.payment_id,
-        idempotency_key=f"refund:{payment.payment_id}",
-    )
+    await wallet_repo.refund_payment(
+        db, user_id, payment_id=payment.payment_id, amount=payment.amount)
 
 
 async def settle_owed(db: AsyncSession, *, limit: int = 200) -> list[dict]:
@@ -134,14 +126,8 @@ async def settle_owed(db: AsyncSession, *, limit: int = 200) -> list[dict]:
     settled = []
     for row in owed:
         try:
-            await wallet_repo.refund(
-                db,
-                row["user_id"],
-                amount=row["amount"],
-                bucket="free",
-                ref_id=row["payment_id"],
-                idempotency_key=f"refund:{row['payment_id']}",
-            )
+            await wallet_repo.refund_payment(
+                db, row["user_id"], payment_id=row["payment_id"], amount=row["amount"])
         except Exception:  # noqa: BLE001 — один невернувшийся не должен ронять остальных
             logger.exception("Не удалось доплатить за работу %s", row["generation_id"])
             continue

@@ -12,10 +12,10 @@ Routes:
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, Optional, Sequence
+from typing import Annotated, Literal, Optional, Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -63,11 +63,11 @@ class ChatRequest(BaseModel):
     # получало ответ на каждый ход, — и присылает обратно, чтобы один и тот же
     # вопрос не повторялся. Без этого отказ запирает разговор: «без надписи»
     # слот не заполняет, и про надпись спрашивалось бы бесконечно.
-    asked: list[str] = Field(default_factory=list, max_length=16)
+    asked: list[Annotated[str, StringConstraints(max_length=32)]] = Field(default_factory=list, max_length=16)
     # Что человек снял со строки понятого: разобрали неверно, и он это видит.
     # Без такого способа ошибка разбора держалась бы до «Очистки» — правило
     # слияния сохраняет прежнее значение, пока не назвали новое.
-    forget: list[str] = Field(default_factory=list, max_length=16)
+    forget: list[Annotated[str, StringConstraints(max_length=32)]] = Field(default_factory=list, max_length=16)
     # Что человек уже выбрал руками: пропорции, техника. Приложение знает это
     # точно — он нажал кнопку, — а разбор фразы промахивается: на голом
     # «Landscape» он молчит.
@@ -75,7 +75,9 @@ class ChatRequest(BaseModel):
     # Без этого сервер считал поле незакрытым, модель спрашивала про формат
     # второй раз, а кнопки под её вопросом показывали уже следующее поле. Человек
     # видел вопрос про одно и варианты про другое — и отвечал не туда.
-    answers: dict[str, str] = Field(default_factory=dict, max_length=16)
+    answers: dict[Annotated[str, StringConstraints(max_length=32)],
+                  Annotated[str, StringConstraints(max_length=300)]] = Field(
+        default_factory=dict, max_length=16)
 
 
 class Option(BaseModel):
@@ -215,6 +217,13 @@ async def chat(
         return ChatResponse(reply=reply, ready=False)
 
     user, _ = ctx
+    # Снимок — только свой, и проверка до того, как заплатили модели: чужой
+    # или несуществующий `media_id` доходил до записи в тред и падал там
+    # `IntegrityError` — уже после оплаченных разбора и ответа.
+    if body.media_id:
+        свой = await db.get(m.MediaAsset, body.media_id)
+        if свой is None or свой.user_id != user.id or свой.deleted_at is not None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Photo not found")
     history = await chat_repo.context_messages(db, user, limit=settings.chat_context_messages)
 
     # О чём спрашивать — решается здесь, а не моделью.
@@ -628,7 +637,7 @@ async def state(
 
 
 class ForgetRequest(BaseModel):
-    forget: list[str] = Field(default_factory=list, max_length=16)
+    forget: list[Annotated[str, StringConstraints(max_length=32)]] = Field(default_factory=list, max_length=16)
 
 
 @router.post("/chat/forget", response_model=ChatState)

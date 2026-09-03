@@ -23,3 +23,8 @@ docs/research/runs/
 
 # Страницы обзора lavish-axi: рабочий материал, пересобирается из каталога.
 .lavish/
+
+# Сторонние скиллы агентов (lavish и т.п.) — инструмент, не код проекта
+.agents/
+.claude/skills/lavish
+skills-lock.json

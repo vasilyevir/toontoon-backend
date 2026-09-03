@@ -63,6 +63,13 @@ async def let_go(key: str) -> None:
     await redis.delete(f"lock:{key}")
 
 
+async def peek(key: str) -> int:
+    """Сколько попаданий в текущем окне, не добавляя своего."""
+    redis = get_client()
+    value = await redis.get(f"ratelimit:{key}")
+    return int(value or 0)
+
+
 async def hit(key: str, limit: int, window_seconds: int) -> tuple[bool, int]:
     """Register one hit against ``key``.
 
@@ -71,9 +78,15 @@ async def hit(key: str, limit: int, window_seconds: int) -> tuple[bool, int]:
     """
     redis = get_client()
     redis_key = f"ratelimit:{key}"
-    current = await redis.incr(redis_key)
-    if current == 1:
-        await redis.expire(redis_key, window_seconds)
+    # Сначала срок, потом счёт, и одной транзакцией. В обратном порядке
+    # падение между `INCR` и `EXPIRE` оставляло ключ без срока — окно не
+    # сбрасывалось никогда, и человек оставался заперт лимитом навсегда.
+    # `SET … NX` не трогает уже идущее окно, поэтому оно не скользит.
+    async with redis.pipeline(transaction=True) as pipe:
+        pipe.set(redis_key, 0, ex=window_seconds, nx=True)
+        pipe.incr(redis_key)
+        _, current = await pipe.execute()
+    current = int(current)
     allowed = current <= limit
     remaining = max(0, limit - current)
     return allowed, remaining

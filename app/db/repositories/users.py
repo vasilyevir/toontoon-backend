@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import models as m
@@ -86,7 +86,10 @@ async def merge_guest_into(
     # основным (человек восстановил покупку на новом телефоне). Работы
     # переезжали, а люди на них — нет: профиль оставался у мёртвого гостя, и
     # следующий кадр рисовался с чужим лицом или без лица вовсе.
-    for model in (m.MediaAsset, m.Generation, m.ChatMessage, m.PersonProfile):
+    # `Subscription` — по той же причине: гость купил, потом вошёл по паролю
+    # или через Apple, и оплаченное оставалось на мёртвом госте до повторного
+    # предъявления чека.
+    for model in (m.MediaAsset, m.Generation, m.ChatMessage, m.PersonProfile, m.Subscription):
         await session.execute(
             update(model).where(model.user_id == guest_id).values(user_id=target_id)
         )
@@ -153,3 +156,26 @@ async def abandoned_guests(
         .limit(limit)
     )
     return list(await session.scalars(stmt))
+
+
+async def forget_everything_of(session: AsyncSession, user_id: str) -> None:
+    """Стереть тексты человека: промпты, переписку, имена профилей, ссылки.
+
+    Файлы стирает `media.erase_everything_of`; до этой функции всё остальное
+    оставалось. В промпте работы по замыслу стоят имена из профилей — дети,
+    партнёры, — и публичная ссылка на неё продолжала открываться после
+    «удалить аккаунт». Строки работ остаются: на них смотрит книга проводок.
+    Переписку удаляем целиком — на неё не ссылается никто.
+    """
+    await session.execute(
+        update(m.Generation)
+        .where(m.Generation.user_id == user_id)
+        .values(prompt=None, request_params={}, share_id=None, error=None)
+    )
+    await session.execute(
+        update(m.PersonProfile)
+        .where(m.PersonProfile.user_id == user_id)
+        .values(name="", media_ids=[], reference_ids=[], deleted_at=func.now())
+    )
+    await session.execute(delete(m.ChatMessage).where(m.ChatMessage.user_id == user_id))
+    await session.flush()

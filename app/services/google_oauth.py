@@ -72,9 +72,13 @@ def _decode_id_token(id_token: str) -> dict:
             return {}
         padded = parts[1] + "=" * (-len(parts[1]) % 4)
         payload = json.loads(base64.urlsafe_b64decode(padded))
+        # Почта годится для привязки к существующему аккаунту только если
+        # Google за неё ручается. Аккаунты с `email_verified: false` бывают,
+        # и по одной строке почты они попадали бы в чужой аккаунт.
+        verified = payload.get("email_verified") is True
         return {
             "sub": str(payload.get("sub", "")),
-            "email": payload.get("email"),
+            "email": payload.get("email") if verified else None,
             "name": payload.get("name") or payload.get("given_name"),
             "avatar": payload.get("picture"),
         }

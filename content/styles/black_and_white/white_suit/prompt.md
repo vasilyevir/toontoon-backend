@@ -5,6 +5,32 @@
 Костюм назван явно, а не «светлая одежда». Без этого модель одевает человека
 во что попало белое, и кадр из редакционного превращается в бытовой.
 
+## Почему «high-key» отсюда убран
+
+Прежний промпт просил «bright even high-key lighting with soft shadows» на
+белом фоне и ставил «monochrome black and white» последним словом. Кадр
+выходил формально обесцвеченным — цветных пикселей 2,6%, и те на коже, — но
+чёрно-белым он не читался, и это заметили сразу.
+
+Причина не в цвете, а в тоне. Белое на белом при ровном свете не даёт
+диапазона: в кадре нет ничего тёмного, значит нет и контраста, на котором
+держится вся чёрно-белая фотография. Обесцветить — не то же самое, что снять
+в чёрно-белом.
+
+Поэтому светлое осталось (карточка обязана быть самой яркой в разделе), а
+ровный свет заменён направленным: он лепит тень на костюме и кладёт её на
+пол. Диапазон теперь просят явно — от глубокого чёрного до чистого белого.
+`monochrome black and white` стоит там же, где у остальных семи карточек
+раздела, — перед `editorial fashion photography`. Один раз его отсюда убрали,
+понадеявшись на общий якорь; якорь не прижился и был откачен, а слова вернуть
+забыли — и стиль поехал в цвете. Теперь за этим следит тест
+(`tests/test_bw_prompts.py`), а не память.
+
+Запретов в промпте нет намеренно. «NO colour» и подобные обороты читаются
+как просьба ЧТО-ТО УБРАТЬ с готовой картинки, и на fal это давало прямые
+отказы (0 из 6 против 6 из 6 после смягчения). Здесь всё сказано
+утвердительно.
+
 ---
 
-the person in the photo standing against a plain white studio background, wearing a crisp white tailored suit, bright even high-key lighting with soft shadows, full body or three-quarter framing, calm confident posture, monochrome black and white, editorial fashion photography
+the person in the photo wearing a crisp white tailored suit, standing against a soft light grey studio backdrop, directional side light that carves clear shadows across the suit and casts a defined shadow on the floor, full body or three-quarter framing, calm confident posture, monochrome black and white, editorial fashion photography
