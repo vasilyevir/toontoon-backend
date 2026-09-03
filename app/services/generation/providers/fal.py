@@ -343,21 +343,37 @@ class FalProvider(Provider):
 
     async def _through_the_queue(self, model: str, body: dict) -> dict:
         """Поставить в очередь, дождаться, забрать. Отказ — повод уйти дальше."""
-        deadline = time.monotonic() + settings.fal_request_timeout
+        # Два срока, а не один. Очередь fal и сама работа — разные вещи с разной
+        # природой: очередь растёт от чужой нагрузки, работа — от нашего заказа.
+        # Пока они считались одним сроком, всплеск чужого трафика превращался
+        # в наши отказы с возвратами при живом провайдере.
+        #
+        # Поэтому: в очереди ждём до fal_queue_timeout; работе даём
+        # fal_request_timeout с момента, когда она началась; и на всё вместе —
+        # тот же fal_request_timeout сверху не нужен: сумма и так ограничена
+        # двумя числами, а человек с экраном «готовится» уйдёт раньше их суммы —
+        # это уже про интерфейс, а не про адаптер.
+        started_at = time.monotonic()
+        working_since: float | None = None
         async with httpx.AsyncClient(timeout=settings.fal_http_timeout) as client:
             request_id, status_url, response_url = await self._submit(client, model, body)
             logger.info("fal: заказ %s поставлен в очередь моделью %s", request_id, model)
 
             while True:
-                if time.monotonic() > deadline:
-                    raise GenerationUnavailable(
-                        f"fal: {model} не уложился в {settings.fal_request_timeout:.0f} с"
-                    )
                 status = await self._status(client, status_url)
                 if status == "COMPLETED":
                     break
-                # IN_QUEUE и IN_PROGRESS ждём одинаково: разница между ними для
-                # нас никакая, ждать всё равно надо.
+                now = time.monotonic()
+                if status == "IN_PROGRESS" and working_since is None:
+                    working_since = now
+                if working_since is None and now - started_at > settings.fal_queue_timeout:
+                    raise GenerationUnavailable(
+                        f"fal: {model} простоял в очереди дольше {settings.fal_queue_timeout:.0f} с"
+                    )
+                if working_since is not None and now - working_since > settings.fal_request_timeout:
+                    raise GenerationUnavailable(
+                        f"fal: {model} не уложился в {settings.fal_request_timeout:.0f} с"
+                    )
                 await asyncio.sleep(settings.fal_poll_interval)
 
             return await self._result(client, response_url)

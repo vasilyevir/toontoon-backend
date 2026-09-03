@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import logging
+
+from app.services import jobs
 import re
 from dataclasses import replace
 from pathlib import Path
@@ -818,7 +820,9 @@ async def generate(
         # Ровно так уже работало видео. Там это было вынужденно — пять минут не
         # переживёт никакой запрос; здесь оказалось нужно по той же причине, только
         # менее очевидно.
-        image_job.schedule(
+        # Все аргументы задачи — в одном словаре: и для прежнего пути (задача
+        # в процессе), и для очереди (спецификация в строке + воркер).
+        задача = dict(
             gen_id=record.id,
             user_id=user.id,
             payment_id=payment.payment_id,
@@ -841,6 +845,16 @@ async def generate(
             # иначе исходная просьба.
             said=((body.refine_note or body.prompt or "").strip()
                   if body.post_prompt else None) or None,
+        )
+        await jobs.dispatch(
+            db,
+            jobs.spec_from_call(
+                photo_media_id=_media_id(photo_url),
+                extra_media_ids=[mid for mid in (_media_id(u) for u in
+                                                 list(body.extra_photo_urls) + profile_extras) if mid],
+                **задача,
+            ),
+            **задача,
         )
 
     except HTTPException:

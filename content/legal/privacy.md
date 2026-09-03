@@ -64,7 +64,9 @@ stored as pictures.
 
 | Provider | What we send | What for |
 |---|---|---|
-| **OpenRouter** (openrouter.ai), which passes the request on to the model that draws it — currently models operated by Google and OpenAI | Your photograph and the text instruction | Drawing the picture; reading a style sample; checking profile photos |
+| **fal.ai** (fal.ai), which runs the model that draws the picture — currently OpenAI's GPT Image and Google's Nano Banana models on fal's infrastructure | Your photograph and the text instruction | Drawing the picture and editing your earlier results. We ask fal not to keep the request or the result on their side |
+| **OpenRouter** (openrouter.ai), a fallback route to the same models when fal is unavailable — not in use at the moment | Your photograph and the text instruction | Drawing the picture |
+| **OpenAI** (openai.com) | A small copy of your photograph, and what you type | Understanding your request; checking that the photograph and the request are within our rules (no nudity, no minors in unsuitable settings, no public figures) |
 | **Kie** (kie.ai) | Your photograph and the instruction | Generating video |
 | **Apple** | Purchase receipts | Confirming your subscription. Apple takes the payment; we never see your card |
 
@@ -82,7 +84,11 @@ We also disclose data if the law requires it.
 > так значило бы соврать в документе, который человек читает перед тем, как
 > отдать своё лицо. Срок нужно сперва завести в продукте, потом записать сюда.
 
-Today: your photographs and results are kept until you delete them or ask us to.
+Today: if you have an account (an email or an Apple sign-in), your photographs
+and results are kept until you delete them or ask us to. If you use the app as
+a guest and do not open it for **180 days**, your photographs and results are
+deleted automatically; the record that a picture once existed stays, without
+the picture.
 Bookkeeping records — what was paid and what was spent — are kept for as long as
 accounting law requires, whatever else you delete.
 

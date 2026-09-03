@@ -417,3 +417,30 @@ def test_пустая_причина_не_роняет():
 def test_длинная_причина_обрезается_но_остаётся_читаемой():
     длинно = diagnosis.коротко("x" * 500)
     assert len(длинно) <= 151
+
+
+# ─── воркер и очередь ────────────────────────────────────────────────────────
+
+def _факты(**extra):
+    return {"работ_за_сутки": 5, "удалось": 5, "отказов": 0, "оборвалось": 0,
+            "не_вернули_денег": 0, "чем_падало": [], **extra}
+
+
+def test_молчащий_воркер_это_тревога():
+    d = diagnosis.judge(_факты(воркер_жив=False, в_очереди=3), ever=True)
+    assert any("воркер генерации молчит" in r for r in d.reasons)
+
+
+def test_живой_воркер_и_короткая_очередь_молчат():
+    d = diagnosis.judge(_факты(воркер_жив=True, в_очереди=2), ever=True)
+    assert not any("воркер" in r or "очереди" in r for r in d.reasons)
+
+
+def test_длинная_очередь_при_живом_воркере():
+    d = diagnosis.judge(_факты(воркер_жив=True, в_очереди=diagnosis.QUEUE_BACKLOG_ALARM), ever=True)
+    assert any("не успевает" in r for r in d.reasons)
+
+
+def test_в_режиме_inline_про_воркер_не_спрашивают():
+    d = diagnosis.judge(_факты(), ever=True)
+    assert not any("воркер" in r for r in d.reasons)

@@ -564,3 +564,32 @@ async def test_обычная_422_остаётся_обходимой(подде
     with pytest.raises(GenerationUnavailable) as e:
         await FalProvider().run(просьба(со_снимком=True), model="openai/gpt-image-2/edit")
     assert not isinstance(e.value, ContentRefused)
+
+
+# ─── очередь и работа — два срока ────────────────────────────────────────────
+
+async def test_долгая_очередь_это_свой_отказ(подделка, monkeypatch):
+    monkeypatch.setattr(settings, "fal_queue_timeout", 0.02, raising=False)
+    monkeypatch.setattr(settings, "fal_request_timeout", 10.0, raising=False)
+    подделка(Поддельный(статусы=["IN_QUEUE", "IN_QUEUE", "IN_QUEUE", "IN_QUEUE", "IN_QUEUE"]))
+    with pytest.raises(GenerationUnavailable) as e:
+        await FalProvider().run(просьба())
+    assert "в очереди" in str(e.value)
+
+
+async def test_работа_получает_свой_срок_после_очереди(подделка, monkeypatch):
+    """Очередь была долгой, но в срок очереди уложилась — работе даётся её собственное время."""
+    monkeypatch.setattr(settings, "fal_queue_timeout", 10.0, raising=False)
+    monkeypatch.setattr(settings, "fal_request_timeout", 10.0, raising=False)
+    подделка(Поддельный(статусы=["IN_QUEUE", "IN_QUEUE", "IN_PROGRESS", "IN_PROGRESS", "COMPLETED"]))
+    out = await FalProvider().run(просьба())
+    assert out.data == КАДР
+
+
+async def test_долгая_работа_это_прежний_отказ(подделка, monkeypatch):
+    monkeypatch.setattr(settings, "fal_queue_timeout", 10.0, raising=False)
+    monkeypatch.setattr(settings, "fal_request_timeout", 0.02, raising=False)
+    подделка(Поддельный(статусы=["IN_PROGRESS", "IN_PROGRESS", "IN_PROGRESS", "IN_PROGRESS", "IN_PROGRESS"]))
+    with pytest.raises(GenerationUnavailable) as e:
+        await FalProvider().run(просьба())
+    assert "не уложился" in str(e.value)

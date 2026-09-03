@@ -380,7 +380,10 @@ def test_lettering_routes_by_words_not_by_intent():
     # стиля. Само по себе назначение «постер» больше никого никуда не уводит:
     # в цепочке предпочтений его нет.
     source = pathlib.Path(router.__file__).read_text()
-    chain = source[source.index("prefer_used = ("):source.index("image_job.schedule(")]
+    # Конец цепочки предпочтений — сборка аргументов задачи. Раньше это был
+    # прямой `image_job.schedule(`; с очередью аргументы собираются в словарь
+    # и уходят через `jobs.dispatch` — граница та же, имя другое.
+    chain = source[source.index("prefer_used = ("):source.index("задача = dict(")]
     assert "preferred_provider(style)" in chain
     assert "preferred_provider(intent)" not in chain
     assert prompt_style.preferred_provider("poster") == prompt_style.LETTERING_PROVIDER

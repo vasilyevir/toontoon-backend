@@ -37,6 +37,8 @@ from app.db import models as m
 
 # Доля отказов, выше которой это уже не невезение.
 FAILURE_RATE_ALARM = 0.20
+# Столько заказов в очереди — уже не «минутная задержка», а нехватка воркеров.
+QUEUE_BACKLOG_ALARM = 20
 # Сколько часов тишины считать подозрительными. Сутки: ночь без единой работы
 # — обычное дело, а вот сутки подряд — уже нет.
 SILENCE_HOURS = 24
@@ -150,7 +152,14 @@ async def diagnose(session: AsyncSession) -> Diagnosis:
         .limit(3)
     )).all()
 
+    # Очередь и воркер — только когда кадры рисует отдельный процесс. Пульс
+    # воркера — ключ с TTL, который тот обновляет каждый цикл: молчит дольше
+    # TTL — значит очередь никто не читает, а веб-процесс продолжает её
+    # наполнять, и каждый заказ будет висеть «готовится» до сверки.
+    воркер = await _worker_facts()
+
     return judge({
+        **воркер,
         "работ_за_сутки": total,
         "удалось": done,
         "отказов": failed,
@@ -162,6 +171,26 @@ async def diagnose(session: AsyncSession) -> Diagnosis:
             for pid, текст, n in поломки
         ],
     }, ever=bool(ever))
+
+
+async def _worker_facts() -> dict:
+    if settings.worker_mode != "queue":
+        return {}
+    try:
+        from app.redis_client import connect, get_client
+        # Пульс запускается отдельным скриптом, и Redis там может быть не
+        # подключён: `get_client()` без подключения бросает, `except` ниже это
+        # молча глотал — и мёртвый воркер оставался незамеченным ровно там,
+        # где его обязаны были заметить. Подключаемся сами.
+        try:
+            redis = get_client()
+        except Exception:  # noqa: BLE001 — не подключён
+            redis = await connect()
+        жив = bool(await redis.exists("toontoon:worker:heartbeat"))
+        длина = int(await redis.llen(settings.worker_queue_key))
+    except Exception:  # noqa: BLE001 — Redis лёг, об этом скажет другая проверка
+        return {}
+    return {"воркер_жив": жив, "в_очереди": длина}
 
 
 def коротко(текст: str | None) -> str:
@@ -219,6 +248,12 @@ def judge(facts: dict, *, ever: bool) -> Diagnosis:
         # «кто и почему» сразу, чтобы дальше читать журнал шли уже с гипотезой.
         for случай in facts.get("чем_падало") or []:
             d.fault(f"    ×{случай['сколько']}  {случай['причина']}")
+
+    if "воркер_жив" in facts and not facts["воркер_жив"]:
+        d.fault("воркер генерации молчит: очередь никто не читает, "
+                f"в ней {facts.get('в_очереди', 0)} — заказы висят «готовится»")
+    elif facts.get("в_очереди", 0) >= QUEUE_BACKLOG_ALARM:
+        d.fault(f"в очереди генерации {facts['в_очереди']} заказов — воркер не успевает")
 
     if facts["оборвалось"]:
         n = facts["оборвалось"]

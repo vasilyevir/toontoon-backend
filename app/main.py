@@ -18,6 +18,7 @@ from app.middleware.app_key import AppKeyMiddleware
 from app.redis_client import connect, disconnect
 from app.services import diagnosis, wallet
 from app.routers import (
+    legal,
     favorites,
     guided,
     ideas,
@@ -260,6 +261,7 @@ app.include_router(generations.router)
 app.include_router(payments.router)
 app.include_router(push.router)
 app.include_router(events.router)
+app.include_router(legal.router)
 
 
 @app.get("/health", tags=["meta"])

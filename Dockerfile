@@ -62,4 +62,6 @@ EXPOSE 8000
 # Кто клиент — решает одно место, `app/core/rate_limit.py:client_ip`, по числу
 # СВОИХ прокси (`TRUSTED_PROXY_COUNT`). Двое решающих — это один решающий и
 # один незамеченный.
+# Тот же образ рисует кадры отдельным процессом: `python -m app.worker`
+# (см. deploy/values.yaml, `workers`). CMD ниже — только веб.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers", "--no-server-header"]
