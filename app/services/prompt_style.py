@@ -352,6 +352,14 @@ def assemble(scene: str, *, style_key: str, is_text: bool, editing: bool = False
         parts = [identity_clause(subject=subject, drawn=is_drawn(style_key),
                                  cutout=poster, medium=medium_of(style_key),
                                  from_sample=style_ref)]
+    if redraw:
+        # Своя работа — сама себе образец стиля, и обходиться с ней надо как с
+        # образцом: якорь пресета молчит, хвост — только про качество. Иначе
+        # «change only what is asked» спорит с «natural color grading» и
+        # «golden hour» из того же промпта — и проигрывает: слова про цвет
+        # стоят ближе к концу, а конец модель слышит громче.
+        anchor = ""
+        technical = TECHNICAL_REDRAW
     if style_ref:
         parts.append(STYLE_REF_CLAUSE)
         if (forbidden := forbid_brands(sample_brands or [])):
@@ -375,7 +383,7 @@ def assemble(scene: str, *, style_key: str, is_text: bool, editing: bool = False
     if is_text:
         parts.append(LAYOUT_BLOCK)
     parts.append(technical)
-    if editing and is_drawn(style_key):
+    if editing and is_drawn(style_key) and not redraw:
         # Последнее слово — о том, что это рисунок целиком.
         #
         # Хвост промпта модель взвешивает сильнее середины, а сорваться она
@@ -558,10 +566,19 @@ def forbid_brands(names: list[str]) -> str:
 # «вот этот, но поменяй фон» — значит меняем фон.
 REDRAW_CLAUSE = (
     "this picture is the person's own earlier result, not a photograph: keep "
-    "its subject, its likeness and its composition exactly as they are, and "
-    "change only what is asked for. Do not redraw it from scratch and do not "
-    "make it more photographic"
+    "its subject, its likeness, its clothing, its framing and its composition "
+    "exactly as they are, keep the same medium, palette, contrast and lighting "
+    "(a black and white picture stays black and white), and change only what "
+    "is asked for. Do not redraw it from scratch and do not make it more "
+    "photographic"
 )
+
+# Технический хвост для правки своей работы. Пресетный хвост сюда нельзя:
+# у `realistic` он просит «golden hour directional light» и «natural color
+# grading» — и правка «тот же кадр, но закат на фоне» вернулась цветным
+# пляжем в другой одежде. Картинка сама несёт свой свет и палитру; хвосту
+# остаётся только качество.
+TECHNICAL_REDRAW = "Technical: same resolution and detail as the source picture, crisp clean detail"
 
 
 ORDINALS = ("the first reference photo", "the second reference photo",

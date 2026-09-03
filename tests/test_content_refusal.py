@@ -75,3 +75,17 @@ def test_счётчик_отказов_узнаёт_ContentRefused():
     e = ContentRefused("fal: модель не взялась за снимок, HTTP 422: "
                        '{"detail":[{"type":"content_policy_violation"}]}')
     assert policy.looks_like_moderation(repr(e))
+
+
+def test_правка_своей_работы_не_идёт_на_перерисовку_как_брак():
+    """Носитель при правке задаёт исходник, а не стиль, угаданный по тексту.
+
+    «Тот же кадр, но закат на фоне» к фотографическому Spotlight: чат подобрал
+    рисованный стиль, результат вернулся фотографией — и был перерисован с нуля
+    как брак. В коде это выражено одной связкой: проверка на «а не фото ли»
+    выключена, когда правим свою работу.
+    """
+    import re, pathlib
+    src = pathlib.Path("app/routers/generate.py").read_text()
+    m = re.search(r"^\s*check_drawn\s*=\s*(.+)$", src, re.M)
+    assert m and "and not redraw" in m.group(1), m.group(1) if m else "нет check_drawn"

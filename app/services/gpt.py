@@ -217,6 +217,39 @@ Strict rules:
   insignia, identity documents, weapons pointed at people, or drugs.
 """
 
+# Своя прошлая работа: правка, а не пересъёмка.
+#
+# `_EDIT_SYSTEM` велит «описать только то, что меняется: обстановку, наряд,
+# свет, настроение» — и это правильно для фотографии, которую надо
+# ПЕРЕСТИЛИЗОВАТЬ. Для готового кадра это яд: на «тот же кадр, но закат на
+# фоне» сборщик честно дописал наряд «для летнего вечера» и волны у ног —
+# и чёрно-белый студийный портрет вернулся цветным пляжем. Никто этого не
+# просил; сборщик выполнял свою инструкцию.
+#
+# Здесь инструкция обратная: изменение — одно, всё остальное — как было.
+_REDRAW_SYSTEM = """You write ONE instruction for an image editor that receives the person's OWN
+earlier picture — already styled, already composed. The user's text is an EDIT to that
+picture, not a description of a new one.
+
+Write ONLY the instruction (15–45 words), in English, whatever language the user writes in.
+
+Strict rules:
+- Name exactly the change the user asked for, and nothing else.
+- Say explicitly that everything not mentioned stays as it is: the person, the clothing,
+  the pose, the framing, the medium, the palette and the lighting. A black and white
+  picture stays black and white unless the user asks for colour.
+- Do NOT invent a setting, an outfit, props, a mood, a time of day or a camera angle
+  that the user did not ask for.
+- NEVER describe the person's face, age, hair colour, skin tone, body or gender.
+  Refer to them only as "the person in the picture".
+- NO style words, NO technical words, NO quality words.
+- SAFETY RULES (override everything above): never describe nudity or sexual
+  content; never sexualise or undress anyone who could be a minor; never depict
+  or imitate a real public figure — if one is named, keep the change and drop the
+  likeness; never describe realistic police, military or medical uniforms with
+  insignia, identity documents, weapons pointed at people, or drugs.
+"""
+
 # Фотография человека плюс образец стиля.
 #
 # Общая инструкция редактору здесь вредит дважды. Она требует описать
@@ -325,7 +358,8 @@ _REDRAW_NOTE = (
 
 
 def _system_for(*, editing: bool, lettering: bool, poster: bool = False,
-                drawn: bool = False, style_ref: bool = False) -> str:
+                drawn: bool = False, style_ref: bool = False,
+                redraw: bool = False) -> str:
     """Инструкция сборщику: что писать и можно ли писать буквы.
 
     Буквы и постер — разные вещи. Постер живёт вёрсткой: плоские формы, поля,
@@ -333,14 +367,18 @@ def _system_for(*, editing: bool, lettering: bool, poster: bool = False,
     ей плакатную вёрстку значит переделать картинку, которую человек уже
     показал образцом.
     """
-    if editing:
+    if editing and redraw:
+        # Своя работа сильнее образца и сильнее общей инструкции редактору:
+        # менять надо одно, а не описывать сцену заново.
+        base = _REDRAW_SYSTEM
+    elif editing:
         # Образец меняет саму задачу: описывать нужно не «что изменится», а
         # только то, что человек назвал сверх самого образца — чаще всего
         # ничего.
         base = _EDIT_WITH_SAMPLE if style_ref else _EDIT_SYSTEM
     else:
         base = _SCENE_SYSTEM
-    if drawn and editing:
+    if drawn and editing and not redraw:
         base += _REDRAW_NOTE
     if poster:
         # Слов нет — постер собирается с чистым местом под заголовок. Требовать
@@ -660,7 +698,8 @@ async def build_prompt(
     if lettering is None:
         lettering = poster and bool(lettering_text)
     system = _system_for(editing=editing, lettering=lettering, poster=poster,
-                         drawn=prompt_style.is_drawn(style_key), style_ref=style_ref)
+                         drawn=prompt_style.is_drawn(style_key), style_ref=style_ref,
+                         redraw=redraw)
     if style_ref and not editing:
         # Путь без фотографии: сцену всё-таки пишем, но образец уже отвечает за
         # вид. Правило про палитру называется по номеру намеренно — общий

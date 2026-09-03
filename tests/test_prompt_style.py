@@ -236,3 +236,23 @@ def test_a_scene_anchor_stops_forbidding_people_when_someone_is_in_the_frame():
         # Кадр без человека — запрет на месте: он там не случайно.
         without = prompt_style.assemble("mountains at dawn", style_key=key, is_text=False)
         assert "no people, no characters" in without
+
+
+def test_редактируя_свою_работу_не_навязываем_стиль_пресета():
+    """«Тот же кадр, но закат на фоне» возвращался цветным пляжем в другой одежде.
+
+    Причина — не просьба, а обёртка: к правке приклеивался якорь `realistic`
+    («natural color grading») и хвост («golden hour directional light»), и слова
+    про цвет стояли ближе к концу, чем «change only what is asked». Своя работа
+    — сама себе образец: якорь молчит, хвост только про качество.
+    """
+    ps = prompt_style.assemble("make the background a warm sunset", style_key="realistic",
+                  is_text=False, editing=True, redraw=True)
+    for чужое in ("natural color grading", "golden hour", "hyperrealistic", "cinematic DSLR"):
+        assert чужое not in ps, f"в правку утёк пресет: «{чужое}»"
+    assert "stays black and white" in ps and "change only what is asked" in ps
+    assert ps.startswith("this picture is the person's own earlier result"), "требование сохранить — первым словом"
+    # а обычная правка фотографии по-прежнему получает якорь: это регрессия, которую легко внести
+    обычная = prompt_style.assemble("make the background a warm sunset", style_key="realistic",
+                       is_text=False, editing=True, redraw=False)
+    assert "natural color grading" in обычная and "golden hour" in обычная
