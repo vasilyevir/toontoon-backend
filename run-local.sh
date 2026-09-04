@@ -34,7 +34,7 @@ export DATABASE_URL="${DATABASE_URL:-postgresql+asyncpg://toontoon:toontoon@loca
 # Sign in with Apple: секрета на нашей стороне не нужно, достаточно знать
 # audience = Bundle ID приложения. Без этого /api/app/bootstrap отдаёт
 # apple_enabled=false и апка прячет кнопку Apple.
-export APPLE_BUNDLE_ID="${APPLE_BUNDLE_ID:-ai.toontoon.ios}"
+export APPLE_BUNDLE_ID="${APPLE_BUNDLE_ID:-mobile.atom.toontoon}"
 export APP_KEY_REQUIRED="${APP_KEY_REQUIRED:-false}"
 export DEBUG=true
 

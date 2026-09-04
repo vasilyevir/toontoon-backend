@@ -33,7 +33,7 @@ async def buyer():
         sub = m.Subscription(
             user_id=user.id,
             original_transaction_id=f"t-{user.id[-10:]}",
-            product_id="ai.toontoon.ios.weekly",
+            product_id="mobile.atom.toontoon.weekly",
             status="active",
             quota_anchor_at=datetime.now(timezone.utc) - timedelta(days=1),
         )
@@ -75,7 +75,7 @@ async def test_a_plan_nobody_declared_grants_nothing(buyer):
     """Товар из App Store, которого нет у нас, — повод для записи в журнал, а не
     для щедрости и не для падения чужого запроса."""
     session, user, sub = buyer
-    sub.product_id = "ai.toontoon.ios.something_new"
+    sub.product_id = "mobile.atom.toontoon.something_new"
     await session.flush()
 
     balance = await wallet.get_balance(session, user.id)
