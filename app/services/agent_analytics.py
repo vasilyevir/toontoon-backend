@@ -74,15 +74,41 @@ def _agent(agent_id: str):
     return _agents[agent_id]
 
 
+class _Lazy:
+    """Сессия, которая открывается в Amplitude только при первом событии.
+
+    Обработчик открывает её на каждый запрос, но до модели доходит не каждый
+    (ответ из кэша, ранний выход). Без этого в отчёте копились бы сессии из
+    одного `Session End` без единой реплики.
+    """
+
+    def __init__(self, agent_id: str, user_id: str, session_id: str) -> None:
+        self.agent_id, self.user_id, self.session_id = agent_id, user_id, session_id
+        self.opened = None
+
+
 def current():
-    """Активная сессия этого запроса, если обработчик её открыл."""
+    """Активная сессия этого запроса (ленивая), если обработчик её открыл."""
     return _current.get()
+
+
+def _opened_now():
+    """Открыть SDK-сессию синхронно из трекинга: `__aenter__` у SDK без await-ов
+    кроме установки контекста, поэтому его можно прогнать сразу."""
+    lazy = current()
+    if lazy is None:
+        return None
+    if lazy.opened is None:
+        s = _agent(lazy.agent_id).session(user_id=lazy.user_id, session_id=lazy.session_id,
+                                           idle_timeout_minutes=30)
+        lazy.opened = s.__enter__()
+    return lazy.opened
 
 
 @asynccontextmanager
 async def session(agent_id: str, *, user_id: Optional[str],
                   session_id: Optional[str] = None) -> AsyncIterator[Optional[object]]:
-    """Открыть сессию агента на время обработки запроса.
+    """Открыть (лениво) сессию агента на время обработки запроса.
 
     Сервер долгоживущий, поэтому после выхода — `flush()`: иначе события
     копятся в памяти до следующего интервала или до перезапуска.
@@ -92,23 +118,26 @@ async def session(agent_id: str, *, user_id: Optional[str],
         yield None
         return
     sid = session_id or f"{agent_id.removeprefix('toontoon-')}-{user_id}"
-    s = _agent(agent_id).session(user_id=user_id, session_id=sid, idle_timeout_minutes=30)
-    token = _current.set(s)
+    lazy = _Lazy(agent_id, user_id, sid)
+    token = _current.set(lazy)
     try:
-        async with s:
-            yield s
+        yield lazy
     finally:
         _current.reset(token)
         try:
+            if lazy.opened is not None:
+                lazy.opened.__exit__(None, None, None)
             ai.flush()
         except Exception:  # pragma: no cover
-            log.debug("Amplitude flush не удался", exc_info=True)
+            log.debug("Amplitude: закрытие сессии не удалось", exc_info=True)
 
 
 def user_said(text: str) -> None:
     """Реплика человека — только из чата, где она и есть реплика."""
-    s = current()
-    if s is None or not text:
+    if not text:
+        return
+    s = _opened_now()
+    if s is None:
         return
     try:
         s.track_user_message(text[:2000])
@@ -119,7 +148,7 @@ def user_said(text: str) -> None:
 def model_answered(*, content: str, model: str, provider: str, latency_ms: float,
                    usage: Optional[dict] = None, purpose: Optional[str] = None) -> None:
     """Ответ модели. Зовётся из `gpt._call`; вне сессии — молча ничего."""
-    s = current()
+    s = _opened_now()
     if s is None:
         return
     usage = usage or {}

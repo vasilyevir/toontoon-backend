@@ -71,3 +71,10 @@ async def test_outside_session_and_disabled_are_silent(mock):
 def test_canonical_model():
     assert aa.canonical_model("openai/gpt-4.1-mini") == ("gpt-4.1-mini", "openrouter")
     assert aa.canonical_model("gpt-4o-mini") == ("gpt-4o-mini", "openai")
+
+
+async def test_session_without_events_leaves_no_trace(mock):
+    """Обработчик дошёл до модели не всегда: пустая сессия не должна попадать в отчёт."""
+    async with aa.session(aa.STUDIO, user_id="user-0009"):
+        pass
+    assert not mock.get_events("[Agent] Session End")
