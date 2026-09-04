@@ -28,3 +28,6 @@ docs/research/runs/
 .agents/
 .claude/skills/lavish
 skills-lock.json
+
+# самоподписанный серт для сборки TestFlight на локальный мак
+.local-tls/

@@ -13,7 +13,7 @@ Redis и MinIO. Домен не нужен — приложение идёт н�
 
 ## Шаги
 
-0. Серт: `openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -days 1095 -nodes -subj "/CN=<IP>" -keyout /etc/nginx/ssl/toontoon.key -out /etc/nginx/ssl/toontoon.crt`
+0. Серт: `openssl req -x509 -newkey rsa:2048 -days 1095 -nodes -subj "/CN=<IP>" -addext "subjectAltName=IP:<IP>" -keyout /etc/nginx/ssl/toontoon.key -out /etc/nginx/ssl/toontoon.crt`
    (папку создать заранее). Пин для приложения — `scripts/pin.sh <IP>` в iOS-репо.
 1. Docker: `curl -fsSL https://get.docker.com | sh`.
 2. Код: `git clone` репозитория в `/opt/toontoon`, `cd deploy/vps`.
