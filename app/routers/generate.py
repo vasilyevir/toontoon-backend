@@ -36,6 +36,7 @@ from app.models.generation import (
 from app.db.repositories import chat as chat_repo
 from app.db.repositories import state as state_repo
 from app.services import content_gen, conversation, generations_service, image_job, prompt_style, tiles_data, video_gen, wallet
+from app.services import agent_analytics
 from app.services import gpt as gpt_service
 from app.services import policy
 
@@ -129,6 +130,13 @@ async def generate(
     2. run the generation
     3. confirm on success / cancel (refund) on failure
     """
+    user, session = ctx
+    # Amplitude Agent Analytics: сборка промпта, разбор, сторож — в сессию конвейера.
+    async with agent_analytics.session(agent_analytics.STUDIO, user_id=user.id):
+        return await _generate(body, ctx, db)
+
+
+async def _generate(body: GenerateRequest, ctx: Context, db: AsyncSession) -> GenerateResponse:
     user, session = ctx
 
     # Rate limit: N generations per hour per user.

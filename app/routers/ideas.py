@@ -28,6 +28,7 @@ from app.storage import get_storage
 from app.db.session import get_session as get_db_session
 from app.deps import Context, costs_money, required_context
 from app.services import gpt as gpt_service
+from app.services import agent_analytics
 
 router = APIRouter(prefix="/api", tags=["ideas"])
 
@@ -40,6 +41,7 @@ class IdeasResponse(BaseModel):
 
 
 @router.get("/ideas/starters", response_model=IdeasResponse)
+@agent_analytics.in_session(agent_analytics.STUDIO)
 async def starters(
     ctx: Context = Depends(costs_money),
     db: AsyncSession = Depends(get_db_session),
@@ -69,6 +71,7 @@ async def starters(
 
 
 @router.get("/media/{media_id}/ideas", response_model=IdeasResponse)
+@agent_analytics.in_session(agent_analytics.STUDIO)
 async def photo_ideas(
     media_id: str,
     ctx: Context = Depends(costs_money),
@@ -92,6 +95,7 @@ async def photo_ideas(
 
 
 @router.get("/generations/{gen_id}/ideas", response_model=IdeasResponse)
+@agent_analytics.in_session(agent_analytics.STUDIO)
 async def ideas(
     gen_id: str,
     ctx: Context = Depends(costs_money),

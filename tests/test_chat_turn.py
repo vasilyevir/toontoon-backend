@@ -230,7 +230,9 @@ def test_a_changed_intent_beats_the_apps_stale_guess():
 
     from app.routers import generate as router
 
-    source = inspect.getsource(router.generate)
+    # Тело обработчика живёт в `_generate`: сам `generate` только открывает
+    # сессию Amplitude Agent Analytics вокруг него.
+    source = inspect.getsource(router._generate)
     start = source.index("intent = (restated.get(\"intent\")")
     chain = source[start:source.index("\n\n", start)]
     # Память сервера — раньше присланного приложением.

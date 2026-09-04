@@ -22,6 +22,7 @@ from app.db.repositories import profiles as profiles_repo
 from app.db.session import get_session as get_db_session
 from app.deps import Context, costs_money, required_context
 from app.services import gpt as gpt_service
+from app.services import agent_analytics
 from app.storage import get_storage
 
 router = APIRouter(prefix="/api/profiles", tags=["profiles"])
@@ -226,6 +227,7 @@ class ReviewResponse(BaseModel):
 
 
 @router.post("/review", response_model=ReviewResponse)
+@agent_analytics.in_session(agent_analytics.STUDIO)
 async def review(
     body: ReviewRequest,
     ctx: Context = Depends(costs_money),

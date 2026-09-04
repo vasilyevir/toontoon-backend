@@ -30,6 +30,7 @@ from app.db.repositories import media as media_repo
 from app.db.session import session_scope
 from app.models.payment import Payment, PaymentStatus
 from app.services import policy, prompt_style, wallet
+from app.services import agent_analytics
 from app.services import gpt as gpt_service
 from app.services import generation as generation_core
 
@@ -133,7 +134,13 @@ async def reshoot_if_brand_leaked(
     return again, harder, True
 
 
-async def run_image_job(
+async def run_image_job(**kwargs) -> None:
+    """Сессия Amplitude на время работы над кадром (сторож, перерисовка, бренды)."""
+    async with agent_analytics.session(agent_analytics.STUDIO, user_id=kwargs.get("user_id")):
+        await _run_image_job(**kwargs)
+
+
+async def _run_image_job(
     *,
     gen_id: str,
     user_id: str,

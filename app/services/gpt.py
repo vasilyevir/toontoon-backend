@@ -20,6 +20,7 @@ import re
 from typing import Optional
 
 import httpx
+import time
 
 log = logging.getLogger(__name__)
 
@@ -130,6 +131,7 @@ def _is_epic_scene(text: str) -> bool:
                for root in ("галактик", "космос", "эпич", "грандиоз", "величеств", "простор"))
 
 from app.config import settings
+from app.services import agent_analytics
 from app.models.tile import Tile
 from app.services import card_prompts, picture_prompts, prompt_style
 from app.storage import images as storage_images
@@ -491,7 +493,8 @@ def _model_for(asked: str | None, *, use_router: bool) -> str:
 
 
 async def _call(messages: list[dict], *, max_tokens: int = 300, temperature: float = 0.7,
-                usage: dict | None = None, model: str | None = None) -> str:
+                usage: dict | None = None, model: str | None = None,
+                purpose: str | None = None) -> str:
     """Make a chat completion call and return the assistant's text.
 
     Retries once on a fast, transient failure. Падение сюда стоит дорого: без
@@ -524,6 +527,7 @@ async def _call(messages: list[dict], *, max_tokens: int = 300, temperature: flo
         # Сюда уходят и снимки лиц (зрение). Вендор за витриной не должен
         # оставлять их себе; прямой OpenAI такого поля не знает.
         payload["provider"] = {"data_collection": "deny"}
+    started = time.monotonic()
     async with httpx.AsyncClient(timeout=20) as client:
         for attempt in (1, 2):
             try:
@@ -541,7 +545,15 @@ async def _call(messages: list[dict], *, max_tokens: int = 300, temperature: flo
                 body = resp.json()
                 if usage is not None:
                     usage.update(body.get("usage") or {})
-                return _content_of(body)
+                content = _content_of(body)
+                # Amplitude Agent Analytics: ответ модели в сессию запроса,
+                # если обработчик её открыл; иначе — ничего.
+                model_name, provider = agent_analytics.canonical_model(payload["model"])
+                agent_analytics.model_answered(
+                    content=content, model=model_name, provider=provider,
+                    latency_ms=(time.monotonic() - started) * 1000,
+                    usage=body.get("usage") or {}, purpose=purpose)
+                return content
             await asyncio.sleep(_RETRY_PAUSE_SECONDS)
     raise RuntimeError("unreachable")  # pragma: no cover
 

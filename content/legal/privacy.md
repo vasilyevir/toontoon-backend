@@ -67,6 +67,7 @@ stored as pictures.
 | **fal.ai** (fal.ai), which runs the model that draws the picture — currently OpenAI's GPT Image and Google's Nano Banana models on fal's infrastructure | Your photograph and the text instruction | Drawing the picture and editing your earlier results. We ask fal not to keep the request or the result on their side |
 | **OpenRouter** (openrouter.ai), a fallback route to the same models when fal is unavailable — not in use at the moment | Your photograph and the text instruction | Drawing the picture |
 | **OpenAI** (openai.com) | A small copy of your photograph, and what you type | Understanding your request; checking that the photograph and the request are within our rules (no nudity, no minors in unsuitable settings, no public figures) |
+| **Amplitude** (amplitude.com, EU data centre) | What you type in the chat and the text our assistant answers, with e-mail addresses and phone numbers removed before sending; how long the model took and how many tokens it used. Never your photographs | Understanding where the assistant helps and where it fails, so we can improve it |
 | **Kie** (kie.ai) | Your photograph and the instruction | Generating video |
 | **Apple** | Purchase receipts | Confirming your subscription. Apple takes the payment; we never see your card |
 

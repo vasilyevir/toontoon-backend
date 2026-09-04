@@ -611,6 +611,11 @@ class Settings(BaseSettings):
     def magic_link_ttl_seconds(self) -> int:
         return self.magic_link_ttl_minutes * 60
 
+    # Amplitude Agent Analytics (services/agent_analytics.py). Пусто — выключено.
+    amplitude_ai_api_key: str = ""
+    amplitude_server_zone: str = "EU"
+    amplitude_content_mode: str = "full"   # full | metadata_only
+
     @property
     def password_reset_ttl_seconds(self) -> int:
         return self.password_reset_ttl_minutes * 60

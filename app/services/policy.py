@@ -154,6 +154,7 @@ async def screen_text(text: Optional[str]) -> TextVerdict:
              {"role": "user", "content": text[:4000]}],
             max_tokens=80, temperature=0,
             model=settings.slot_extraction_model or None,
+            purpose="content-screen",
         )
         start, end = raw.index("{"), raw.rindex("}") + 1
         parsed = json.loads(raw[start:end])
@@ -204,6 +205,7 @@ async def screen_photo(data: bytes) -> Optional[PhotoVerdict]:
                   "image_url": {"url": f"data:image/jpeg;base64,{small}"}}]}],
             max_tokens=60, temperature=0,
             model=settings.slot_extraction_model or None,
+            purpose="content-screen",
         )
         start, end = raw.index("{"), raw.rindex("}") + 1
         parsed = json.loads(raw[start:end])

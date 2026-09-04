@@ -28,7 +28,7 @@ from app.db.repositories import profiles as profiles_repo
 from app.db.session import get_session as get_db_session
 from app.storage import get_storage
 from app.deps import Context, costs_money, optional_context, required_context
-from app.services import conversation
+from app.services import agent_analytics, conversation
 from app.services import gpt as gpt_service
 
 router = APIRouter(prefix="/api", tags=["chat"])
@@ -210,6 +210,14 @@ async def chat(
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS,
                             detail="Слишком часто. Попробуйте через несколько минут.")
 
+    # Amplitude Agent Analytics: реплика и ответы — в сессию разговора.
+    async with agent_analytics.session(agent_analytics.CHAT,
+                                       user_id=ctx[0].id if ctx else None):
+        agent_analytics.user_said(body.message)
+        return await _chat(body, ctx, db)
+
+
+async def _chat(body: ChatRequest, ctx: Optional[Context], db: AsyncSession) -> ChatResponse:
     if ctx is None:
         # Без сессии мы ничего не разбирали, и «готово» тут означало бы
         # «не считали» — а приложение прочитает его как «запускай».

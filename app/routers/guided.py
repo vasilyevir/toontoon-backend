@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from app.deps import Context, costs_money, required_context
 from app.services import conversation, gpt
+from app.services import agent_analytics
 
 router = APIRouter(prefix="/api/guided", tags=["guided"])
 
@@ -31,6 +32,7 @@ class ParseResponse(BaseModel):
 
 
 @router.post("/parse")
+@agent_analytics.in_session(agent_analytics.STUDIO)
 async def parse(
     body: ParseRequest,
     _: Context = Depends(costs_money),
