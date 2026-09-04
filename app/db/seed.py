@@ -20,8 +20,8 @@ from app.db.session import connect, disconnect, session_scope
 # id, product_id, title, billing_period, price_usd (cents), weekly_quota, sort
 # Идентификаторы товаров обязаны совпадать с App Store Connect и с
 # `Toontoon.storekit`: по productId из чека подписка находит свой тариф, а по
-# тарифу — квоту. Здесь стояло `ai.toontoon.sub.*`, а товары называются
-# `mobile.atom.toontoon.*` — покупка не нашла бы тарифа и осталась бы без квоты.
+# тарифу — квоту. ID товаров — как в App Store Connect (`week_6.99`, `year_39.99`,
+# заведены до нас и не меняются); расхождение = покупка без квоты.
 #
 # Квоты пересчитаны от нашей себестоимости 27 августа. Шкала: фото 10 монет,
 # рисунок 20, разговор 15.
@@ -40,8 +40,8 @@ PLANS = [
     # Месячный и бизнесовый убраны: таких товаров нет ни в App Store Connect,
     # ни в локальной конфигурации, и купить их нельзя. Тариф, который отдаётся
     # в каталоге, но не покупается, — обещание без исполнения.
-    ("weekly", "mobile.atom.toontoon.weekly", "Weekly", "week", 999, 300, 10),
-    ("yearly", "mobile.atom.toontoon.yearly", "Pro Unlimited", "year", 4999, 500, 30),
+    ("weekly", "week_6.99", "Weekly", "week", 699, 300, 10),
+    ("yearly", "year_39.99", "Pro Unlimited", "year", 3999, 500, 30),
 ]
 
 
