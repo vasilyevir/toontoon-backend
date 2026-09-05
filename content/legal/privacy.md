@@ -31,7 +31,7 @@ and requests: `[[PRIVACY EMAIL]]`.
 | **Balance and purchases** — TOONTOON spent and earned, subscription state | Bookkeeping and access to paid features | Our database |
 | **Anonymous usage events** — which screens are opened, which steps are abandoned | To find where the app fails people | Our own server, capped log |
 
-Usage events are on by default and can be turned off in Settings at any time.
+Usage events are collected while you use the app; deleting your account removes them along with everything else.
 They carry no advertising identifier and are never used to follow you across
 other apps or websites, which is why we do not ask for tracking permission.
 
