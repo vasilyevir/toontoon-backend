@@ -1,7 +1,7 @@
 {
   "title": "Fashion Plate",
   "description": "Flat, graphic and high-fashion.",
-  "cost": 20,
+  "cost": 10,
   "is_home": false,
   "is_shot": true,
   "sort_order": 24,
