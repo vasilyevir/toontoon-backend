@@ -208,7 +208,9 @@ class Settings(BaseSettings):
     password_reset_ttl_minutes: int = 60
     session_cookie_samesite: str = "lax"
     session_cookie_secure: bool = False
-    signup_toontoon_balance: int = 30
+    # 10 с 8 сентября 2026 (Илья): кадр стоит 15, первый кадр — после первой
+    # ежедневной награды, когда на счету 20.
+    signup_toontoon_balance: int = 10
 
     # ── Экономика ────────────────────────────────────────────────────────────
     # Значения взяты из разбора Glam AI (docs/ECONOMY.md) как стартовая точка.
