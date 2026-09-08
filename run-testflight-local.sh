@@ -38,6 +38,11 @@ done
 
 # BASE можно задать снаружи: за туннелем (cloudflared) публичный адрес другой,
 # а ссылки на кадры строятся именно от него.
+# PLAIN=1 — слушать голый HTTP на 127.0.0.1: TLS снимает публичный туннель
+# (localhost.run, cloudflared), а BASE тогда — его https-адрес. Наружу такой
+# сервер не торчит: без TLS слушаем только петлю.
+PLAIN="${PLAIN:-}"
+[ -n "$PLAIN" ] && [ -z "${BASE:-}" ] && { echo "PLAIN=1 требует BASE=https://… туннеля"; exit 1; }
 BASE="${BASE:-https://$HOST_NAME:$PORT}"
 export PUBLIC_BASE_URL="$BASE"
 export CORS_ORIGINS="$BASE"
@@ -53,6 +58,10 @@ export WORKER_MODE="${WORKER_MODE:-inline}"
 
 echo "▶ $BASE   пин: $(pin)"
 echo "  Config.xcconfig: TOONTOON_BASE_URL = https:/\$()/$HOST_NAME:$PORT ; TOONTOON_PINNED_SPKI = $(pin)"
+if [ -n "$PLAIN" ]; then
+  exec .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port "$PORT" \
+    --no-proxy-headers --no-server-header
+fi
 exec .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port "$PORT" \
   --ssl-certfile "$TLS/$HOST_NAME.crt" --ssl-keyfile "$TLS/$HOST_NAME.key" \
   --no-proxy-headers --no-server-header
