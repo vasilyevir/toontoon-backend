@@ -1,7 +1,7 @@
 {
   "title": "Boutique Street",
   "description": "Lit shop windows on an evening street.",
-  "cost": 10,
+  "cost": 15,
   "is_home": false,
   "is_shot": true,
   "sort_order": 22,

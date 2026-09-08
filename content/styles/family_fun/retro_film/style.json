@@ -1,7 +1,7 @@
 {
   "title": "Retro Film",
   "description": "Grain, faded colour and the feel of a photo from a drawer.",
-  "cost": 10,
+  "cost": 15,
   "is_home": false,
   "is_shot": true,
   "sort_order": 20,

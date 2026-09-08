@@ -1,7 +1,7 @@
 {
   "title": "Beach Day",
   "description": "Wet sand, low sun, and fur going everywhere.",
-  "cost": 10,
+  "cost": 15,
   "is_home": false,
   "is_shot": true,
   "sort_order": 42,

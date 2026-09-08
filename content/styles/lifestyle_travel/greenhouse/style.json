@@ -1,7 +1,7 @@
 {
   "title": "Greenhouse",
   "description": "Silk among tropical leaves.",
-  "cost": 10,
+  "cost": 15,
   "is_home": false,
   "is_shot": true,
   "sort_order": 54,

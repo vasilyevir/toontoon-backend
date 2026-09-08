@@ -1,7 +1,7 @@
 {
   "title": "Ink Sketch",
   "description": "A quick pen-and-ink drawing with confident, unfinished lines.",
-  "cost": 10,
+  "cost": 15,
   "is_home": false,
   "is_shot": false,
   "sort_order": 30,

@@ -1,7 +1,7 @@
 {
   "title": "Café Fashion",
   "description": "A magazine portrait at a café table.",
-  "cost": 10,
+  "cost": 15,
   "is_home": true,
   "is_shot": true,
   "sort_order": 10,

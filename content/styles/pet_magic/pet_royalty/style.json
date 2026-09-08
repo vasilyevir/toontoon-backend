@@ -1,7 +1,7 @@
 {
   "title": "Pet Royalty",
   "description": "A tiny crown, a velvet chair, an air of total superiority.",
-  "cost": 10,
+  "cost": 15,
   "is_home": false,
   "is_shot": false,
   "sort_order": 30,

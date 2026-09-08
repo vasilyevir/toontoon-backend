@@ -1,7 +1,7 @@
 {
   "title": "White Suit",
   "description": "White on white, head to toe: the brightest card in a catalogue of dark ones.",
-  "cost": 10,
+  "cost": 15,
   "is_home": false,
   "is_shot": true,
   "sort_order": 10,

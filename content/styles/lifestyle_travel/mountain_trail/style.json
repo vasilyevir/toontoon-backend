@@ -1,7 +1,7 @@
 {
   "title": "Mountain Trail",
   "description": "A valley behind you.",
-  "cost": 10,
+  "cost": 15,
   "is_home": false,
   "is_shot": true,
   "sort_order": 53,

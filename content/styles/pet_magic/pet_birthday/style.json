@@ -1,7 +1,7 @@
 {
   "title": "Pet Birthday",
   "description": "A paper hat, a small cake, and a face that does not understand why.",
-  "cost": 10,
+  "cost": 15,
   "is_home": false,
   "is_shot": true,
   "sort_order": 41,
