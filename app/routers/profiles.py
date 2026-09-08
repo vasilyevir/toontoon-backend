@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import MediaAsset
 from app.db.repositories import profiles as profiles_repo
+from app.db.repositories import subscriptions as subscriptions_repo
 from app.db.session import get_session as get_db_session
 from app.deps import Context, costs_money, required_context
 from app.services import gpt as gpt_service
@@ -87,6 +88,13 @@ async def create_profile(
 ) -> ProfileView:
     """Завести профиль: себя, партнёра, ребёнка, питомца."""
     user, _ = ctx
+    # AI-профиль — только по подписке (Илья, 2026-09-08). Приложение ведёт
+    # человека к пейволу после десятой фотографии; здесь то же правило, чтобы
+    # оно держалось не одним экраном. 402, как у нехватки монет: клиент это
+    # уже умеет читать.
+    if await subscriptions_repo.active_for_user(db, user.id) is None:
+        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED,
+                            detail="AI profile is part of the subscription")
     for media_id in body.media_ids:
         asset = await db.get(MediaAsset, media_id)
         if asset is None or asset.user_id != user.id or asset.deleted_at is not None:
