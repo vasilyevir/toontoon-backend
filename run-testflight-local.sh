@@ -36,7 +36,9 @@ for k in APP_KEY APP_SECRET; do
   grep -qE "^$k=\S" .env || { echo "в .env пуст $k — приложение подписывает запросы им же"; exit 1; }
 done
 
-BASE="https://$HOST_NAME:$PORT"
+# BASE можно задать снаружи: за туннелем (cloudflared) публичный адрес другой,
+# а ссылки на кадры строятся именно от него.
+BASE="${BASE:-https://$HOST_NAME:$PORT}"
 export PUBLIC_BASE_URL="$BASE"
 export CORS_ORIGINS="$BASE"
 export DATABASE_URL="${DATABASE_URL:-postgresql+asyncpg://toontoon:toontoon@localhost:5433/toontoon}"
