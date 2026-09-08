@@ -377,7 +377,7 @@ async def _generate(body: GenerateRequest, ctx: Context, db: AsyncSession) -> Ge
     try:
         payment = await wallet.reserve(db, user.id, amount=cost, reason=reason)
     except wallet.InsufficientFunds:
-        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, detail="Not enough TOONTOON")
+        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, detail="Not enough coins")
 
     # ── Video: long-running (keyframes → Seedance, ~4–5 min). Run as a background
     # job and let the client poll GET /api/generations/{id}. We persist a QUEUED
@@ -387,7 +387,7 @@ async def _generate(body: GenerateRequest, ctx: Context, db: AsyncSession) -> Ge
             await wallet.cancel(db, user.id, payment)
             raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Video generator is not configured. Your TOONTOON was refunded.",
+                detail="Video generator is not configured. Your coins were refunded.",
             )
 
         generation = Generation(
@@ -740,7 +740,7 @@ async def _generate(body: GenerateRequest, ctx: Context, db: AsyncSession) -> Ge
             await db.commit()
             raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="We couldn't process your request right now, your TOONTOON was refunded — please try again in a minute.",
+                detail="We couldn't process your request right now, your coins were refunded — please try again in a minute.",
             )
 
 
@@ -873,7 +873,7 @@ async def _generate(body: GenerateRequest, ctx: Context, db: AsyncSession) -> Ge
         await _abort_paid_order(db, record, user.id, payment)
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="We couldn't process your request right now, your TOONTOON was refunded — please try again in a minute.",
+            detail="We couldn't process your request right now, your coins were refunded — please try again in a minute.",
         ) from exc
 
     balance = await wallet.get_balance(db, user.id)

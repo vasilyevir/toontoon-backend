@@ -308,7 +308,7 @@ async def run_video_job(
                             role=ChatRole.AI,
                             generation_id=gen_id,
                             is_generation_error=True,
-                            text="Video generation failed — your TOONTOON was refunded.",
+                            text="Video generation failed — your coins were refunded.",
                         ),
                     )
             except Exception:

@@ -56,7 +56,7 @@ def test_человек_читает_про_снимок_а_не_про_серв
     """Настоящий текст fal при отказе по содержанию — совет сменить фото, не «попробуйте позже»."""
     текст = failure_text("fal: модель не взялась за снимок, HTTP 422: "
                          '{"detail":[{"msg":"flagged by a content checker","type":"content_policy_violation"}]}')
-    assert "photo" in текст.lower() and "TOONTOON" in текст
+    assert "photo" in текст.lower() and "coins" in текст
 
 
 def _просьба():

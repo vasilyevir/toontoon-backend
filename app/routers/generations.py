@@ -42,17 +42,17 @@ _ОТКАЗЫ: tuple[tuple[tuple[str, ...], str], ...] = (
     (("safety", "content policy", "content_policy", "content checker", "не взялась",
       "refus", "blocked", "moderation"),
      "The model wouldn't work with this photo. "
-     "Your TOONTOON weren't charged — try a different shot."),
+     "Your coins weren't charged — try a different shot."),
     (("промпт собрать нечем", "translation", "перевод недоступен"),
-     "We couldn't put the request together. Your TOONTOON weren't charged."),
+     "We couldn't put the request together. Your coins weren't charged."),
     (("all providers failed", "unavailable", "timeout", "readtimeout",
       "insufficient credits", "http 402", "http 5"),
      "Our drawing service didn't answer. "
-     "Your TOONTOON weren't charged — try again in a minute."),
+     "Your coins weren't charged — try again in a minute."),
 )
 
 _ОТКАЗ_ПО_УМОЛЧАНИЮ = (
-    "Something went wrong on our side. Your TOONTOON weren't charged."
+    "Something went wrong on our side. Your coins weren't charged."
 )
 
 

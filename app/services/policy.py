@@ -90,14 +90,14 @@ class PolicyRefusal(Exception):
 
 def _refusal(code: str) -> PolicyRefusal:
     texts = {
-        "nudity": "We don't make nude or sexual pictures. Your TOONTOON weren't charged.",
+        "nudity": "We don't make nude or sexual pictures. Your coins weren't charged.",
         "minor": "We don't put children into this kind of picture. "
-                 "Try a studio, cartoon or family style. Your TOONTOON weren't charged.",
+                 "Try a studio, cartoon or family style. Your coins weren't charged.",
         "public_figure": "This looks like a public figure, and we don't restyle public people. "
                          f"If this is you, write to {settings.support_email} and we'll verify you. "
-                         "Your TOONTOON weren't charged.",
+                         "Your coins weren't charged.",
         "deceptive": "We don't make pictures that could pass for real uniforms, documents "
-                     "or weapons. Your TOONTOON weren't charged.",
+                     "or weapons. Your coins weren't charged.",
     }
     return PolicyRefusal(code, texts[code])
 
