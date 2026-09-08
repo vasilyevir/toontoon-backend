@@ -165,8 +165,12 @@ async def ensure_subscription_quota(db: AsyncSession, user_id: str) -> None:
     if plan is None:
         logger.warning("Подписка на товар %s: тарифа с таким product_id нет", sub.product_id)
         return
-    await wallet_repo.ensure_weekly_quota(
-        db, user_id, quota=plan.weekly_quota, anchor=sub.quota_anchor_at)
+    # Период квоты — период тарифа: недельный пополняется каждую неделю,
+    # годовой получает всё разово на год (и снова при продлении).
+    period_days = 365 if plan.billing_period == "year" else 7
+    await wallet_repo.ensure_period_quota(
+        db, user_id, quota=plan.weekly_quota, anchor=sub.quota_anchor_at,
+        period_days=period_days)
 
 
 async def daily_reward(db: AsyncSession, user_id: str) -> tuple[Balance, int]:

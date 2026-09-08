@@ -160,6 +160,45 @@ async def reset_subscription_quota(
     return Balance(free=wallet.free_balance, sub=wallet.sub_balance)
 
 
+async def ensure_period_quota(
+    session: AsyncSession,
+    user_id: str,
+    *,
+    quota: int,
+    anchor: datetime,
+    period_days: int,
+    now: Optional[datetime] = None,
+) -> Balance:
+    """Refill the subscription bucket if a new period has started.
+
+    The period is counted from the purchase date, not from App Store renewals:
+    a monthly plan has four-and-a-bit resets inside one billing period, and a
+    "week" that drifted with renewals would be impossible to explain to anyone.
+
+    ``period_days`` — длина периода тарифа: 7 у недельного, 365 у годового
+    (решение Ильи 2026-09-08: Yearly даёт 3000 монет на весь год разово, а не
+    понедельно). Idempotent by period index, so calling this on every request
+    is safe — the first call in a period resets, the rest do nothing.
+    """
+    now = now or datetime.now(timezone.utc)
+    if anchor.tzinfo is None:
+        anchor = anchor.replace(tzinfo=timezone.utc)
+    if now < anchor:
+        return await balance(session, user_id)
+
+    period = (now - anchor).days // period_days
+    key = f"quota:{user_id}:{anchor.date().isoformat()}:{period_days}:{period}"
+    if await _already_applied(session, key):
+        return await balance(session, user_id)
+
+    result = await reset_subscription_quota(session, user_id, quota=quota, idempotency_key=key)
+    wallet = await ensure(session, user_id)
+    wallet.sub_period_start = anchor + timedelta(days=period_days * period)
+    wallet.sub_period_end = anchor + timedelta(days=period_days * (period + 1))
+    await session.flush()
+    return result
+
+
 async def ensure_weekly_quota(
     session: AsyncSession,
     user_id: str,
@@ -168,32 +207,9 @@ async def ensure_weekly_quota(
     anchor: datetime,
     now: Optional[datetime] = None,
 ) -> Balance:
-    """Refill the subscription bucket if a new 7-day period has started.
-
-    The period is counted from the purchase date, not from App Store renewals:
-    a monthly plan has four-and-a-bit resets inside one billing period, and a
-    "week" that drifted with renewals would be impossible to explain to anyone.
-
-    Idempotent by period index, so calling this on every request is safe — the
-    first call in a period resets, the rest do nothing.
-    """
-    now = now or datetime.now(timezone.utc)
-    if anchor.tzinfo is None:
-        anchor = anchor.replace(tzinfo=timezone.utc)
-    if now < anchor:
-        return await balance(session, user_id)
-
-    period = (now - anchor).days // 7
-    key = f"quota:{user_id}:{anchor.date().isoformat()}:{period}"
-    if await _already_applied(session, key):
-        return await balance(session, user_id)
-
-    result = await reset_subscription_quota(session, user_id, quota=quota, idempotency_key=key)
-    wallet = await ensure(session, user_id)
-    wallet.sub_period_start = anchor + timedelta(days=7 * period)
-    wallet.sub_period_end = anchor + timedelta(days=7 * (period + 1))
-    await session.flush()
-    return result
+    """Недельный период — частный случай `ensure_period_quota`."""
+    return await ensure_period_quota(session, user_id, quota=quota, anchor=anchor,
+                                     period_days=7, now=now)
 
 
 async def pending_daily_reward(

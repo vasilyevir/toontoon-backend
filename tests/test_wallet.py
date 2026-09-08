@@ -323,3 +323,19 @@ async def test_concurrent_spends_cannot_outspend_the_balance():
         await check.execute(delete(m.User).where(m.User.id == uid))
         await check.commit()
     await disconnect()
+
+
+async def test_yearly_quota_is_granted_once_for_the_whole_year(db):
+    """Yearly — 3000 монет на год разово: внутри года не пополняется, на второй год — снова."""
+    session, uid = db
+    anchor = datetime(2026, 9, 8, tzinfo=timezone.utc)
+    b = await wallet_repo.ensure_period_quota(session, uid, quota=3000, anchor=anchor,
+                                              period_days=365, now=anchor + timedelta(days=1))
+    assert b.sub == 3000
+    await wallet_repo.spend(session, uid, cost=2000)
+    b = await wallet_repo.ensure_period_quota(session, uid, quota=3000, anchor=anchor,
+                                              period_days=365, now=anchor + timedelta(days=200))
+    assert b.sub == 1000, "внутри года квота не должна пополняться"
+    b = await wallet_repo.ensure_period_quota(session, uid, quota=3000, anchor=anchor,
+                                              period_days=365, now=anchor + timedelta(days=366))
+    assert b.sub == 3000, "новый год подписки — квота снова полная"

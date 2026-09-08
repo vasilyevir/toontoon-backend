@@ -17,7 +17,8 @@ from sqlalchemy.dialects.postgresql import insert
 from app.db import models as m
 from app.db.session import connect, disconnect, session_scope
 
-# id, product_id, title, billing_period, price_usd (cents), weekly_quota, sort
+# id, product_id, title, billing_period, price_usd (cents), quota (на период тарифа:
+# у week — в неделю, у year — на год; колонка исторически зовётся weekly_quota), sort
 # Идентификаторы товаров обязаны совпадать с App Store Connect и с
 # `Toontoon.storekit`: по productId из чека подписка находит свой тариф, а по
 # тарифу — квоту. ID товаров — как в App Store Connect (`week_6.99`, `year_39.99`,
@@ -43,7 +44,7 @@ PLANS = [
     # ни в локальной конфигурации, и купить их нельзя. Тариф, который отдаётся
     # в каталоге, но не покупается, — обещание без исполнения.
     ("weekly", "week_6.99", "Weekly", "week", 999, 700, 10),
-    ("yearly", "year_39.99", "Pro Unlimited", "year", 5999, 500, 30)  # квота: уточняется, см. ниже,
+    ("yearly", "year_39.99", "Pro Unlimited", "year", 5999, 3000, 30),  # 3000 — на весь год, разово
 ]
 
 

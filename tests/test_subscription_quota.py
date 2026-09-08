@@ -54,7 +54,7 @@ async def buyer():
 async def test_a_subscriber_gets_the_quota_of_their_plan(buyer):
     session, user, _ = buyer
     balance = await wallet.get_balance(session, user.id)
-    assert balance.available == 300, (
+    assert balance.available == 700, (
         "недельная квота не доехала: проверьте, что product_id тарифа совпадает "
         "с товаром в App Store"
     )
