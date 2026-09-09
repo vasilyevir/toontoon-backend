@@ -90,6 +90,7 @@ def _pending(row) -> dict:
         "style_id": row.style_id,
         "share_id": None,
         "created_at": row.created_at.isoformat(),
+        "from_chat": (row.request_params or {}).get("from_chat"),
     }
 
 

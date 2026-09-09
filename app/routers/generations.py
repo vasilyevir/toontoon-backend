@@ -97,6 +97,9 @@ def _serialize(row: m.Generation) -> dict:
         "cost": row.cost,
         "style_id": row.style_id,
         "share_id": row.share_id,
+        # None у работ, заведённых до появления признака: приложение считает
+        # их чатовыми, как и раньше.
+        "from_chat": (row.request_params or {}).get("from_chat"),
         "created_at": row.created_at.isoformat(),
         # Только у неудачных: у остальных поле молчит, чтобы клиенту не
         # приходилось гадать, показывать его или нет.

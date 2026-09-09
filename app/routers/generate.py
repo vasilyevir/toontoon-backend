@@ -762,6 +762,10 @@ async def _generate(body: GenerateRequest, ctx: Context, db: AsyncSession) -> Ge
             # можно было свести запросом: при неудаче деньги возвращает фоновая
             # задача, а если не вернула и она — узнать об этом иначе неоткуда.
             "payment_id": payment.payment_id,
+            # Откуда заказ: из чата или с витрины. Чат подхватывает при
+            # запуске незаконченные работы, и без признака подхватывал чужие —
+            # кадр с витрины показывался в чате «рисующимся» (Илья, 2026-09-09).
+            "from_chat": body.from_chat,
             "tile_id": body.tile_id,
             "style_id": body.style_id,
             "answers": body.answers,
