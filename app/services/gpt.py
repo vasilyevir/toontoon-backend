@@ -1413,6 +1413,47 @@ _IS_DRAWING_SYSTEM = (
 )
 
 
+_WARDROBE_SYSTEM = (
+    "You are shown two pictures. The FIRST is a reference photo of a person. "
+    "The SECOND is a generated picture of the same person in new clothes. "
+    "Decide whether the clothing in the second picture is designed for a "
+    "different gender than the person in the first picture presents as: e.g. "
+    "a dress, skirt, lace, sheer fabric, halter or off-shoulder top, wrap ties, "
+    "puff sleeves, heels or earrings on a man; a men's suit and tie on a woman. "
+    "Colour alone is never a mismatch. Answer with exactly one word: "
+    "'man' if the person is a man wearing women's clothing, 'woman' if the "
+    "person is a woman wearing men's clothing, otherwise 'ok'."
+)
+
+
+async def wardrobe_mismatch(result: bytes, reference: bytes) -> str | None:
+    """Одета ли на человеке одежда для другого пола.
+
+    Возвращает пол человека («man» / «woman»), если одежда ему не по полу, и
+    None, если всё в порядке или разобрать не удалось. Сомнение — в пользу
+    кадра: лишняя пересъёмка стоит денег, а лишняя задержка — доверия.
+    """
+    if not settings.openai_enabled:
+        return None
+    ref = base64.b64encode(storage_images.preview(reference)).decode()
+    out = base64.b64encode(storage_images.preview(result)).decode()
+    try:
+        raw = await _call(
+            [{"role": "system", "content": _WARDROBE_SYSTEM},
+             {"role": "user", "content": [
+                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{ref}"}},
+                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{out}"}},
+             ]}],
+            max_tokens=4,
+            temperature=0,
+            model=settings.slot_extraction_model or None,
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    word = (raw or "").strip().lower().strip(".'\"")
+    return word if word in ("man", "woman") else None
+
+
 async def looks_photographic(data: bytes) -> bool:
     """Вернулась ли фотография там, где просили рисунок.
 

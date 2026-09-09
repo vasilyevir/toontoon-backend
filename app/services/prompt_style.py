@@ -524,14 +524,40 @@ CUTOUT_CLAUSE = (
 # костюм на женщине — равноценным женским; личность и сложение не трогаем.
 WARDROBE_FROM_SAMPLE_CLAUSE = (
     "the last reference image is the STYLE SAMPLE, not the person: it is where "
-    "the outfit comes from. Dress this person in the clothing seen on the "
-    "sample — the same garments, cut, fabrics, colours and accessories — "
-    "adapted to their own gender, body and build: a dress, skirt or top on the "
-    "sample becomes the equivalent outfit for a man, a suit or jacket on the "
-    "sample becomes the equivalent outfit for a woman, keeping the sample's "
-    "colours and mood. Never copy the sample's face, body, hair or identity. "
-    "The clothes worn in the person's own photos are discarded entirely"
+    "the outfit comes from. Dress this person in the look seen on the sample — "
+    "its colours, fabrics, formality and mood — translated into clothing made "
+    "for this person's own gender and build. "
+    # Первая проба (Илья, 2026-09-09): «адаптируй под пол» модель поняла
+    # вольно — кружевные брюки, пояс-завязка на пиджаке, женский силуэт на
+    # мужчине. Что именно значит «перевести», приходится перечислять.
+    "For a man that means menswear only: a dress, skirt, gown, halter, "
+    "off-shoulder or wrap top on the sample becomes a shirt, knitwear, a "
+    "tailored jacket or coat with trousers in the same colour and fabric; no "
+    "lace, sheer or translucent fabric, no wrap ties or sashes, no puff "
+    "sleeves, no bare shoulders, no heels, no earrings. For a woman that means "
+    "womenswear only: a suit, shirt or jacket on the sample becomes the "
+    "equivalent tailored or evening look for a woman. "
+    "Never copy the sample's face, body, hair or identity. The clothes worn in "
+    "the person's own photos are discarded entirely"
 )
+
+
+def wardrobe_mismatched(gender: str) -> str:
+    """Что дописать на пересъёмку, когда одежда вышла для другого пола.
+
+    Тон тот же, что у `REDRAW_HARDER` и `brand_leaked`: просьбу модель уже
+    прочитала и не послушалась, на повторе работает констатация.
+    """
+    if gender == "woman":
+        return ("IMPORTANT: the previous attempt dressed this woman in menswear "
+                "and was rejected. Dress her strictly in womenswear in the same "
+                "colours and fabrics as the style sample; keep everything else")
+    return ("IMPORTANT: the previous attempt dressed this man in women's clothing "
+            "and was rejected. Dress him strictly in menswear — a shirt, knitwear, "
+            "a jacket or coat with trousers — in the same colours and fabrics as "
+            "the style sample: no lace, no sheer fabric, no wrap ties or sashes, no "
+            "puff sleeves, no bare shoulders, no heels, no earrings; keep "
+            "everything else")
 
 STYLE_REF_CLAUSE = (
     "the last reference image is a STYLE SAMPLE, not a person: copy its palette, "

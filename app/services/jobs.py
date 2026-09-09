@@ -60,6 +60,10 @@ class JobSpec:
     check_drawn: bool = False
     from_chat: bool = True
     said: Optional[str] = None
+    # Эксперимент «одежда с витрины»: проверять кадр на одежду не по полу и
+    # ключ витринного кадра, чтобы воркер приложил его так же, как процесс.
+    wardrobe_check: bool = False
+    wardrobe_sample_key: Optional[str] = None
 
     def to_record(self) -> dict:
         return asdict(self)
@@ -89,6 +93,8 @@ def spec_from_call(*, photo_media_id: Optional[str], extra_media_ids: list[str],
         sample_brands=list(kwargs.get("sample_brands") or []),
         check_drawn=bool(kwargs.get("check_drawn")), from_chat=bool(kwargs.get("from_chat", True)),
         said=kwargs.get("said"),
+        wardrobe_check=bool(kwargs.get("wardrobe_check")),
+        wardrobe_sample_key=kwargs.get("wardrobe_sample_key"),
     )
 
 
@@ -108,6 +114,12 @@ async def kwargs_from_spec(db: AsyncSession, spec: JobSpec) -> dict:
     if spec.photo_media_id:
         image, image_mime = await _bytes_of(db, spec.photo_media_id)
     extra = [await _bytes_of(db, mid) for mid in spec.extra_media_ids]
+    if spec.wardrobe_sample_key:
+        # Витринный кадр — не медиа человека, а файл стиля; последним, как и
+        # при заказе: промпт называет его «последняя картинка — образец».
+        sample = await get_storage().get(spec.wardrobe_sample_key)
+        if sample:
+            extra.append((sample, "image/jpeg"))
     request = GenerationRequest(
         operation=Operation(spec.operation), prompt=spec.prompt,
         negative_prompt=spec.negative_prompt, image=image, image_mime=image_mime,
@@ -118,6 +130,7 @@ async def kwargs_from_spec(db: AsyncSession, spec: JobSpec) -> dict:
         payment_amount=spec.payment_amount, request=request, prompt=spec.style_prompt,
         prefer=spec.prefer, sample_brands=list(spec.sample_brands or []),
         check_drawn=spec.check_drawn, from_chat=spec.from_chat, said=spec.said,
+        wardrobe_check=spec.wardrobe_check,
     )
 
 

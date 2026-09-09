@@ -703,12 +703,14 @@ async def _generate(body: GenerateRequest, ctx: Context, db: AsyncSession) -> Ge
         # снимок человека: без него это не правка, а рисование с нуля, и
         # витрина там уже описана текстом.
         wardrobe_from_sample = False
+        wardrobe_sample_key = None
         if settings.style_wardrobe_from_example and style_row is not None and photo is not None:
             example_keys = (style_row.examples or {}).get("keys", []) \
                 if isinstance(style_row.examples, dict) else []
             if example_keys and (sample := await get_storage().get(example_keys[0])):
                 extra_photos.append((sample, "image/jpeg"))
                 wardrobe_from_sample = True
+                wardrobe_sample_key = example_keys[0]
 
         # Операция решается ДО сборки промпта, а не после: редактированию нужен
         # текст другого жанра — инструкция «сохрани человека, помести в такую-то
@@ -868,6 +870,10 @@ async def _generate(body: GenerateRequest, ctx: Context, db: AsyncSession) -> Ge
             check_drawn=(bool(editing and photo is not None) and not redraw
                              and _wants_drawing(style, style_row, editing)),
             from_chat=body.from_chat,
+            # Эксперимент «одежда с витрины»: после кадра проверить, что одежда
+            # по полу, и переснять один раз, если нет.
+            wardrobe_check=wardrobe_from_sample,
+            wardrobe_sample_key=wardrobe_sample_key,
             # Что именно человек попросил на этот раз: уточнение, если оно было, —
             # иначе исходная просьба.
             said=((body.refine_note or body.prompt or "").strip()

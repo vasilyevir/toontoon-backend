@@ -134,6 +134,41 @@ async def reshoot_if_brand_leaked(
     return again, harder, True
 
 
+async def reshoot_if_wardrobe_off(
+    db: AsyncSession,
+    request: "generation_core.GenerationRequest",
+    result,
+    prompt: str,
+    *,
+    enabled: bool,
+    prefer: str | None,
+):
+    """Посмотреть на готовый кадр и, если одежда не по полу, снять заново.
+
+    Эксперимент «одежда с витрины» (Илья, 2026-09-09): образец чаще всего
+    женский, и просьба «переведи в мужское» модель слушает не всегда —
+    кружевные брюки, пояс-завязка, женский силуэт. Правило в промпте
+    ужесточено, но проверка после кадра ловит именно результат. Один повтор,
+    как и у остальных проверок; сомнение — в пользу кадра.
+    """
+    if not enabled or request.image is None:
+        return result, prompt, False
+    gender = await gpt_service.wardrobe_mismatch(result.data, request.image)
+    if gender is None:
+        return result, prompt, False
+    logger.info("Одежда в кадре не по полу (%s) — переснимаем", gender)
+    harder = f"{prompt}, {prompt_style.wardrobe_mismatched(gender)}"
+    second = replace(request, prompt=harder)
+    try:
+        again = await generation_core.run(db, second, prefer=prefer)
+    except Exception:  # noqa: BLE001 — повтор не удался, отдаём первый кадр
+        logger.warning("Пересъёмка одежды не удалась, отдаём первый кадр")
+        return result, prompt, True
+    if again.cost_usd is not None or result.cost_usd is not None:
+        again.cost_usd = (again.cost_usd or 0) + (result.cost_usd or 0)
+    return again, harder, True
+
+
 async def run_image_job(**kwargs) -> None:
     """Сессия Amplitude на время работы над кадром (сторож, перерисовка, бренды)."""
     async with agent_analytics.session(agent_analytics.STUDIO, user_id=kwargs.get("user_id")):
@@ -153,6 +188,10 @@ async def _run_image_job(
     check_drawn: bool,
     from_chat: bool,
     said: str | None,
+    wardrobe_check: bool = False,
+    # Ключ витринного кадра нужен только спецификации для очереди; здесь он
+    # принимается, чтобы один словарь аргументов годился обоим путям.
+    wardrobe_sample_key: str | None = None,
 ) -> None:
     """Нарисовать кадр и довести работу до конца, чем бы ни кончился запрос.
 
@@ -178,6 +217,8 @@ async def _run_image_job(
                     db, request, result, prompt, prefer=prefer)
             result, prompt, brand_reshot = await reshoot_if_brand_leaked(
                 db, request, result, prompt, sample_brands, prefer=prefer)
+            result, prompt, wardrobe_reshot = await reshoot_if_wardrobe_off(
+                db, request, result, prompt, enabled=wardrobe_check, prefer=prefer)
 
             await wallet.confirm(db, payment)
             asset = await media_repo.save_image(
@@ -201,11 +242,12 @@ async def _run_image_job(
             record.provider_id = result.provider_id
             record.provider_model = result.model
             record.provider_cost_usd = result.cost_usd
-            if redrawn or brand_reshot:
+            if redrawn or brand_reshot or wardrobe_reshot:
                 record.request_params = {
                     **(record.request_params or {}),
                     **({"redrawn": True} if redrawn else {}),
                     **({"brand_reshot": True} if brand_reshot else {}),
+                    **({"wardrobe_reshot": True} if wardrobe_reshot else {}),
                 }
             await generations_repo.mark_done(db, record, result_media_id=asset.id,
                                              prompt=prompt)
