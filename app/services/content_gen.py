@@ -103,7 +103,8 @@ def build_prompt(
     return prompt, prompt_style.NEGATIVE_PROMPT
 
 
-def build_style_prompt(style, *, editing: bool = True) -> tuple[str, str]:
+def build_style_prompt(style, *, editing: bool = True,
+                       wardrobe_from_sample: bool = False) -> tuple[str, str]:
     """Промпт стиля из каталога — как написан, без переписывания.
 
     Витрина показывает конкретный результат, и повторить его можно только тем
@@ -121,6 +122,7 @@ def build_style_prompt(style, *, editing: bool = True) -> tuple[str, str]:
     prompt = prompt_style.assemble(
         text, style_key=style_key, is_text=False, editing=editing,
         subject=(style.prompt_template or {}).get("subject", "person"),
+        wardrobe_from_sample=wardrobe_from_sample,
     )
     return prompt, prompt_style.negative_for(style_key)
 

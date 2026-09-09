@@ -697,6 +697,19 @@ async def _generate(body: GenerateRequest, ctx: Context, db: AsyncSession) -> Ge
 
         extra_photos.extend(style_refs)
 
+        # Эксперимент: одежда с витринного кадра стиля. Кадр кладётся ПОСЛЕДНИМ
+        # референсом — промпт называет его «последняя картинка — образец», и
+        # порядок здесь буквален (см. выше про style_refs). Только когда есть
+        # снимок человека: без него это не правка, а рисование с нуля, и
+        # витрина там уже описана текстом.
+        wardrobe_from_sample = False
+        if settings.style_wardrobe_from_example and style_row is not None and photo is not None:
+            example_keys = (style_row.examples or {}).get("keys", []) \
+                if isinstance(style_row.examples, dict) else []
+            if example_keys and (sample := await get_storage().get(example_keys[0])):
+                extra_photos.append((sample, "image/jpeg"))
+                wardrobe_from_sample = True
+
         # Операция решается ДО сборки промпта, а не после: редактированию нужен
         # текст другого жанра — инструкция «сохрани человека, помести в такую-то
         # сцену» вместо описания сцены с нуля. Собрать промпт, а потом узнать, что
@@ -715,7 +728,8 @@ async def _generate(body: GenerateRequest, ctx: Context, db: AsyncSession) -> Ge
                 # Промпт стиля написан руками и проверен глазами на примере из
                 # каталога. Отдавать его GPT на переписывание значит показывать
                 # одно, а генерировать другое.
-                prompt, negative = content_gen.build_style_prompt(style_row, editing=editing)
+                prompt, negative = content_gen.build_style_prompt(
+                    style_row, editing=editing, wardrobe_from_sample=wardrobe_from_sample)
             else:
                 prompt, negative = await content_gen.build_prompt_for(
                     tile=tile, answers=body.answers, free_text=free_text, style=style,
@@ -766,6 +780,7 @@ async def _generate(body: GenerateRequest, ctx: Context, db: AsyncSession) -> Ge
             # запуске незаконченные работы, и без признака подхватывал чужие —
             # кадр с витрины показывался в чате «рисующимся» (Илья, 2026-09-09).
             "from_chat": body.from_chat,
+            "wardrobe_from_sample": wardrobe_from_sample,
             "tile_id": body.tile_id,
             "style_id": body.style_id,
             "answers": body.answers,

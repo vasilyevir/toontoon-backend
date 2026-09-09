@@ -306,7 +306,8 @@ def _without_scenery(text: str) -> str:
 def assemble(scene: str, *, style_key: str, is_text: bool, editing: bool = False,
              subject: str = "person", poster: bool = False,
              style_ref: bool = False, sample_brands: list[str] | None = None,
-             redraw: bool = False, cast: list[str] | None = None) -> str:
+             redraw: bool = False, cast: list[str] | None = None,
+             wardrobe_from_sample: bool = False) -> str:
     """Wrap a scene description with the style anchor (first) and technical (last).
 
     На редактировании снимка порядок другой: первым идёт требование сохранить
@@ -360,6 +361,10 @@ def assemble(scene: str, *, style_key: str, is_text: bool, editing: bool = False
         # стоят ближе к концу, а конец модель слышит громче.
         anchor = ""
         technical = TECHNICAL_REDRAW
+    if wardrobe_from_sample:
+        # Сразу за требованием сохранить человека и раньше сцены: кто в
+        # кадре — уже сказано, теперь во что он одет.
+        parts.append(WARDROBE_FROM_SAMPLE_CLAUSE)
     if style_ref:
         parts.append(STYLE_REF_CLAUSE)
         if (forbidden := forbid_brands(sample_brands or [])):
@@ -509,6 +514,25 @@ CUTOUT_CLAUSE = (
 # Без этой строки модель делает единственное, что умеет с лишней картинкой:
 # переносит из неё людей и предметы. Человек прикладывал постер ради палитры и
 # набора, а получал чужого баскетболиста в своём кадре.
+# Одежда — с витринного кадра стиля (эксперимент, Илья, 2026-09-09).
+#
+# Витрина показывает конкретный вид: плащ, платье, пиджак. Текст стиля его
+# называет, но модель читает текст свободно, и человек получал своё, а не
+# витринное. Кадр стиля как референс говорит точнее слов — при одном условии:
+# с него берётся одежда, а не тот, кто в неё одет. Пол человека старше
+# одежды: платье с образца на мужчине становится равноценным мужским видом,
+# костюм на женщине — равноценным женским; личность и сложение не трогаем.
+WARDROBE_FROM_SAMPLE_CLAUSE = (
+    "the last reference image is the STYLE SAMPLE, not the person: it is where "
+    "the outfit comes from. Dress this person in the clothing seen on the "
+    "sample — the same garments, cut, fabrics, colours and accessories — "
+    "adapted to their own gender, body and build: a dress, skirt or top on the "
+    "sample becomes the equivalent outfit for a man, a suit or jacket on the "
+    "sample becomes the equivalent outfit for a woman, keeping the sample's "
+    "colours and mood. Never copy the sample's face, body, hair or identity. "
+    "The clothes worn in the person's own photos are discarded entirely"
+)
+
 STYLE_REF_CLAUSE = (
     "the last reference image is a STYLE SAMPLE, not a person: copy its palette, "
     "its drawing technique, its lighting and the way its layout is composed. "
