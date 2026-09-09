@@ -532,7 +532,10 @@ WARDROBE_FROM_SAMPLE_CLAUSE = (
     # мужчине. Что именно значит «перевести», приходится перечислять.
     "For a man that means menswear only: a dress, skirt, gown, halter, "
     "off-shoulder or wrap top on the sample becomes a shirt, knitwear, a "
-    "tailored jacket or coat with trousers in the same colour and fabric; no "
+    "tailored jacket or coat with trousers in the same colour; if the sample's "
+    "fabric is glossy — satin, silk charmeuse, sequins — do NOT reproduce the "
+    "gloss on him: use expensive matte fabrics instead, fine knit, linen, "
+    "brushed cotton or wool, so that nothing on him shines; no "
     "lace, sheer or translucent fabric, no wrap ties or sashes, no puff "
     "sleeves, no bare shoulders, no heels, no earrings. For a woman that means "
     "womenswear only: a suit, shirt or jacket on the sample becomes the "
