@@ -68,7 +68,7 @@ class BootstrapResponse(BaseModel):
     pending: list[dict]
     config: AppConfig
 
-from app.routers.generations import _prompt_for_client
+from app.routers.generations import _prompt_for_client, style_of
 
 
 def _pending(row) -> dict:
@@ -87,7 +87,7 @@ def _pending(row) -> dict:
         "result_url": None,
         "thumbnail_url": None,
         "cost": row.cost,
-        "style_id": row.style_id,
+        "style_id": style_of(row),
         "share_id": None,
         "created_at": row.created_at.isoformat(),
         "from_chat": (row.request_params or {}).get("from_chat"),

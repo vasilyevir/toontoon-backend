@@ -65,6 +65,18 @@ def failure_text(error: Optional[str]) -> str:
     return _ОТКАЗ_ПО_УМОЛЧАНИЮ
 
 
+def style_of(row) -> str | None:
+    """Стиль работы: колонка, а если она пуста — параметры запроса.
+
+    Колонка `style_id` защищена внешним ключом на таблицу стилей, а в ней есть
+    не все стили каталога: заказ по стилю из content/ колонку не заполняет,
+    и id живёт только в `request_params`. История без него показывала серый
+    квадрат вместо кадра стиля и отдавала гостю служебный промпт как «просьбу
+    человека» (Илья, 2026-09-09).
+    """
+    return row.style_id or (row.request_params or {}).get("style_id")
+
+
 def _prompt_for_client(row: m.Generation) -> Optional[str]:
     """Что показать человеку как «его просьбу».
 
@@ -72,7 +84,7 @@ def _prompt_for_client(row: m.Generation) -> Optional[str]:
     руками и уходящий в модель; это продукт, а не просьба человека, и любому
     гостю через историю он не нужен. Показываем то, что человек сказал сам.
     """
-    if not row.style_id:
+    if not style_of(row):
         return row.prompt
     params = row.request_params or {}
     return params.get("refine_note") or params.get("said") or None
@@ -95,7 +107,7 @@ def _serialize(row: m.Generation) -> dict:
         "result_url": result,
         "thumbnail_url": thumb,
         "cost": row.cost,
-        "style_id": row.style_id,
+        "style_id": style_of(row),
         "share_id": row.share_id,
         # None у работ, заведённых до появления признака: приложение считает
         # их чатовыми, как и раньше.
@@ -203,7 +215,7 @@ def _serialize_public(row: m.Generation) -> dict:
         "type": (row.request_params or {}).get("type", "image"),
         "result_url": result,
         "thumbnail_url": thumb,
-        "style_id": row.style_id,
+        "style_id": style_of(row),
         "created_at": row.created_at.isoformat(),
     }
 

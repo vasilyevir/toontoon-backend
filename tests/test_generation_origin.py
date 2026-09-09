@@ -36,3 +36,13 @@ def test_old_rows_have_no_origin() -> None:
 
 def test_pending_exposes_origin() -> None:
     assert _pending(_row(from_chat=False))["from_chat"] is False
+
+
+def test_style_id_falls_back_to_request_params() -> None:
+    row = _row(style_id="rooftop_sunset", from_chat=False)
+    row.style_id = None
+    assert _serialize(row)["style_id"] == "rooftop_sunset"
+    assert _pending(row)["style_id"] == "rooftop_sunset"
+    # Служебный промпт стиля гостю не показывается.
+    row.prompt = "cinematic rooftop at golden hour, 85mm"
+    assert _serialize(row)["prompt"] is None
