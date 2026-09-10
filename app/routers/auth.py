@@ -64,10 +64,18 @@ async def _merge_guest(db: AsyncSession, ctx: Optional[Context], target_id: str)
 # ─── Guest ────────────────────────────────────────────────────────────────────
 
 
+class GuestRequest(BaseModel):
+    """Идентификатор, придуманный приложением. Необязательный: старые сборки
+    его не шлют, и для них ничего не меняется."""
+
+    client_id: Optional[str] = Field(default=None, max_length=48)
+
+
 @router.post("/guest", response_model=AuthResult, status_code=status.HTTP_201_CREATED)
 async def create_guest(
     request: Request,
     response: Response,
+    body: Optional[GuestRequest] = None,
     db: AsyncSession = Depends(get_db_session),
 ) -> AuthResult:
     """Start an anonymous session on first launch.
@@ -97,7 +105,7 @@ async def create_guest(
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS,
                             detail="Too many attempts, try later")
 
-    user = await users_repo.create_guest(db)
+    user = await users_repo.create_guest(db, user_id=body.client_id if body else None)
     await wallet_repo.grant(
         db,
         user.id,

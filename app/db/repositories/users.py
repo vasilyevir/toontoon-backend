@@ -7,6 +7,8 @@ migration of half-built state.
 """
 from __future__ import annotations
 
+import re
+
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -16,7 +18,30 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import models as m
 
 
-async def create_guest(session: AsyncSession) -> m.User:
+#: Идентификатор, предложенный приложением: тот же вид, что и у наших.
+CLIENT_ID = re.compile(r"^usr_[0-9a-f]{32}$")
+
+
+async def create_guest(session: AsyncSession, *, user_id: str | None = None) -> m.User:
+    """Завести гостя, по возможности с тем идентификатором, что просит клиент.
+
+    Приложению идентификатор нужен раньше, чем мы успеваем ответить: с ним оно
+    запускает Adapty, и без него первые события покупки уезжают анонимными
+    (Илья, 2026-09-10). Поэтому приложение придумывает его само — тем же
+    видом, `usr_` и тридцать два шестнадцатеричных знака, — а мы принимаем,
+    если он свободен.
+
+    Взять чужой так нельзя: занятый идентификатор мы не отдаём, а выдаём свой,
+    и приложение узнаёт настоящий из ответа. Доступ даёт не идентификатор, а
+    токен сессии, и его по-прежнему выдаём только мы.
+    """
+    if user_id and CLIENT_ID.match(user_id):
+        taken = await session.get(m.User, user_id)
+        if taken is None:
+            user = m.User(id=user_id, kind="guest", last_seen_at=func.now())
+            session.add(user)
+            await session.flush()
+            return user
     user = m.User(kind="guest", last_seen_at=func.now())
     session.add(user)
     await session.flush()
