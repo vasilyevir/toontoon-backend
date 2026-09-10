@@ -24,8 +24,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import models as m
 from app.db.repositories import subscriptions as subscriptions_repo
+from app.db.repositories import users as users_repo
 from app.db.session import get_session as get_db_session
-from app.services import app_store
+from app.services import app_store, wallet
 
 logger = logging.getLogger(__name__)
 
@@ -83,11 +84,53 @@ async def app_store_notification(
 
     row = await subscriptions_repo.apply_notification(
         db, transaction=notice["transaction"], status=new_status)
+    bound = False
+    if row is None:
+        # Покупка, о которой приложение нам не рассказало.
+        #
+        # Обычно чек приносит оно: купил — отправил — начислили. Но между
+        # оплатой и отправкой стоит сеть и живой телефон, и если приложение
+        # закрыли или связь пропала, деньги списаны, а монет нет — до
+        # следующего запуска. Apple сообщает о той же покупке сюда, и здесь
+        # человека можно узнать без приложения: при покупке мы передаём
+        # `appAccountToken` — это наш же идентификатор (Илья, 2026-09-10).
+        row = await _bind_by_account_token(db, notice["transaction"], status=new_status)
+        bound = row is not None
     if row is None:
         logger.info("Уведомление о покупке %s, которой мы не знаем",
                     notice["transaction"].get("originalTransactionId"))
         return {"status": "unknown-purchase"}
 
-    logger.info("Подписка %s стала %s по уведомлению %s",
-                row.id, new_status, notice["type"])
-    return {"status": "applied", "subscription": new_status}
+    # Монеты — здесь же, не дожидаясь, когда человек откроет приложение.
+    # Пополнение идемпотентно по номеру периода, поэтому повтор безвреден.
+    await wallet.ensure_subscription_quota(db, row.user_id)
+
+    logger.info("Подписка %s стала %s по уведомлению %s%s",
+                row.id, new_status, notice["type"], " (привязана по токену)" if bound else "")
+    return {"status": "bound" if bound else "applied", "subscription": new_status}
+
+
+async def _bind_by_account_token(
+    db: AsyncSession, transaction: dict, *, status: str
+) -> m.Subscription | None:
+    """Найти человека по `appAccountToken` и закрепить за ним покупку.
+
+    Токен — это наш `usr_…` в виде UUID: те же тридцать два знака. Обратное
+    преобразование здесь и делается. Чужой аккаунт так не занять: токен
+    приходит из подписанного Apple чека, а не от того, кто стучится.
+    """
+    token = transaction.get("appAccountToken")
+    if not token:
+        return None
+    user_id = "usr_" + str(token).replace("-", "").lower()
+    if not users_repo.CLIENT_ID.match(user_id):
+        return None
+    user = await users_repo.get(db, user_id)
+    if user is None:
+        logger.warning("В покупке токен %s, а человека с таким идентификатором нет", token)
+        return None
+    row = await subscriptions_repo.bind(db, user_id=user.id, payload=transaction)
+    if status != row.status:
+        row.status = status
+        await db.flush()
+    return row
