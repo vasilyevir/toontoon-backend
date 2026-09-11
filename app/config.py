@@ -137,6 +137,11 @@ class Settings(BaseSettings):
     # signed-over-empty-body): uploads (multipart) + webhooks (external callers).
     app_key_exempt_prefixes: str = "/api/uploads,/api/webhooks"
 
+    # Вебхук Adapty: он присылает события подписки серверно, своим заголовком
+    # авторизации — ровно той строкой, что записана у него в панели. Пусто —
+    # ручка закрыта: принимать чужие события о деньгах нельзя.
+    adapty_webhook_secret: str = ""
+
     @property
     def app_key_exempt_list(self) -> list[str]:
         return [p.strip() for p in self.app_key_exempt_prefixes.split(",") if p.strip()]

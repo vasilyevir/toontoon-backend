@@ -16,9 +16,21 @@ from app.db import models as m
 
 
 def _moment(value) -> Optional[datetime]:
-    """Время из чека — миллисекунды с начала эпохи."""
+    """Время из чека.
+
+    Apple шлёт миллисекунды с начала эпохи, Adapty — строку ISO 8601. Оба
+    доходят до одной и той же строки подписки, поэтому разбираем здесь оба
+    вида, а не заводим второй разбор на стороне вебхука.
+    """
     if value is None:
         return None
+    if isinstance(value, str):
+        text = value.strip().replace("Z", "+00:00")
+        try:
+            moment = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+        return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
     try:
         return datetime.fromtimestamp(int(value) / 1000, tz=timezone.utc)
     except (TypeError, ValueError, OSError):
