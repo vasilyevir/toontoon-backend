@@ -1,0 +1,58 @@
+# Тесты на каждый пуш и каждый pull request.
+#
+# База и Redis — сервисами раннера, а не заглушками: половина наших тестов
+# ходит в настоящую PostgreSQL (кошелёк, подписки, вебхуки), и подменить её
+# моками значит проверять не то, что работает в проде.
+name: Тесты
+
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+  workflow_dispatch: {}
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: toontoon
+          POSTGRES_USER: toontoon
+          POSTGRES_PASSWORD: toontoon
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U toontoon"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://toontoon:toontoon@localhost:5432/toontoon
+      REDIS_URL: redis://localhost:6379/0
+      # Ключей провайдеров в тестах нет и быть не должно: всё, что ходит
+      # наружу, в тестах замокано. Пустые значения выключают эти пути.
+      OPENAI_API_KEY: ""
+      FAL_API_KEY: ""
+      APP_KEY: ci-app-key
+      APP_SECRET: ci-app-secret
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Зависимости
+        run: |
+          python -m pip install -U pip
+          pip install -r requirements.txt -r requirements-dev.txt
+      - name: Миграции
+        run: alembic upgrade head
+      - name: Тесты
+        run: pytest -q

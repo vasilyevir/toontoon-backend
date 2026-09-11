@@ -1,81 +1,82 @@
-# Build & Deploy через общий Helm-чарт (backend).
-# Требуются секреты репо: KUBECONFIG, GHCR_READ_PAT (read:packages).
+# Выкат бэкенда на сервер.
 #
-# Экшены прибиты к SHA, а не к тегу. Тег в GitHub Actions — движущаяся ссылка:
-# владелец экшена (или тот, кто получил доступ к его репозиторию) переставляет
-# `v4` на другой коммит, и он выполняется здесь — с `packages: write` и
-# kubeconfig кластера в секретах. Комментарий рядом с SHA держит версию
-# читаемой; обновлять их — руками и осознанно.
-name: Build & Deploy
+# Прежняя версия этого файла выкатывала в Kubernetes чужой организации —
+# инфраструктуры той уже нет. Сейчас сервер один и без кубера (Илья,
+# 2026-09-11), поэтому выкат простой: код уезжает по ssh, там пересобирается
+# образ и поднимается compose.
+#
+# Два окружения — две среды GitHub со своими секретами: `production` (ветка
+# main) и `staging` (ветка staging). Секреты лежат в среде, а не в репозитории:
+# так ключ от боевого сервера недоступен ветке, которую может открыть кто
+# угодно.
+#
+# Секреты среды: SSH_HOST, SSH_USER, SSH_KEY (приватный ключ), DEPLOY_PATH.
+# Файл .env.prod на сервер кладётся руками и в репозиторий не попадает.
+#
+# Экшены прибиты к SHA, а не к тегу: тег — движущаяся ссылка, и владелец
+# экшена может переставить её на другой коммит, который выполнится здесь с
+# ключом от нашего сервера.
+name: Выкат
 
 on:
   push:
-    branches: [main]
-  workflow_dispatch: {}
+    branches: [main, staging]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Куда выкатывать
+        type: choice
+        options: [production, staging]
+        default: staging
 
-env:
-  # ghcr требует lowercase; имя орги содержит заглавные → путь захардкожен.
-  IMAGE: ghcr.io/atom-group-software/toontoon-web-backend
-  CHART: oci://ghcr.io/atom-group-software/charts/app
-  CHART_VERSION: "0.2.0"
-  RELEASE: toontoon-web-backend
-  NAMESPACE: toontoon-web
+concurrency:
+  # Два выката подряд не должны встретиться на сервере: второй ждёт первого.
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    outputs:
-      image_tag: ${{ steps.meta.outputs.tag }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Set image tag
-        id: meta
-        run: echo "tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-      - name: Log in to GHCR
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-      - name: Build & push
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: .
-          push: true
-          tags: |
-            ${{ env.IMAGE }}:latest
-            ${{ env.IMAGE }}:${{ steps.meta.outputs.tag }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
   deploy:
-    needs: build
     runs-on: ubuntu-latest
-    # Явно и по минимуму. Без этого блока job берёт умолчания репозитория —
-    # а в руках у него kubeconfig кластера, и лишние права здесь стоят дороже
-    # всего остального в этом файле.
     permissions:
       contents: read
+    environment:
+      name: >-
+        ${{ github.event.inputs.environment
+            || (github.ref == 'refs/heads/main' && 'production' || 'staging') }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Set up Helm
-        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
-      - name: Configure kubeconfig
+
+      - name: Ключ доступа
         run: |
-          mkdir -p "$HOME/.kube"
-          echo "${{ secrets.KUBECONFIG }}" | base64 -d > "$HOME/.kube/config"
-          chmod 600 "$HOME/.kube/config"
-      - name: Helm registry login
-        run: echo "${{ secrets.GHCR_READ_PAT }}" | helm registry login ghcr.io -u eerixxx --password-stdin
-      - name: Helm upgrade --install
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_KEY }}" > ~/.ssh/deploy
+          chmod 600 ~/.ssh/deploy
+          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Код на сервер
+        # rsync, а не git pull на сервере: серверу тогда не нужен доступ к
+        # GitHub, а значит и ключ от репозитория на нём не лежит. Исключаем
+        # всё, чего на сервере быть не должно, и НЕ трогаем .env.prod —
+        # секреты живут только там.
         run: |
-          helm upgrade --install "$RELEASE" "$CHART" \
-            --version "$CHART_VERSION" \
-            -n "$NAMESPACE" --create-namespace \
-            -f deploy/values.yaml \
-            --set image.tag=${{ needs.build.outputs.image_tag }} \
-            --wait --timeout 180s
+          rsync -az --delete \
+            --exclude '.git' --exclude '.github' --exclude '.venv' \
+            --exclude '__pycache__' --exclude '*.pyc' --exclude '.pytest_cache' \
+            --exclude 'uploads' --exclude '.local-tls' \
+            --exclude 'deploy/vps/.env.prod' \
+            -e "ssh -i ~/.ssh/deploy -o StrictHostKeyChecking=yes" \
+            ./ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.DEPLOY_PATH }}/"
+
+      - name: Сборка, миграции, каталог, проверка
+        run: |
+          ssh -i ~/.ssh/deploy -o StrictHostKeyChecking=yes \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "bash ${{ secrets.DEPLOY_PATH }}/deploy/vps/deploy.sh ${{ job.environment || 'production' }}"
+
+      - name: Здоровье снаружи
+        # Последняя проверка — с чужой машины: изнутри сервера сервис может
+        # отвечать, а наружу быть закрыт nginx-ом или файрволом.
+        run: |
+          code=$(curl -sk -o /dev/null -m 15 -w "%{http_code}" "https://${{ secrets.SSH_HOST }}/health")
+          echo "health снаружи: $code"
+          [ "$code" = "200" ]
