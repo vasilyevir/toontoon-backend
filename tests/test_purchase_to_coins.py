@@ -76,7 +76,7 @@ async def test_weekly_grants_700_and_spending_shows_up(buyer) -> None:
     start = await wallet.get_balance(db, user.id)
     assert start.available == settings.signup_toontoon_balance
 
-    await _subscribe(db, user, "week_6.99", bought=datetime.now(timezone.utc) - timedelta(hours=1))
+    await _subscribe(db, user, "week_9.99", bought=datetime.now(timezone.utc) - timedelta(hours=1))
     await wallet.ensure_subscription_quota(db, user.id)
 
     after = await wallet.get_balance(db, user.id)
@@ -96,7 +96,7 @@ async def test_weekly_grants_700_and_spending_shows_up(buyer) -> None:
 @pytest.mark.asyncio
 async def test_quota_does_not_double_inside_the_period(buyer) -> None:
     db, user = buyer
-    await _subscribe(db, user, "week_6.99", bought=datetime.now(timezone.utc) - timedelta(days=2))
+    await _subscribe(db, user, "week_9.99", bought=datetime.now(timezone.utc) - timedelta(days=2))
     for _ in range(3):
         await wallet.ensure_subscription_quota(db, user.id)
     assert (await wallet.get_balance(db, user.id)).available == \
@@ -107,7 +107,7 @@ async def test_quota_does_not_double_inside_the_period(buyer) -> None:
 async def test_next_week_refills_to_the_full_quota(buyer) -> None:
     db, user = buyer
     bought = datetime.now(timezone.utc) - timedelta(days=9)
-    await _subscribe(db, user, "week_6.99", bought=bought,
+    await _subscribe(db, user, "week_9.99", bought=bought,
                      until=datetime.now(timezone.utc) + timedelta(days=30))
     await wallet.ensure_subscription_quota(db, user.id)
     await wallet_repo.spend(db, user.id, cost=100, reason="generation", idempotency_key="gen-2")
@@ -124,7 +124,7 @@ async def test_next_week_refills_to_the_full_quota(buyer) -> None:
 async def test_yearly_grants_3000_once(buyer) -> None:
     db, user = buyer
     bought = datetime.now(timezone.utc) - timedelta(days=30)
-    await _subscribe(db, user, "year_39.99", bought=bought,
+    await _subscribe(db, user, "year_59.99", bought=bought,
                      until=datetime.now(timezone.utc) + timedelta(days=335))
     await wallet.ensure_subscription_quota(db, user.id)
     assert (await wallet.get_balance(db, user.id)).available == \
@@ -138,7 +138,7 @@ async def test_yearly_grants_3000_once(buyer) -> None:
 @pytest.mark.asyncio
 async def test_refund_stops_the_quota(buyer) -> None:
     db, user = buyer
-    row = await _subscribe(db, user, "week_6.99",
+    row = await _subscribe(db, user, "week_9.99",
                            bought=datetime.now(timezone.utc) - timedelta(days=1))
     await wallet.ensure_subscription_quota(db, user.id)
     before = (await wallet.get_balance(db, user.id)).available
@@ -154,7 +154,7 @@ async def test_refund_stops_the_quota(buyer) -> None:
 @pytest.mark.asyncio
 async def test_expired_subscription_grants_nothing(buyer) -> None:
     db, user = buyer
-    row = await _subscribe(db, user, "week_6.99",
+    row = await _subscribe(db, user, "week_9.99",
                            bought=datetime.now(timezone.utc) - timedelta(days=8))
     # Срок кончился и продления не было: доступ снимается по дате, даже если
     # уведомление об окончании до нас не доехало.
@@ -175,7 +175,7 @@ async def test_webhook_binds_purchase_by_account_token(buyer) -> None:
     db, user = buyer
     token = user.id.removeprefix("usr_")
     dashed = f"{token[:8]}-{token[8:12]}-{token[12:16]}-{token[16:20]}-{token[20:]}"
-    transaction = _purchase("week_6.99",
+    transaction = _purchase("week_9.99",
                             at=datetime.now(timezone.utc) - timedelta(minutes=5),
                             until=datetime.now(timezone.utc) + timedelta(days=7),
                             transaction=f"w-{user.id[-12:]}")
@@ -192,7 +192,7 @@ async def test_webhook_binds_purchase_by_account_token(buyer) -> None:
 async def test_webhook_ignores_unknown_or_broken_token(buyer) -> None:
     from app.routers.webhooks import _bind_by_account_token
     db, user = buyer
-    base = _purchase("week_6.99", at=datetime.now(timezone.utc),
+    base = _purchase("week_9.99", at=datetime.now(timezone.utc),
                      until=datetime.now(timezone.utc) + timedelta(days=7),
                      transaction=f"x-{user.id[-12:]}")
     for token in (None, "", "not-a-uuid", "'; drop table users; --",

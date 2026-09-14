@@ -33,7 +33,7 @@ async def buyer():
         sub = m.Subscription(
             user_id=user.id,
             original_transaction_id=f"t-{user.id[-10:]}",
-            product_id="week_6.99",
+            product_id="week_9.99",
             status="active",
             quota_anchor_at=datetime.now(timezone.utc) - timedelta(days=1),
         )

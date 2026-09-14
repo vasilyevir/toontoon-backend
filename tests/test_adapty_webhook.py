@@ -28,7 +28,7 @@ from app.services import wallet
 SECRET = "Bearer test-secret-value"
 
 
-def _event(kind: str, *, user_id: str, transaction: str, product: str = "week_6.99") -> dict:
+def _event(kind: str, *, user_id: str, transaction: str, product: str = "week_9.99") -> dict:
     now = datetime.now(timezone.utc)
     return {
         "event_type": kind,
