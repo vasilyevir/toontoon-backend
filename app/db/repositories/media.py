@@ -12,6 +12,7 @@ import logging
 from typing import Optional
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import models as m
@@ -141,7 +142,21 @@ async def save_image(
         content_hash=processed.sha256,
     )
     session.add(asset)
-    await session.flush()
+    try:
+        await session.flush()
+    except IntegrityError:
+        # Тот же снимок приехал дважды одновременно.
+        #
+        # Приложение шлёт снимки профиля пачками по четыре, и одинаковые кадры
+        # в одной пачке доходят до проверки на дубликат раньше, чем первый из
+        # них успевает записаться. Проверка выше их не ловит — гонка, а не
+        # ошибка данных (Илья, 2026-09-14). Отдаём тот, что уже лёг: это ровно
+        # то же, что вернула бы проверка, просто мгновением позже.
+        await session.rollback()
+        existing = await find_upload_by_hash(session, user_id, processed.sha256)
+        if existing is not None:
+            return existing
+        raise
     return asset
 
 
