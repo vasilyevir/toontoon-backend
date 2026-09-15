@@ -459,6 +459,10 @@ _CHAT_SYSTEM = _CHAT_SYSTEM_TEMPLATE.format(
 # секунд, и второй заход рискует упереться в таймаут прокси, оставив человека
 # вообще без ответа.
 _RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+#: Отказ не в связи, а в доступе: ключ истёк, счёт пуст, доступ закрыт.
+#: Повтор тем же ключом ничего не даст — идём другим путём сразу. «Слишком
+#: часто» (429) сюда не входит: это временно, и его стоит пересдать.
+_NO_ACCESS_STATUSES = frozenset({401, 402, 403})
 _RETRY_PAUSE_SECONDS = 1.0
 
 
@@ -534,9 +538,25 @@ async def _call(messages: list[dict], *, max_tokens: int = 300, temperature: flo
                 resp = await client.post(url, headers=headers, json=payload)
                 resp.raise_for_status()
             except httpx.HTTPStatusError as exc:
-                if attempt == 2 or exc.response.status_code not in _RETRY_STATUSES:
+                code = exc.response.status_code
+                # Ключ истёк или счёт пуст — повторять нечего, но у нас есть
+                # второй кошелёк: тот же вопрос уходит через fal. После
+                # исчерпанных повторов — туда же: лучше ответ чужими деньгами,
+                # чем пустой экран.
+                # В fal идём только когда дело в ключе или в перегрузке
+                # провайдера. Кривой запрос там будет таким же кривым, и
+                # второй платный вызов ничего не исправит.
+                hopeless = code in _NO_ACCESS_STATUSES
+                worth_another_wallet = hopeless or (attempt == 2 and code in _RETRY_STATUSES)
+                if hopeless or attempt == 2 or code not in _RETRY_STATUSES:
+                    if worth_another_wallet:
+                        answer = await _fal_or_none(
+                            messages, max_tokens=max_tokens,
+                            temperature=temperature, model=model, because=code)
+                        if answer:
+                            return answer
                     raise
-                log.warning("OpenAI HTTP %s — повтор", exc.response.status_code)
+                log.warning("OpenAI HTTP %s — повтор", code)
             except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError) as exc:
                 if attempt == 2:
                     raise
@@ -556,6 +576,63 @@ async def _call(messages: list[dict], *, max_tokens: int = 300, temperature: flo
                 return content
             await asyncio.sleep(_RETRY_PAUSE_SECONDS)
     raise RuntimeError("unreachable")  # pragma: no cover
+
+
+def _flatten(messages: list[dict]) -> tuple[str, str]:
+    """Свести переписку к паре «система, просьба».
+
+    У fal другой вход: одна строка системы и одна просьбы, без ролей и без
+    картинок. Для наших коротких задач — подсказки, разбор слов, названия —
+    этого достаточно: в них и так две реплики.
+    """
+    system: list[str] = []
+    user: list[str] = []
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, str):
+            # Списком приходит зрение: текст вперемешку с картинками. Такое
+            # через fal не отправить — пусть решает вызывающая сторона.
+            raise ValueError("fal не принимает картинки")
+        (system if message.get("role") == "system" else user).append(content)
+    return "\n\n".join(system), "\n\n".join(user)
+
+
+async def _fal_or_none(messages: list[dict], *, max_tokens: int, temperature: float,
+                       model: str | None, because: int) -> str | None:
+    """Попробовать fal и не мешать исходной ошибке, если не вышло."""
+    if not (settings.fal_text_fallback and settings.fal_api_key.strip()):
+        return None
+    log.warning("Провайдер отказал (%s) — пробуем через fal", because)
+    try:
+        return await _call_via_fal(messages, max_tokens=max_tokens,
+                                   temperature=temperature, model=model)
+    except Exception as error:  # noqa: BLE001 — исходный отказ важнее этого
+        log.warning("fal тоже не ответил: %r", error)
+        return None
+
+
+async def _call_via_fal(messages: list[dict], *, max_tokens: int, temperature: float,
+                        model: str | None) -> str:
+    """Тот же вопрос, но оплаченный кредитами fal."""
+    system, user = _flatten(messages)
+    payload = {
+        "model": model if model and "/" in model else settings.fal_text_model,
+        "prompt": user or "Continue.",
+        "system_prompt": system,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            settings.fal_text_url,
+            headers={"Authorization": f"Key {settings.fal_api_key.strip()}",
+                     "Content-Type": "application/json"},
+            json=payload)
+        resp.raise_for_status()
+        body = resp.json()
+    if body.get("error"):
+        raise RuntimeError(str(body["error"]))
+    return str(body.get("output") or "")
 
 
 def _split_prompt_negative(text: str) -> tuple[str, str]:
@@ -1179,10 +1256,38 @@ def _clean_idea_lines(raw: str, *, limit: int = 4) -> list[str]:
     """
     ideas = []
     for line in raw.splitlines():
-        cleaned = line.strip().lstrip("-•*0123456789.） )").strip().strip('"').strip()
+        cleaned = _bare_idea(line)
         if len(cleaned) > 3:
             ideas.append(cleaned)
     return ideas[:limit]
+
+
+#: Чем модели любят обрамлять строку: нумерация, маркеры, кавычки всех видов.
+_IDEA_TRIM = "-•*0123456789.） )\"'«»“”„‘’ \t"
+#: И чем подписывают реплику. В промпте сказано обращаться «ко мне», и часть
+#: моделей понимает это как формат строки: «me: сделай меня королём».
+_IDEA_LABELS = frozenset({"me", "you", "idea", "prompt", "user"})
+
+
+def _bare_idea(line: str) -> str:
+    """Одна подсказка без обрамления.
+
+    Снимаем кодом, а не очередной строкой в промпте: правило, которое можно
+    выполнить кодом, в промпте только занимает внимание модели. Проходим
+    несколько раз — обрамление бывает слоями: «1. «me»: «сделай…»».
+    """
+    cleaned = line.strip()
+    for _ in range(4):
+        before = cleaned
+        cleaned = cleaned.strip(_IDEA_TRIM)
+        head, colon, rest = cleaned.partition(":")
+        # Ярлык может стоять в кавычках: «me»: «сделай…». Сравниваем то, что
+        # слева от двоеточия, уже без обрамления.
+        if colon and head.strip(_IDEA_TRIM).lower() in _IDEA_LABELS:
+            cleaned = rest.strip()
+        if cleaned == before:
+            break
+    return cleaned
 
 
 # ─── Кто на приложенных снимках ──────────────────────────────────────────────
