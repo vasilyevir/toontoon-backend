@@ -197,7 +197,8 @@ async def get_style(style_id: str, db: AsyncSession = Depends(get_db_session)) -
 async def daily_shots(
     db: AsyncSession = Depends(get_db_session),
     day: Optional[str] = Query(default=None, description="YYYY-MM-DD (UTC), по умолчанию сегодня"),
-    count: int = Query(default=6, ge=1, le=12),
+    count: Optional[int] = Query(default=None, ge=1, le=60,
+                                 description="Сколько карточек; по умолчанию — настройка сервера"),
 ) -> list[StyleOut]:
     """Today's set. Same for everyone, reproducible for any past date."""
     try:

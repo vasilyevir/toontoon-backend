@@ -13,6 +13,7 @@ from typing import Optional, Sequence
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.db import models as m
 
 
@@ -55,19 +56,33 @@ async def get(session: AsyncSession, style_id: str) -> Optional[m.Style]:
 
 
 async def daily_shots(
-    session: AsyncSession, day: date, *, count: int = 6
+    session: AsyncSession, day: date, *, count: Optional[int] = None
 ) -> Sequence[m.Style]:
     """The set for a given UTC day.
 
-    A manual override wins if there is one; otherwise the set is computed from
-    the pool deterministically, so everyone sees the same "today" and a test can
-    reproduce any date. Rotation runs by UTC on purpose — a local date would
-    give different people different todays and turn debugging into guesswork.
+    Три слоя, и каждый отвечает за своё.
+
+    Ручная замена на дату (`ShotsSchedule`) бьёт всё: если набор на день собран
+    руками, он и показывается — в том порядке, в каком его записали.
+
+    Дальше идёт закреплённая голова (`shots_pinned`). Первое, что человек видит
+    на вкладке, выбираем мы, а не остаток от деления: девушка, она же в
+    мультфильме, парень, он же в мультфильме — четыре карточки, по которым
+    сразу читается, что здесь делают и на ком это работает. Вращать их значило
+    бы менять первое впечатление о продукте каждые сутки.
+
+    Хвост крутится как раньше: окно по пулу, сдвигаемое на шаг в день, без
+    случайности, которую потом не воспроизвести. Все видят один и тот же
+    «сегодня», и любую прошедшую дату можно повторить в тесте.
     """
+    count = count or settings.shots_per_day
     override = await session.get(m.ShotsSchedule, day)
     if override is not None and override.style_ids:
         stmt = select(m.Style).where(m.Style.id.in_(override.style_ids))
-        return (await session.scalars(stmt)).all()
+        found = {row.id: row for row in await session.scalars(stmt)}
+        # Порядок берём из самого расписания: список писали руками, и писали
+        # его в том порядке, в каком хотели видеть.
+        return [found[sid] for sid in override.style_ids if sid in found]
 
     stmt = (
         select(m.Style)
@@ -78,8 +93,16 @@ async def daily_shots(
     if not pool:
         return []
 
+    by_id = {row.id: row for row in pool}
+    head = [by_id[sid] for sid in settings.shots_pinned if sid in by_id]
+    pinned = {row.id for row in head}
+    tail = [row for row in pool if row.id not in pinned]
+    if not tail:
+        return head[:count]
+
     # Rotate the pool by the day number: a stable window that moves one step a
     # day, with no randomness to reproduce and no state to store.
-    offset = (day.toordinal() * count) % len(pool)
-    doubled = pool + pool
-    return doubled[offset : offset + min(count, len(pool))]
+    room = max(count - len(head), 0)
+    offset = (day.toordinal() * count) % len(tail)
+    doubled = tail + tail
+    return head[:count] + doubled[offset : offset + min(room, len(tail))]
