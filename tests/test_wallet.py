@@ -128,6 +128,28 @@ async def test_daily_rewards_ladder_gives_hundred_a_week(db):
     assert sum(granted) == settings.free_weekly_quota
 
 
+async def test_first_day_adds_up_to_exactly_one_picture(db):
+    """Вход плюс первая награда — ровно цена кадра, ни монетой больше.
+
+    Обещание, данное человеку без подписки: первая работа бесплатна. Пять на
+    входе и десять за первый день складываются в 15 — столько стоит кадр. Это
+    три числа в трёх разных настройках, и разъехаться они могут молча: раньше
+    на входе лежала десятка, после первого кадра оставалось пять, и этот
+    остаток не покупал ничего.
+    """
+    session, uid = db
+    await wallet_repo.grant(session, uid, amount=settings.signup_toontoon_balance,
+                            bucket="free", reason="signup",
+                            idempotency_key=f"signup:{uid}")
+    _, reward = await wallet_repo.claim_daily_reward(session, uid, today=date(2026, 8, 1))
+    assert reward == settings.daily_reward_list[0]
+    assert (await wallet_repo.balance(session, uid)).total == settings.image_toontoon_cost
+
+    after = await wallet_repo.spend(session, uid, cost=settings.image_toontoon_cost,
+                                    reason="generation")
+    assert after.total == 0
+
+
 async def test_daily_reward_twice_a_day_grants_nothing(db):
     session, uid = db
     today = date(2026, 8, 1)
