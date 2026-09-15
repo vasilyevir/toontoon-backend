@@ -150,6 +150,29 @@ async def test_first_day_adds_up_to_exactly_one_picture(db):
     assert after.total == 0
 
 
+async def test_looking_at_the_reward_does_not_grant_it(db):
+    """Снимок запуска показывает награду, но не выдаёт её.
+
+    Экран награды с кнопкой «Claim» имеет смысл только если до нажатия монет
+    нет. Пока клиент забирал награду при запуске, кнопка была декорацией:
+    деньги уже лежали на балансе, и нажатие лишь закрывало окно. Снимок
+    зовётся на каждом запуске, и сколько раз ни спроси — баланс тот же.
+    """
+    session, uid = db
+    today = date(2026, 8, 1)
+    for _ in range(3):
+        amount, streak = await wallet_repo.pending_daily_reward(session, uid, today=today)
+        assert (amount, streak) == (settings.daily_reward_list[0], 1)
+        assert (await wallet_repo.balance(session, uid)).total == 0
+
+    _, granted = await wallet_repo.claim_daily_reward(session, uid, today=today)
+    assert granted == settings.daily_reward_list[0]
+    assert (await wallet_repo.balance(session, uid)).total == granted
+
+    # А после выдачи показывать больше нечего — иначе экран придёт второй раз.
+    assert await wallet_repo.pending_daily_reward(session, uid, today=today) == (0, 0)
+
+
 async def test_daily_reward_twice_a_day_grants_nothing(db):
     session, uid = db
     today = date(2026, 8, 1)
