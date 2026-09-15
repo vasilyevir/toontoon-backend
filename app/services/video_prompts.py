@@ -596,8 +596,8 @@ def _fallback_freetext(text: str) -> VideoStoryboard:
 
 async def _build_freetext_storyboard(text: str, style: str | None) -> VideoStoryboard:
     """Use LLM to categorise free-text and build anchor+motion JSON (v2)."""
-    if not settings.openai_enabled:
-        logger.warning("OpenAI not enabled — using fallback for free-text video")
+    if not settings.text_llm_enabled:
+        logger.warning("Языковая модель недоступна — свободный текст идёт механическим путём")
         return _fallback_freetext(text)
 
     user_msg = f"User request: {text}"

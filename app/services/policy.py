@@ -146,7 +146,7 @@ async def screen_text(text: Optional[str]) -> TextVerdict:
     if not text:
         return TextVerdict()
     verdict = TextVerdict(nudity=_keyword_hit(text, _NUDITY_WORDS))
-    if not settings.policy_enabled or not settings.openai_enabled:
+    if not settings.policy_enabled or not settings.text_llm_enabled:
         return verdict
     try:
         raw = await gpt._call(
@@ -194,7 +194,7 @@ _PHOTO_SYSTEM = (
 
 async def screen_photo(data: bytes) -> Optional[PhotoVerdict]:
     """Вердикт зрения. `None` — не посмотрели; такое не запоминается."""
-    if not settings.policy_enabled or not settings.openai_enabled:
+    if not settings.policy_enabled or not settings.text_llm_enabled:
         return None
     try:
         small = base64.b64encode(storage_images.preview(data, side=512)).decode()

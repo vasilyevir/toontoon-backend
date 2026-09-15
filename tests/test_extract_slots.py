@@ -13,6 +13,7 @@ import json
 import pytest
 
 from app.services import gpt
+from app.services.llm import openai_shape
 
 
 @pytest.fixture
@@ -137,10 +138,10 @@ def test_empty_content_is_not_a_crash():
     сборка промпта уходила в отказ с возвратом TOONTOON — и всё это на ответе,
     который просто означает «ничего не сказал».
     """
-    assert gpt._content_of({"choices": [{"message": {"content": None}}]}) == ""
-    assert gpt._content_of({"choices": [{"message": {}}]}) == ""
-    assert gpt._content_of({}) == ""
-    assert gpt._content_of({"choices": [{"message": {"content": "  {}  "}}]}) == "{}"
+    assert openai_shape._content_of({"choices": [{"message": {"content": None}}]}) == ""
+    assert openai_shape._content_of({"choices": [{"message": {}}]}) == ""
+    assert openai_shape._content_of({}) == ""
+    assert openai_shape._content_of({"choices": [{"message": {"content": "  {}  "}}]}) == "{}"
 
 
 async def test_empty_answer_gives_no_slots(answered):
@@ -159,9 +160,11 @@ def test_marketplace_model_is_not_sent_to_openai(monkeypatch):
 
     monkeypatch.setattr(settings, "openai_model", "gpt-4o-mini")
     monkeypatch.setattr(settings, "openrouter_text_model", "openai/gpt-4o-mini")
-    assert gpt._model_for("google/gemini-2.5-flash", use_router=False) == "gpt-4o-mini"
-    assert gpt._model_for("google/gemini-2.5-flash", use_router=True) == "google/gemini-2.5-flash"
-    assert gpt._model_for(None, use_router=True) == "openai/gpt-4o-mini"
+    openai = openai_shape.ChatCompletionsProvider("openai")
+    router = openai_shape.ChatCompletionsProvider("openrouter")
+    assert openai._model("google/gemini-2.5-flash") == "gpt-4o-mini"
+    assert router._model("google/gemini-2.5-flash") == "google/gemini-2.5-flash"
+    assert router._model(None) == "openai/gpt-4o-mini"
 
 
 # ─── Роли приложенных снимков ───────────────────────────────────────────────

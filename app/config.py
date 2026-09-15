@@ -298,7 +298,23 @@ class Settings(BaseSettings):
 
     @property
     def openai_enabled(self) -> bool:
+        """Может ли OpenAI рисовать. Про слова спрашивают `text_llm_enabled`."""
         return bool(self.openai_api_key.strip())
+
+    @property
+    def text_llm_enabled(self) -> bool:
+        """Есть ли кому думать словами.
+
+        Раньше этот вопрос задавали ключу OpenAI, и это было правдой ровно до
+        тех пор, пока он был единственным. Теперь поставщиков трое, и подсказки
+        не должны отключаться из-за пустого ключа у того, кого мы больше не
+        зовём.
+        """
+        keys = {"fal": self.fal_api_key,
+                "openrouter": self.openrouter_api_key,
+                "openai": self.openai_api_key}
+        return any(keys.get(name.strip(), "").strip()
+                   for name in self.llm_order.split(","))
 
     # Кадр из разговора — 15 монет, как и любой кадр из каталога.
     #
@@ -454,9 +470,22 @@ class Settings(BaseSettings):
     # OpenRouter однажды истёк, счёт OpenAI опустел, и приложение осталось без
     # подсказок и без разбора просьб, хотя рабочий ключ fal лежал рядом (Илья,
     # 2026-09-15). Снимки сюда не уходят — у этого эндпоинта нет картинок.
-    fal_text_fallback: bool = True
     fal_text_url: str = "https://fal.run/openrouter/router"
+    #: Зрение у fal — отдельный вход. Снимки уходят туда как `image_urls`:
+    #: он принимает и публичные ссылки, и base64 прямо в теле запроса, а у нас
+    #: снимки лежат в своём хранилище и наружу не смотрят — значит base64.
+    fal_vision_url: str = "https://fal.run/openrouter/router/vision"
     fal_text_model: str = "google/gemini-2.5-flash"
+
+    # Очередь поставщиков языковых моделей.
+    #
+    # Спрашиваем первого, у кого есть ключ; если он отказал не по делу —
+    # следующего. fal впереди сознательно: с OpenRouter мы уходим, а его модели
+    # остаются доступны через fal тем же каталогом имён.
+    llm_order: str = "fal,openrouter,openai"
+    #: Сколько ждать ответа словами. Двадцати секунд хватало годами; зрение по
+    #: base64 бывает медленнее, отсюда небольшой запас.
+    llm_timeout: float = 25.0
     # Сколько снимков профиля отдавать модели как референсы.
     #
     # Один. Тройка стояла здесь по вере — «лишние ракурсы помогают сходству», —

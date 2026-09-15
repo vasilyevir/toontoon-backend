@@ -1,25 +1,24 @@
-"""GPT-4o mini — two roles in the TOONTOON product.
+"""Языковая модель — две роли в продукте TOONTOON.
 
-Role 1 — Prompt builder
-  Takes a tile + user answers and returns a rich English prompt
-  ready for the image generation model. When OpenAI is not configured
-  we fall back to the simple mechanical builder.
+Роль 1 — сборщик промпта
+  Берёт плитку и ответы человека и возвращает готовый английский промпт для
+  рисующей модели. Без языковой модели остаётся механический сборщик.
 
-Role 2 — Chat assistant
-  Handles free-form conversation on the frontend: greets the user,
-  suggests tiles, asks follow-up questions, stays on-brand as Toontoon.
-  POST /api/chat uses this.
+Роль 2 — собеседник
+  Свободный разговор в приложении: здоровается, предлагает плитки, задаёт
+  следующий вопрос, держится голосом Toontoon. Этим живёт POST /api/chat.
+
+Кого именно спрашивать — решает `app.services.llm`: очередь поставщиков, у
+первого сейчас fal. Здесь об этом знать не нужно, здесь только вопросы.
 """
 from __future__ import annotations
 
-import asyncio
 import base64
 import json
 import logging
 import re
 from typing import Optional
 
-import httpx
 import time
 
 log = logging.getLogger(__name__)
@@ -132,6 +131,7 @@ def _is_epic_scene(text: str) -> bool:
 
 from app.config import settings
 from app.services import agent_analytics
+from app.services import llm
 from app.models.tile import Tile
 from app.services import card_prompts, picture_prompts, prompt_style
 from app.storage import images as storage_images
@@ -145,8 +145,6 @@ _TEMPLATING_SYSTEM = (
     "public figure's likeness, never realistic uniforms with insignia, identity "
     "documents, weapons pointed at people or drugs — drop such parts silently."
 )
-
-_OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
 
 # ─── System prompts ──────────────────────────────────────────────────────────
 
@@ -453,186 +451,34 @@ _CHAT_SYSTEM = _CHAT_SYSTEM_TEMPLATE.format(
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
 
-# Повторяем только быстрые отказы: лимит запросов, авария на той стороне и
-# оборванное соединение возвращаются мгновенно, поэтому вторая попытка почти
-# ничего не стоит. Таймаут не повторяем сознательно — он уже съел свои 20
-# секунд, и второй заход рискует упереться в таймаут прокси, оставив человека
-# вообще без ответа.
-_RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
-#: Отказ не в связи, а в доступе: ключ истёк, счёт пуст, доступ закрыт.
-#: Повтор тем же ключом ничего не даст — идём другим путём сразу. «Слишком
-#: часто» (429) сюда не входит: это временно, и его стоит пересдать.
-_NO_ACCESS_STATUSES = frozenset({401, 402, 403})
-_RETRY_PAUSE_SECONDS = 1.0
-
-
-def _content_of(payload: dict) -> str:
-    """Текст ответа — или пустая строка, если его нет.
-
-    Пустой ответ приходит штатно: модели с рассуждением возвращают
-    `content: null`, потратив весь лимит на размышление, и это не сбой сети, а
-    «ничего не сказал». Раньше здесь звался `.strip()` у пустоты — разбор фразы
-    отвечал приложению пятисоткой, а сборка промпта уходила в отказ с возвратом
-    TOONTOON. Оба места умеют работать с пустым ответом, и им нужно дать его, а
-    не исключение.
-    """
-    choices = payload.get("choices") or [{}]
-    message = choices[0].get("message") or {}
-    return (message.get("content") or "").strip()
-
-
-def _model_for(asked: str | None, *, use_router: bool) -> str:
-    """Какая модель поедет в запрос.
-
-    Просьба о конкретной модели выполняется только через витрину: `asked` — это
-    её идентификатор вида `google/gemini-2.5-flash`, и прямому OpenAI он не
-    годится, там такой модели просто нет. Без ключа витрины просьба тихо
-    отменяется — разбор уйдёт на общую модель и сработает хуже, но сработает.
-    Отвечать отказом на то, что модель разбора выбрана в настройках, а витрина
-    не подключена, было бы наказанием за чужую настройку.
-    """
-    if use_router:
-        return asked or settings.openrouter_text_model
-    return settings.openai_model
-
-
 async def _call(messages: list[dict], *, max_tokens: int = 300, temperature: float = 0.7,
                 usage: dict | None = None, model: str | None = None,
                 purpose: str | None = None) -> str:
-    """Make a chat completion call and return the assistant's text.
+    """Спросить языковую модель и вернуть её слова.
 
-    Retries once on a fast, transient failure. Падение сюда стоит дорого: без
-    промпта запрос либо отменяется, либо собирается механически, поэтому одна
-    дешёвая пересдача окупается.
+    Кого именно спрашивать, сколько раз пересдавать и когда переходить к
+    следующему кошельку — решает `app.services.llm`. Здесь остаётся то, что
+    касается нас: замер времени и запись ответа в аналитику.
 
-    В `usage` витрина складывает расход токенов, если зовущий его считает. Нужно
-    это замеру моделей: у моделей с рассуждением ответ короткий, а счёт длинный —
+    В `usage` складывается расход токенов, если зовущий его считает. Нужно это
+    замеру моделей: у моделей с рассуждением ответ короткий, а счёт длинный —
     оплачивается и то, что они думали. Считать такую цену по длине промпта
     значит сравнивать их с обычными моделями по чужой ставке.
     """
-    # Витрина, если ключ есть; прямой OpenAI — как было. Выбор здесь, а не в
-    # настройке маршрута, потому что это одна и та же операция, и звать её
-    # по-разному в зависимости от вендора незачем.
-    use_router = bool(settings.openrouter_api_key)
-    url = (f"{settings.openrouter_base_url.rstrip('/')}/chat/completions"
-           if use_router else _OPENAI_CHAT_URL)
-    headers = {
-        "Authorization": f"Bearer "
-                         f"{settings.openrouter_api_key if use_router else settings.openai_api_key}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": _model_for(model, use_router=use_router),
-        "messages": messages,
-        "max_tokens": max_tokens,
-        "temperature": temperature,
-    }
-    if use_router:
-        # Сюда уходят и снимки лиц (зрение). Вендор за витриной не должен
-        # оставлять их себе; прямой OpenAI такого поля не знает.
-        payload["provider"] = {"data_collection": "deny"}
     started = time.monotonic()
-    async with httpx.AsyncClient(timeout=20) as client:
-        for attempt in (1, 2):
-            try:
-                resp = await client.post(url, headers=headers, json=payload)
-                resp.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                code = exc.response.status_code
-                # Ключ истёк или счёт пуст — повторять нечего, но у нас есть
-                # второй кошелёк: тот же вопрос уходит через fal. После
-                # исчерпанных повторов — туда же: лучше ответ чужими деньгами,
-                # чем пустой экран.
-                # В fal идём только когда дело в ключе или в перегрузке
-                # провайдера. Кривой запрос там будет таким же кривым, и
-                # второй платный вызов ничего не исправит.
-                hopeless = code in _NO_ACCESS_STATUSES
-                worth_another_wallet = hopeless or (attempt == 2 and code in _RETRY_STATUSES)
-                if hopeless or attempt == 2 or code not in _RETRY_STATUSES:
-                    if worth_another_wallet:
-                        answer = await _fal_or_none(
-                            messages, max_tokens=max_tokens,
-                            temperature=temperature, model=model, because=code)
-                        if answer:
-                            return answer
-                    raise
-                log.warning("OpenAI HTTP %s — повтор", code)
-            except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError) as exc:
-                if attempt == 2:
-                    raise
-                log.warning("OpenAI соединение оборвалось (%s) — повтор", type(exc).__name__)
-            else:
-                body = resp.json()
-                if usage is not None:
-                    usage.update(body.get("usage") or {})
-                content = _content_of(body)
-                # Amplitude Agent Analytics: ответ модели в сессию запроса,
-                # если обработчик её открыл; иначе — ничего.
-                model_name, provider = agent_analytics.canonical_model(payload["model"])
-                agent_analytics.model_answered(
-                    content=content, model=model_name, provider=provider,
-                    latency_ms=(time.monotonic() - started) * 1000,
-                    usage=body.get("usage") or {}, purpose=purpose)
-                return content
-            await asyncio.sleep(_RETRY_PAUSE_SECONDS)
-    raise RuntimeError("unreachable")  # pragma: no cover
-
-
-def _flatten(messages: list[dict]) -> tuple[str, str]:
-    """Свести переписку к паре «система, просьба».
-
-    У fal другой вход: одна строка системы и одна просьбы, без ролей и без
-    картинок. Для наших коротких задач — подсказки, разбор слов, названия —
-    этого достаточно: в них и так две реплики.
-    """
-    system: list[str] = []
-    user: list[str] = []
-    for message in messages:
-        content = message.get("content")
-        if not isinstance(content, str):
-            # Списком приходит зрение: текст вперемешку с картинками. Такое
-            # через fal не отправить — пусть решает вызывающая сторона.
-            raise ValueError("fal не принимает картинки")
-        (system if message.get("role") == "system" else user).append(content)
-    return "\n\n".join(system), "\n\n".join(user)
-
-
-async def _fal_or_none(messages: list[dict], *, max_tokens: int, temperature: float,
-                       model: str | None, because: int) -> str | None:
-    """Попробовать fal и не мешать исходной ошибке, если не вышло."""
-    if not (settings.fal_text_fallback and settings.fal_api_key.strip()):
-        return None
-    log.warning("Провайдер отказал (%s) — пробуем через fal", because)
-    try:
-        return await _call_via_fal(messages, max_tokens=max_tokens,
-                                   temperature=temperature, model=model)
-    except Exception as error:  # noqa: BLE001 — исходный отказ важнее этого
-        log.warning("fal тоже не ответил: %r", error)
-        return None
-
-
-async def _call_via_fal(messages: list[dict], *, max_tokens: int, temperature: float,
-                        model: str | None) -> str:
-    """Тот же вопрос, но оплаченный кредитами fal."""
-    system, user = _flatten(messages)
-    payload = {
-        "model": model if model and "/" in model else settings.fal_text_model,
-        "prompt": user or "Continue.",
-        "system_prompt": system,
-        "max_tokens": max_tokens,
-        "temperature": temperature,
-    }
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(
-            settings.fal_text_url,
-            headers={"Authorization": f"Key {settings.fal_api_key.strip()}",
-                     "Content-Type": "application/json"},
-            json=payload)
-        resp.raise_for_status()
-        body = resp.json()
-    if body.get("error"):
-        raise RuntimeError(str(body["error"]))
-    return str(body.get("output") or "")
+    reply = await llm.ask(llm.Ask(messages=messages, max_tokens=max_tokens,
+                                  temperature=temperature, model=model,
+                                  purpose=purpose))
+    if usage is not None:
+        usage.update(reply.usage)
+    # Amplitude Agent Analytics: ответ модели в сессию запроса, если обработчик
+    # её открыл; иначе — ничего.
+    model_name, guessed = agent_analytics.canonical_model(reply.model)
+    agent_analytics.model_answered(
+        content=reply.text, model=model_name, provider=reply.provider or guessed,
+        latency_ms=(time.monotonic() - started) * 1000,
+        usage=reply.usage, purpose=purpose)
+    return reply.text
 
 
 def _split_prompt_negative(text: str) -> tuple[str, str]:
@@ -691,7 +537,7 @@ async def build_prompt(
     Returns ``("", "")`` if OpenAI is not configured or the call fails — the
     caller then uses the mechanical builder.
     """
-    if not settings.openai_enabled:
+    if not settings.text_llm_enabled:
         return "", ""
 
     # Neutralize named third-party IP once, up front, so the same normalized
@@ -921,7 +767,7 @@ async def chat_reply(
     выбирает вопрос сама, и выбирает плохо: свободный чат так ни разу не спросил
     про пропорции и дважды вернулся к стилю, названному первой же фразой.
     """
-    if not settings.openai_enabled:
+    if not settings.text_llm_enabled:
         return said_in(message,
                        ru="Привет! Я Toontoon. Что сделаем — картинку или открытку?",
                        en="Hi! I'm Toontoon. What would you like to create — "
@@ -1220,7 +1066,7 @@ async def next_step_ideas(*, prompt: str, intent: str | None = None,
     английская реплика посреди русского разговора здесь заметнее всего. Сам
     промпт языка не подсказывает — он всегда английский, это машинерия.
     """
-    if not settings.openai_enabled or not prompt.strip():
+    if not settings.text_llm_enabled or not prompt.strip():
         return "", []
 
     what = f"This is a {intent}." if intent else ""
@@ -1336,7 +1182,7 @@ async def reference_roles(
     # чем. С профилем всё наоборот: лицо у нас есть, и приложенное чаще всего
     # образец — «сделай меня в стилистике вот этого».
     least = 1 if person_known else 2
-    if not settings.openai_enabled or len(images) < least:
+    if not settings.text_llm_enabled or len(images) < least:
         return []
 
     known = ("We already know what this person looks like, so a picture they "
@@ -1423,7 +1269,7 @@ async def style_of_sample(image: tuple[bytes, str]) -> tuple[str | None, list[st
     Заодно это решает, когда переснимать: пустой список марок означает, что
     проверять готовый кадр не нужно вовсе, а таких образцов большинство.
     """
-    if not settings.openai_enabled:
+    if not settings.text_llm_enabled:
         return None, []
 
     data, _ = image
@@ -1484,7 +1330,7 @@ async def brands_on_image(data: bytes, names: list[str]) -> list[str]:
     Пустой список имён — пустой ответ и ни одного вызова: у большинства
     образцов чужих марок нет вовсе, и платить за проверку там не за что.
     """
-    if not names or not settings.openai_enabled or not data:
+    if not names or not settings.text_llm_enabled or not data:
         return []
 
     small = base64.b64encode(storage_images.preview(data, side=1024)).decode()
@@ -1538,7 +1384,7 @@ async def wardrobe_mismatch(result: bytes, reference: bytes) -> str | None:
     None, если всё в порядке или разобрать не удалось. Сомнение — в пользу
     кадра: лишняя пересъёмка стоит денег, а лишняя задержка — доверия.
     """
-    if not settings.openai_enabled:
+    if not settings.text_llm_enabled:
         return None
     ref = base64.b64encode(storage_images.preview(reference)).decode()
     out = base64.b64encode(storage_images.preview(result)).decode()
@@ -1569,7 +1415,7 @@ async def looks_photographic(data: bytes) -> bool:
     Сомнение трактуем в пользу картинки: «не разобрали» значит «отдаём как
     есть». Лишний повтор стоит денег, а лишняя задержка — доверия.
     """
-    if not settings.openai_enabled:
+    if not settings.text_llm_enabled:
         return False
 
     small = base64.b64encode(storage_images.preview(data)).decode()
@@ -1638,7 +1484,7 @@ async def photo_remark_and_ideas(image: bytes, *, spoken: str = "") -> tuple[str
     самой реплике нет; взять его больше неоткуда, а английская строка посреди
     русской переписки — та же чужая реплика, что и раньше.
     """
-    if not settings.openai_enabled or not image:
+    if not settings.text_llm_enabled or not image:
         return "", []
 
     small = base64.b64encode(storage_images.preview(image, side=512)).decode()
@@ -1694,7 +1540,7 @@ async def starter_ideas() -> list[str]:
     отвечают на единственный вопрос, который у человека есть в эту секунду:
     «а что тут вообще можно?»
     """
-    if not settings.openai_enabled:
+    if not settings.text_llm_enabled:
         return []
     try:
         raw = await _call(
@@ -1776,7 +1622,7 @@ async def review_profile_photos(images: list[bytes]) -> dict:
     отказывать человеку в профиле из-за того, что мы не смогли посмотреть,
     было бы наказанием за нашу же неисправность.
     """
-    if not settings.openai_enabled or not images:
+    if not settings.text_llm_enabled or not images:
         return {"photos": [], "missing": [], "chosen": []}
 
     parts: list[dict] = [{"type": "text",

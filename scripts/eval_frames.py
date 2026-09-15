@@ -247,7 +247,7 @@ async def judge_likeness(reference: bytes, frame: bytes) -> tuple[Optional[int],
     сходство на рисованном лице, которого у него в обучении не было. Пока
     судит зрение; когда числу понадобится вес, ArcFace встанет рядом.
     """
-    if not settings.openai_enabled:
+    if not settings.text_llm_enabled:
         return None, "зрение выключено"
 
     parts = [{"type": "text", "text": "Reference first, generated second."}]
@@ -263,7 +263,7 @@ async def judge_likeness(reference: bytes, frame: bytes) -> tuple[Optional[int],
 
 async def judge_absent(frame: bytes, thing: str) -> tuple[Optional[bool], str]:
     """Нет ли в кадре того, чего не просили: шапки, улыбки, лишней вещи."""
-    if not settings.openai_enabled:
+    if not settings.text_llm_enabled:
         return None, "зрение выключено"
 
     small = base64.b64encode(gpt.storage_images.preview(frame, side=512)).decode()
@@ -282,7 +282,7 @@ async def judge_quality(frame: bytes, kind: str = "") -> tuple[Optional[int], Op
     объяснением «это иллюстрация, а не фотография» — то есть штрафовал кадр за
     то, ради чего его и заказывали.
     """
-    if not settings.openai_enabled:
+    if not settings.text_llm_enabled:
         return None, None, "зрение выключено"
 
     meant = ("This picture is meant to be an illustration." if kind == "drawn"

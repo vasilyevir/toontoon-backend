@@ -12,6 +12,7 @@ import httpx
 import pytest
 
 from app.services import content_gen, gpt
+from app.services.llm import router
 
 
 # ─── Отказ вместо непереведённого промпта ────────────────────────────────────
@@ -64,14 +65,25 @@ async def test_refusal_also_looks_at_tile_answers(gpt_is_down) -> None:
         )
 
 
-# ─── Пересдача при быстром отказе OpenAI ─────────────────────────────────────
+# ─── Пересдача при быстром отказе поставщика ─────────────────────────────────
+#
+# Очередь поставщиков проверяется отдельно (tests/test_llm_router.py); здесь —
+# только поведение одного из них, поэтому очередь сведена к одному имени.
 
 
 def _reply(text: str) -> httpx.Response:
     return httpx.Response(
         200, json={"choices": [{"message": {"content": text}}]},
-        request=httpx.Request("POST", gpt._OPENAI_CHAT_URL),
+        request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions"),
     )
+
+
+@pytest.fixture(autouse=True)
+def one_provider(monkeypatch: pytest.MonkeyPatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "llm_order", "openai")
+    monkeypatch.setattr(settings, "openai_api_key", "key")
 
 
 @pytest.fixture(autouse=True)
@@ -79,7 +91,7 @@ def no_retry_pause(monkeypatch: pytest.MonkeyPatch):
     async def _instant(_seconds):
         return None
 
-    monkeypatch.setattr(gpt.asyncio, "sleep", _instant)
+    monkeypatch.setattr(router.asyncio, "sleep", _instant)
 
 
 def _mock_post(monkeypatch: pytest.MonkeyPatch, responses: list):
@@ -99,7 +111,7 @@ def _mock_post(monkeypatch: pytest.MonkeyPatch, responses: list):
 
 async def test_rate_limit_is_retried_once(monkeypatch: pytest.MonkeyPatch) -> None:
     limited = httpx.Response(
-        429, request=httpx.Request("POST", gpt._OPENAI_CHAT_URL)
+        429, request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
     )
     calls = _mock_post(monkeypatch, [limited, _reply("a scene")])
 
@@ -115,7 +127,7 @@ async def test_dropped_connection_is_retried_once(monkeypatch: pytest.MonkeyPatc
 
 
 async def test_timeout_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Таймаут уже съел свои 20 секунд — второй заход рискует остаться без ответа."""
+    """Таймаут уже съел свои секунды — второй заход рискует остаться без ответа."""
     calls = _mock_post(monkeypatch, [httpx.ReadTimeout("slow"), _reply("a scene")])
 
     with pytest.raises(httpx.ReadTimeout):
@@ -125,7 +137,8 @@ async def test_timeout_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
 
 async def test_bad_request_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
     """400 — это наша ошибка в запросе, повтор её не исправит."""
-    bad = httpx.Response(400, request=httpx.Request("POST", gpt._OPENAI_CHAT_URL))
+    bad = httpx.Response(
+        400, request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions"))
     calls = _mock_post(monkeypatch, [bad, _reply("a scene")])
 
     with pytest.raises(httpx.HTTPStatusError):
@@ -134,10 +147,11 @@ async def test_bad_request_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 async def test_two_failures_give_up(monkeypatch: pytest.MonkeyPatch) -> None:
-    down = httpx.Response(503, request=httpx.Request("POST", gpt._OPENAI_CHAT_URL))
+    down = httpx.Response(
+        503, request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions"))
     calls = _mock_post(monkeypatch, [down, down])
 
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(gpt.llm.Overloaded):
         await gpt._call([{"role": "user", "content": "hi"}])
     assert calls["n"] == 2
 
