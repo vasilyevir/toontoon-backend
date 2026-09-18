@@ -687,6 +687,10 @@ class Settings(BaseSettings):
     amplitude_ai_api_key: str = ""
     amplitude_server_zone: str = "EU"
     amplitude_content_mode: str = "full"   # full | metadata_only
+    # Продуктовые события о судьбе работы (services/product_events.py). Ключ —
+    # тот же проект, что у приложения: половинки воронки склеиваются по
+    # User ID, а он у нас один. Пусто — события не уходят.
+    amplitude_api_key: str = ""
 
     @property
     def password_reset_ttl_seconds(self) -> int:

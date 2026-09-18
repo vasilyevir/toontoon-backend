@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import new_id
 from app.db import models as m
+from app.services import product_events
 
 
 async def create(
@@ -44,6 +45,10 @@ async def create(
     )
     session.add(generation)
     await session.flush()
+    # Задача принята. Событие отсюда, а не из ручки: сюда сходятся все входы —
+    # карточка стиля, чат, повтор, — и «принял задачу» значит ровно то, что
+    # строка появилась.
+    product_events.started(generation)
     return generation
 
 
@@ -110,6 +115,7 @@ async def mark_done(
     if prompt is not None:
         generation.prompt = prompt
     await session.flush()
+    product_events.completed(generation)
     return generation
 
 
@@ -208,6 +214,9 @@ async def mark_failed(
     generation.error = error[:2000]
     generation.finished_at = func.clock_timestamp()
     await session.flush()
+    # Окончательный отказ: в `failed` строка попадает один раз, и промежуточные
+    # ошибки, после которых работа продолжается, сюда не доходят.
+    product_events.failed(generation, error)
     return generation
 
 

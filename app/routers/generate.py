@@ -453,7 +453,16 @@ async def _generate(body: GenerateRequest, ctx: Context, db: AsyncSession) -> Ge
         operation=generation_core.Operation.TEXT_TO_IMAGE.value,
         user_id=user.id,
         status="running",
-        request_params={"payment_id": payment.payment_id, "type": gen_type.value},
+        request_params={
+            "payment_id": payment.payment_id,
+            "type": gen_type.value,
+            # Для событий о судьбе работы: их шлём отсюда же, из создания
+            # строки, и к этому моменту знать надо уже всё. Ниже заказ
+            # дописывается, но событие «принял задачу» к тому времени ушло.
+            "style_id": body.style_id,
+            "photo_source": body.photo_source,
+            "profile_id": body.profile_id,
+        },
         cost=cost,
         idempotency_key=body.idempotency_key,
     )
