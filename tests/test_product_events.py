@@ -105,7 +105,7 @@ async def test_принятая_задача(перехват):
     await _дождаться()
     (user_id, событие, поля), = перехват
     assert user_id == "usr_1"
-    assert событие == "generation_start"
+    assert событие == "generation_started"
     assert поля == {"template_id": "neon_rain", "photo_source": "camera",
                     "generation_id": "gen_1"}
 

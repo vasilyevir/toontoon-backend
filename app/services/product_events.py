@@ -5,7 +5,7 @@
 быть уже закрыто, когда кадр дорисовался, а знать, чем кончилась работа, нужно
 про каждую, а не про те, при которых кто-то смотрел на экран.
 
-Отсюда же и правило «одна задача — один `generation_start` и одно итоговое
+Отсюда же и правило «одна задача — один `generation_started` и одно итоговое
 событие»: точки отправки стоят там, где меняется состояние строки в базе, а
 меняется оно один раз (`generations.create`, `mark_done`, `mark_failed`).
 
@@ -140,7 +140,7 @@ def _общее(generation) -> dict[str, Any]:
 
 def started(generation) -> None:
     """Задача принята — значит, она есть и за неё уже списано."""
-    _fire(generation.user_id, "generation_start", _общее(generation))
+    _fire(generation.user_id, "generation_started", _общее(generation))
 
 
 def completed(generation) -> None:
