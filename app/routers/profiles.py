@@ -11,6 +11,10 @@
 """
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import json
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -25,6 +29,8 @@ from app.deps import Context, costs_money, required_context
 from app.services import gpt as gpt_service
 from app.services import agent_analytics
 from app.storage import get_storage
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/profiles", tags=["profiles"])
 
@@ -95,15 +101,27 @@ async def create_profile(
     if await subscriptions_repo.active_for_user(db, user.id) is None:
         raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED,
                             detail="AI profile is part of the subscription")
+    # Тот же набор второй раз — тот же профиль, а не ещё один. Защёлки в
+    # приложении не было, и каждое нажатие заводило новый: на тестовом
+    # телефоне их стало восемь, три — за шесть секунд (21 сентября 2026).
+    # Приложение теперь не шлёт второй запрос, но правило должно держаться и
+    # здесь: повтор на плохой связи выглядит ровно так же.
+    for existing in await profiles_repo.list_for_user(db, user.id):
+        if set(existing.media_ids or []) == set(body.media_ids):
+            return ProfileView.of(existing)
+
     for media_id in body.media_ids:
         asset = await db.get(MediaAsset, media_id)
         if asset is None or asset.user_id != user.id or asset.deleted_at is not None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Photo not found")
 
-    # Отбор опорных снимков — здесь же, одним взглядом на весь набор. Отдельным
-    # вызовом это стоило бы вдвое дороже и могло разойтись с разбором: человек
-    # увидел бы одни вердикты, а в кадр уехало бы другое.
-    chosen = await _chosen_references(db, body.media_ids)
+    # Отбор опорных снимков — тем же разбором, что человек видел на экране.
+    # Обычно он уже готов: приложение просит разбор, пока снимки грузятся, а
+    # человек вводит имя. Раньше здесь модель смотрела на те же десять
+    # снимков второй раз — секунды ожидания после «Continue» ради ответа,
+    # который у нас уже был.
+    verdict = await _verdict(db, user.id, body.media_ids)
+    chosen = [body.media_ids[i - 1] for i in verdict["chosen"] if 1 <= i <= len(body.media_ids)]
 
     row = await profiles_repo.create(
         db, user_id=user.id, name=body.name, media_ids=body.media_ids, kind=body.kind,
@@ -155,29 +173,71 @@ async def update_profile(
             if asset is None or asset.user_id != user.id or asset.deleted_at is not None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Photo not found")
         row.media_ids = body.media_ids
-        row.reference_ids = await _chosen_references(db, body.media_ids)
+        verdict = await _verdict(db, user.id, body.media_ids)
+        row.reference_ids = [body.media_ids[i - 1] for i in verdict["chosen"]
+                             if 1 <= i <= len(body.media_ids)]
 
     await db.flush()
     return ProfileView.of(row)
 
 
-async def _chosen_references(db: AsyncSession, media_ids: list[str]) -> list[str]:
-    """Какие снимки набора поедут в кадр.
+async def _images(db: AsyncSession, media_ids: list[str]) -> list[bytes]:
+    """Снимки набора — разом, а не по одному.
 
-    Смотрим на весь набор одним взглядом — тем же, что и при сборке профиля.
-    Не разобрали — оставляем список пустым: тогда в кадр пойдёт начало набора,
-    и это лучше, чем случайный отбор, выданный за осмысленный.
+    Хранилище в другой стране: десять снимков по очереди читаются за 2 с, все
+    сразу — за 0,3 с (замер 21 сентября 2026). Порядок сохраняется: разбор
+    отвечает номерами снимков, и номера обязаны совпасть с набором.
     """
     storage = get_storage()
-    images: list[bytes] = []
-    for media_id in media_ids:
-        asset = await db.get(MediaAsset, media_id)
-        data = await storage.get(asset.storage_key) if asset else None
-        if data:
-            images.append(data)
+    assets = [await db.get(MediaAsset, media_id) for media_id in media_ids]
+    blobs = await asyncio.gather(*(storage.get(a.storage_key) if a else asyncio.sleep(0)
+                                   for a in assets))
+    return [b for b in blobs if b]
 
-    verdict = await gpt_service.review_profile_photos(images)
-    return [media_ids[i - 1] for i in verdict["chosen"] if 1 <= i <= len(media_ids)]
+
+# Разбор набора помним два часа — между «загрузил» и «заплатил» проходит
+# минута, а не день. Ключ — упорядоченный набор: разбор отвечает номерами.
+_VERDICT_TTL = 2 * 60 * 60
+
+
+def _verdict_key(user_id: str, media_ids: list[str]) -> str:
+    digest = hashlib.sha256("|".join(media_ids).encode()).hexdigest()[:32]
+    return f"profile_review:{user_id}:{digest}"
+
+
+async def _recalled(user_id: str, media_ids: list[str]) -> Optional[dict]:
+    try:
+        from app.redis_client import get_client
+        raw = await get_client().get(_verdict_key(user_id, media_ids))
+        return json.loads(raw) if raw else None
+    except Exception:  # память — ускорение, а не условие работы
+        log.warning("Разбор набора: не прочитать из памяти", exc_info=True)
+        return None
+
+
+async def _remember(user_id: str, media_ids: list[str], verdict: dict) -> None:
+    try:
+        from app.redis_client import get_client
+        await get_client().set(_verdict_key(user_id, media_ids), json.dumps(verdict),
+                               ex=_VERDICT_TTL)
+    except Exception:
+        log.warning("Разбор набора: не записать в память", exc_info=True)
+
+
+async def _verdict(db: AsyncSession, user_id: str, media_ids: list[str]) -> dict:
+    """Разбор набора: из памяти, а нет — одним взглядом модели.
+
+    Не разобрали — вердикт пустой: тогда в кадр пойдёт начало набора, и это
+    лучше, чем случайный отбор, выданный за осмысленный. Пустой вердикт не
+    запоминаем — следующая попытка вправе посмотреть снова.
+    """
+    remembered = await _recalled(user_id, media_ids)
+    if remembered is not None:
+        return remembered
+    verdict = await gpt_service.review_profile_photos(await _images(db, media_ids))
+    if verdict.get("photos") or verdict.get("chosen"):
+        await _remember(user_id, media_ids, verdict)
+    return verdict
 
 
 @router.post("/{profile_id}/default", response_model=ProfileView)
@@ -248,17 +308,13 @@ async def review(
     наказывать его за нашу неисправность.
     """
     user, _ = ctx
-    storage = get_storage()
-    images: list[bytes] = []
     for media_id in body.media_ids:
         asset = await db.get(MediaAsset, media_id)
         if asset is None or asset.user_id != user.id or asset.deleted_at is not None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Photo not found")
-        data = await storage.get(asset.storage_key)
-        if data:
-            images.append(data)
 
-    verdict = await gpt_service.review_profile_photos(images)
+    # Тот же разбор возьмёт заведение профиля — второй раз модель не смотрит.
+    verdict = await _verdict(db, user.id, body.media_ids)
     return ReviewResponse(
         photos=[PhotoVerdict(**p) for p in verdict["photos"]],
         missing=verdict["missing"],
