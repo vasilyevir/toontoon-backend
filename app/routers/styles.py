@@ -10,6 +10,9 @@ than one padded with placeholders nobody can generate.
 """
 from __future__ import annotations
 
+import asyncio
+import logging
+from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -172,7 +175,7 @@ async def style_example(
     if not keys or index < 0 or index >= len(keys):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Not found")
 
-    data = await get_storage().get(keys[index])
+    data = await _example_bytes(keys[index])
     if data is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Not found")
 
@@ -183,6 +186,79 @@ async def style_example(
         # ключ в строке стиля, а не другие байты по старому адресу.
         headers={"Cache-Control": "public, max-age=86400, immutable"},
     )
+
+
+# ── Витринные картинки в памяти ──────────────────────────────────────────────
+#
+# Одинаковые для всех, неизменные (замена — это новый ключ) и нужные первыми:
+# главная при первом запуске тянет их десятками. Держать их в памяти процесса
+# дешевле, чем каждый раз ходить в хранилище в другой стране — это было
+# 0,5–2,5 с на картинку, и верхние карточки не успевали появиться до экрана
+# награды на седьмой секунде (задача #7 Андрея, 21 сентября 2026).
+#
+# Потолок — чтобы разросшийся каталог не съел память: вытесняется то, что
+# давно не спрашивали. Сотня стилей с примерами — десятки мегабайт.
+
+log = logging.getLogger("toontoon.styles")
+
+_EXAMPLES_CAP = 128 * 1024 * 1024
+_examples: "OrderedDict[str, bytes]" = OrderedDict()
+_examples_size = 0
+
+
+def _remember_example(key: str, data: bytes) -> None:
+    global _examples_size
+    if key in _examples:
+        return
+    _examples[key] = data
+    _examples_size += len(data)
+    while _examples_size > _EXAMPLES_CAP and _examples:
+        _, old = _examples.popitem(last=False)
+        _examples_size -= len(old)
+
+
+async def _example_bytes(key: str) -> Optional[bytes]:
+    data = _examples.get(key)
+    if data is not None:
+        _examples.move_to_end(key)
+        return data
+    data = await get_storage().get(key)
+    if data is not None:
+        _remember_example(key, data)
+    return data
+
+
+async def warm_examples(concurrency: int = 8) -> int:
+    """Прогреть витрину при старте — в фоне, не задерживая запуск.
+
+    Сначала главная (в её порядке), потом остальной каталог: первым делом
+    человек видит главную, и именно её картинки должны быть готовы. Ошибка
+    одной картинки прогрев не останавливает — её дочитают по первому запросу.
+    """
+    from app.db.session import get_factory
+
+    async with get_factory()() as db:
+        home = await styles_repo.list_styles(db, home_only=True, limit=500)
+        rest = await styles_repo.list_styles(db, limit=1000)
+    keys: list[str] = []
+    for row in [*home, *rest]:
+        for key in _example_keys(row):
+            if key not in keys:
+                keys.append(key)
+
+    gate = asyncio.Semaphore(concurrency)
+
+    async def one(key: str) -> bool:
+        async with gate:
+            try:
+                return await _example_bytes(key) is not None
+            except Exception:  # noqa: BLE001 — прогрев не обязателен
+                return False
+
+    done = sum(await asyncio.gather(*(one(k) for k in keys)))
+    log.info("Витрина прогрета: %d из %d картинок, %.1f МБ в памяти",
+             done, len(keys), _examples_size / 1e6)
+    return done
 
 
 @router.get("/styles/{style_id}", response_model=StyleOut)

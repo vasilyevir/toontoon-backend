@@ -33,6 +33,12 @@ async def startup() -> None:
         await storage.ensure_bucket()
 
 
+async def shutdown() -> None:
+    """Закрыть постоянное соединение с хранилищем."""
+    if isinstance(_storage, S3Storage):
+        await _storage.close()
+
+
 def make_key(*, user_id: str, kind: str, ext: str) -> str:
     """Object key: kind/user/YYYY/MM/id.ext.
 
@@ -45,4 +51,4 @@ def make_key(*, user_id: str, kind: str, ext: str) -> str:
     return f"{kind}/{user_id}/{now:%Y/%m}/{name}"
 
 
-__all__ = ["Storage", "get_storage", "startup", "make_key"]
+__all__ = ["Storage", "get_storage", "startup", "shutdown", "make_key"]

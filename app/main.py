@@ -163,11 +163,25 @@ async def lifespan(app: FastAPI):
     warn_if_nobody_is_watching()
     await settle_unpaid_refunds()
     sweeper = asyncio.create_task(settle_periodically())
+    # Витрину — в память, в фоне: первый же человек на главной получит
+    # картинки из памяти, а не из хранилища в другой стране.
+    warming = asyncio.create_task(_warm_showcase())
 
     yield
     sweeper.cancel()
+    warming.cancel()
+    await storage.shutdown()
     await db.disconnect()
     await disconnect()
+
+
+async def _warm_showcase() -> None:
+    from app.routers.styles import warm_examples
+
+    try:
+        await warm_examples()
+    except Exception:  # noqa: BLE001 — прогрев не обязателен
+        logging.getLogger("toontoon.styles").warning("Витрина не прогрелась", exc_info=True)
 
 
 async def settle_periodically() -> None:

@@ -1,7 +1,9 @@
 """S3-compatible backend — MinIO for us, unchanged for any other provider."""
 from __future__ import annotations
 
+import asyncio
 import logging
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Optional
 
 import aioboto3
@@ -19,9 +21,24 @@ class S3Storage(Storage):
         self._session = aioboto3.Session()
         self._bucket = settings.s3_bucket
         # MinIO needs path-style addressing: bucket.localhost does not resolve.
-        self._config = Config(signature_version="s3v4", s3={"addressing_style": "path"})
+        #
+        # Сроки и повторы заданы явно. Без них один запрос к хранилищу в
+        # другой стране висел полминуты, и витринная картинка не приходила
+        # вовсе (замер 21 сентября 2026). Пул шире умолчания: одна главная —
+        # это десятки картинок разом.
+        self._config = Config(
+            signature_version="s3v4",
+            s3={"addressing_style": "path"},
+            connect_timeout=5,
+            read_timeout=20,
+            retries={"max_attempts": 3, "mode": "standard"},
+            max_pool_connections=32,
+        )
+        self._shared: Optional[tuple[asyncio.AbstractEventLoop, AsyncExitStack, object]] = None
+        self._lock: Optional[asyncio.Lock] = None
+        self._lock_loop: Optional[asyncio.AbstractEventLoop] = None
 
-    def _client(self):
+    def _new_client(self):
         return self._session.client(
             "s3",
             endpoint_url=settings.s3_endpoint_url or None,
@@ -30,6 +47,40 @@ class S3Storage(Storage):
             aws_secret_access_key=settings.s3_secret_key,
             config=self._config,
         )
+
+    @asynccontextmanager
+    async def _client(self):
+        """Одно соединение с хранилищем на процесс, а не новое на каждый запрос.
+
+        Раньше клиент создавался заново на каждое чтение — и каждое чтение
+        платило за новое TLS-соединение. Пока хранилищем был MinIO в соседнем
+        контейнере, это ничего не стоило. После переезда в Yandex Object
+        Storage (Казахстан) каждое такое рукопожатие шло через границу:
+        витринная картинка — 0,5–2,5 с, и главная при первом запуске не
+        успевала показаться до экрана награды (задача #7 Андрея, 21 сентября
+        2026). Клиент botocore для этого и создан: живёт долго, держит пул.
+
+        Клиент привязан к циклу событий. Скрипты и тесты заводят свой цикл —
+        для него и заводится свой клиент.
+        """
+        loop = asyncio.get_running_loop()
+        shared = self._shared
+        if shared is None or shared[0] is not loop:
+            if self._lock is None or self._lock_loop is not loop:
+                self._lock, self._lock_loop = asyncio.Lock(), loop
+            async with self._lock:
+                shared = self._shared
+                if shared is None or shared[0] is not loop:
+                    stack = AsyncExitStack()
+                    client = await stack.enter_async_context(self._new_client())
+                    self._shared = shared = (loop, stack, client)
+        yield shared[2]
+
+    async def close(self) -> None:
+        """Закрыть соединение — при остановке процесса."""
+        shared, self._shared = self._shared, None
+        if shared is not None:
+            await shared[1].aclose()
 
     async def ensure_bucket(self) -> None:
         """Create the bucket on first run so a fresh environment just works.
