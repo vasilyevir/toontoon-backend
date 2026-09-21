@@ -41,8 +41,19 @@ class S3Storage(Storage):
             try:
                 await s3.head_bucket(Bucket=self._bucket)
             except ClientError:
-                await s3.create_bucket(Bucket=self._bucket)
-                logger.info("Created bucket %s", self._bucket)
+                # Не смогли увидеть — не значит, что его нет. У ключа облачного
+                # хранилища (Yandex Object Storage) права только на свой бакет,
+                # а не на каталог: создать он не может ничего, и отказ здесь
+                # ронял бы запуск сервера из-за одного сетевого сбоя. Бакет там
+                # заводит администратор; настоящая беда всплывёт на первой же
+                # записи, с понятной ошибкой, а не молчаливым падением API.
+                try:
+                    await s3.create_bucket(Bucket=self._bucket)
+                    logger.info("Created bucket %s", self._bucket)
+                except ClientError as e:
+                    logger.warning("Bucket %s: не удалось ни увидеть, ни создать (%s) — "
+                                   "работаем дальше", self._bucket,
+                                   e.response.get("Error", {}).get("Code"))
 
     async def put(self, key: str, data: bytes, *, content_type: str) -> str:
         async with self._client() as s3:
