@@ -24,8 +24,12 @@ cd "$COMPOSE_DIR"
 
 compose() { sudo docker compose -p "$PROJECT" --env-file "$ENV_FILE" "$@"; }
 
-echo "▶ $ENVIRONMENT: сборка образа"
-compose build api
+echo "▶ $ENVIRONMENT: сборка образов"
+# Все три сервиса кода, а не один api. У каждого свой образ, и `up -d` чужой
+# образ, раз он уже есть, не пересобирает: здесь стояло `build api`, и
+# исполнитель с уборщиком с 11 по 21 сентября 2026 работали на коде от
+# 11-го — выкатки их не касались. Рисует кадры именно исполнитель.
+compose build api worker retention
 
 echo "▶ поднимаю сервисы"
 compose up -d
