@@ -106,8 +106,17 @@ async def create_profile(
     # телефоне их стало восемь, три — за шесть секунд (21 сентября 2026).
     # Приложение теперь не шлёт второй запрос, но правило должно держаться и
     # здесь: повтор на плохой связи выглядит ровно так же.
+    #
+    # Имя при этом берётся новое. Одинаковый снимок хранится один раз, так что
+    # те же десять селфи, выбранные заново, — это тот же набор; вернуть
+    # профиль со старым именем значило молча выбросить только что набранное
+    # (так и вышло: имя «не сохранялось», 21 сентября 2026).
     for existing in await profiles_repo.list_for_user(db, user.id):
         if set(existing.media_ids or []) == set(body.media_ids):
+            name = body.name.strip()[:60]
+            if name and name != existing.name:
+                existing.name = name
+                await db.flush()
             return ProfileView.of(existing)
 
     for media_id in body.media_ids:

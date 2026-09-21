@@ -154,7 +154,39 @@ async def test_тот_же_набор_возвращает_прежний_про
     monkeypatch.setattr(profiles.profiles_repo, "list_for_user", профили)
     monkeypatch.setattr(profiles.profiles_repo, "create", завести)
 
+    class База:
+        async def flush(self):
+            pass
+
     ответ = await profiles.create_profile(
         profiles.CreateRequest(name="Илья", media_ids=IDS),
-        ctx=(SimpleNamespace(id="usr_1"), None), db=None)
+        ctx=(SimpleNamespace(id="usr_1"), None), db=База())
     assert ответ.id == "prf_1"
+
+
+async def test_тот_же_набор_берёт_новое_имя(monkeypatch):
+    """Одинаковый снимок хранится один раз: те же селфи, выбранные заново, —
+    тот же набор. Вернуть профиль со старым именем значило бы выбросить
+    только что набранное."""
+    прежний = SimpleNamespace(id="prf_1", name="Me", kind="person", is_default=True,
+                              media_ids=list(IDS), reference_ids=[])
+    сброшено = []
+
+    class База:
+        async def flush(self):
+            сброшено.append(True)
+
+    async def подписка(db, user_id):
+        return object()
+
+    async def профили(db, user_id):
+        return [прежний]
+
+    monkeypatch.setattr(profiles.subscriptions_repo, "active_for_user", подписка)
+    monkeypatch.setattr(profiles.profiles_repo, "list_for_user", профили)
+
+    ответ = await profiles.create_profile(
+        profiles.CreateRequest(name="  Илья ", media_ids=IDS),
+        ctx=(SimpleNamespace(id="usr_1"), None), db=База())
+    assert ответ.name == "Илья"
+    assert прежний.name == "Илья" and сброшено
