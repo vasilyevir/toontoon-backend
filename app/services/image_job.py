@@ -30,7 +30,7 @@ from app.db.repositories import media as media_repo
 from app.db.session import session_scope
 from app.models.payment import Payment, PaymentStatus
 from app.services import policy, prompt_style, wallet
-from app.services import agent_analytics
+from app.services import agent_analytics, apns
 from app.services import gpt as gpt_service
 from app.services import generation as generation_core
 
@@ -205,6 +205,7 @@ async def _run_image_job(
     """
     payment = Payment(payment_id=payment_id, status=PaymentStatus.PENDING,
                       amount=payment_amount)
+    ready_title: str | None = None
     try:
         async with session_scope() as db:
             result = await generation_core.run(db, request, prefer=prefer)
@@ -266,6 +267,14 @@ async def _run_image_job(
                                                 content=said)
                 await chat_repo.add_message(db, user_id=user_id, role="assistant",
                                             generation_id=gen_id)
+            ready_title = await _style_title(db, record)
+
+        # Пуш — после того, как работа записана: нажав на уведомление, человек
+        # должен найти кадр готовым, а не «рисуется».
+        apns.fire(user_id,
+                  f"Your {ready_title} picture is ready" if ready_title else "Your picture is ready",
+                  "Open Toontoon to see it.",
+                  data={"generation_id": gen_id}, collapse_id=gen_id)
     except Exception as exc:  # noqa: BLE001 — задача обязана дожить до возврата денег
         logger.exception("Кадр %s не получился", gen_id)
         if policy.looks_like_moderation(repr(exc)):
@@ -281,5 +290,23 @@ async def _run_image_job(
                 record = await generations_repo.get(db, gen_id, user_id=user_id)
                 if record is not None:
                     await generations_repo.mark_failed(db, record, error=repr(exc)[:500])
+            # Об отказе — тоже: человек ждёт, и молчание хуже плохой новости.
+            apns.fire(user_id, "That one didn't come out",
+                      "Your coins are back — try again.",
+                      data={"generation_id": gen_id}, collapse_id=gen_id)
         except Exception:
             logger.exception("Возврат за неудавшийся кадр %s не прошёл", gen_id)
+
+
+async def _style_title(db, record) -> str | None:
+    """Название стиля для текста уведомления. Кадр из чата стиля не имеет."""
+    from app.db.repositories import styles as styles_repo
+
+    style_id = record.style_id or (record.request_params or {}).get("style_id")
+    if not style_id:
+        return None
+    try:
+        style = await styles_repo.get(db, style_id)
+    except Exception:  # noqa: BLE001 — без названия уведомление всё равно нужно
+        return None
+    return style.title if style else None

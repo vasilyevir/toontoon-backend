@@ -687,6 +687,12 @@ class Settings(BaseSettings):
     amplitude_ai_api_key: str = ""
     amplitude_server_zone: str = "EU"
     amplitude_content_mode: str = "full"   # full | metadata_only
+    # Пуши на iPhone (services/apns.py). Ключ APNs (.p8) — base64 от содержимого
+    # файла: многострочный PEM в .env ломается. Пусто — пуши не уходят.
+    apns_key_id: str = ""
+    apns_team_id: str = "3GU8WB3N29"
+    apns_key_b64: str = ""
+    apns_topic: str = "mobile.atom.toontoon"
     # Продуктовые события о судьбе работы (services/product_events.py). Ключ —
     # тот же проект, что у приложения: половинки воронки склеиваются по
     # User ID, а он у нас один. Пусто — события не уходят.
