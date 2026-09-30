@@ -11,6 +11,8 @@ than one padded with placeholders nobody can generate.
 from __future__ import annotations
 
 import asyncio
+import base64
+import io
 import logging
 from collections import OrderedDict
 from datetime import datetime, timezone
@@ -64,6 +66,15 @@ class StyleOut(BaseModel):
     subject: Optional[str] = None
     cost: int
     examples: list[str] = []
+    #: Крошка примера — размытая подложка, пока едет сама картинка.
+    #:
+    #: Полкилобайта на стиль: карточка заполняется в тот же миг, когда пришёл
+    #: каталог, и человек видит кадр, а не серый прямоугольник со спиннером
+    #: (TSK-38, Андрей, 30 сентября 2026). Сама картинка — 50–100 КБ, и на
+    #: мобильной сети до неё секунды.
+    #:
+    #: Пусто, если пример ещё не прогрет: крошка считается из тех же байтов.
+    blur: Optional[str] = None
 
 
 class CategoryOut(BaseModel):
@@ -76,7 +87,13 @@ def _example_keys(row: m.Style) -> list[str]:
     return (row.examples or {}).get("keys", []) if isinstance(row.examples, dict) else []
 
 
-def _style_out(row: m.Style) -> StyleOut:
+def _style_out(row: m.Style, *, blur: bool = True) -> StyleOut:
+    """Строка каталога.
+
+    `blur` — прикладывать ли крошку примера. Она нужна тем карточкам, которые
+    человек увидит первыми, а на весь каталог это 60 КБ поверх 27: ответ,
+    который сейчас приходит мгновенно, начал бы ехать сам.
+    """
     return StyleOut(
         id=row.id,
         title=row.title,
@@ -97,6 +114,7 @@ def _style_out(row: m.Style) -> StyleOut:
             f"/api/styles/{row.id}/example/{index}?v={Path(key).stem.split('-')[-1]}"
             for index, key in enumerate(_example_keys(row))
         ],
+        blur=(_blurs.get(keys[0]) if blur and (keys := _example_keys(row)) else None),
     )
 
 
@@ -136,7 +154,9 @@ async def list_styles(
             CategoryOut(
                 id=category,
                 title=CATEGORY_TITLES.get(category, category),
-                styles=[_style_out(r) for r in rows],
+                # Крошки — только первым в разделе: остальные человек увидит
+                # не раньше, чем доскроллит, и к тому времени картинки придут.
+                styles=[_style_out(r, blur=index < 4) for index, r in enumerate(rows)],
             )
         )
     return result
@@ -217,6 +237,47 @@ def _remember_example(key: str, data: bytes) -> None:
         _examples_size -= len(old)
 
 
+_blurs: dict[str, str] = {}
+
+
+def _squeeze(data: bytes) -> tuple[bytes, Optional[str]]:
+    """Пережать пример и снять с него крошку.
+
+    Примеры лежат в хранилище такими, какими их сделал генератор: 576×1024 и
+    около ста килобайт. На карточке главной это вдвое больше нужного — первый
+    экран весил 1,2 МБ, и на мобильной сети верхние кадры приходили секундами
+    (TSK-38, Андрей, 30 сентября 2026). При 75 выходит вдвое меньше, а разницы
+    на экране телефона не видно.
+
+    Крошка — 18×32, полкилобайта, едет вместе с каталогом и заполняет карточку
+    до того, как пришла сама картинка. Размывает её клиент.
+
+    Ошибка здесь ничего не ломает: вернём как было, без крошки.
+    """
+    try:
+        from PIL import Image
+
+        image = Image.open(io.BytesIO(data))
+        image.load()
+        if image.mode != "RGB":
+            image = image.convert("RGB")
+
+        small = io.BytesIO()
+        image.save(small, "JPEG", quality=75, optimize=True, progressive=True)
+
+        crumb = io.BytesIO()
+        image.resize((18, 32), Image.LANCZOS).save(crumb, "JPEG", quality=60, optimize=True)
+        blur = "data:image/jpeg;base64," + base64.b64encode(crumb.getvalue()).decode()
+
+        # Пережатое берём только если оно и правда меньше: пример может уже
+        # быть ужат сильнее нашего.
+        squeezed = small.getvalue()
+        return (squeezed if len(squeezed) < len(data) else data), blur
+    except Exception:  # noqa: BLE001 — картинка на витрине важнее её веса
+        log.warning("Пример не пережался", exc_info=True)
+        return data, None
+
+
 async def _example_bytes(key: str) -> Optional[bytes]:
     data = _examples.get(key)
     if data is not None:
@@ -224,6 +285,9 @@ async def _example_bytes(key: str) -> Optional[bytes]:
         return data
     data = await get_storage().get(key)
     if data is not None:
+        data, blur = _squeeze(data)
+        if blur:
+            _blurs[key] = blur
         _remember_example(key, data)
     return data
 
